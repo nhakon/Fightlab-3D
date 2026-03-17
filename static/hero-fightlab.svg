@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1050" role="img" aria-labelledby="title desc">
+  <title id="title">Fightlab 3D wireframe grappling scene</title>
+  <desc id="desc">Two stylized wireframe grapplers in a leg entanglement over a dark grid with glowing HUD elements.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1225" />
+      <stop offset="50%" stop-color="#0e1c35" />
+      <stop offset="100%" stop-color="#0b1325" />
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#1e3a8a" stop-opacity="0.65" />
+      <stop offset="55%" stop-color="#0b1325" stop-opacity="0.05" />
+      <stop offset="100%" stop-color="#0b1325" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="stroke-a" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#a5f3fc" />
+    </linearGradient>
+    <linearGradient id="stroke-b" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#22d3ee" />
+      <stop offset="100%" stop-color="#67e8f9" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.3" />
+    </linearGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="18" result="b1" />
+      <feMerge>
+        <feMergeNode in="b1" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1400" height="1050" fill="url(#bg)" />
+  <rect width="1400" height="1050" fill="url(#glow)" />
+
+  <g opacity="0.24" stroke="url(#accent)" stroke-width="1.5">
+    <path d="M120 320 H1280" />
+    <path d="M120 420 H1280" />
+    <path d="M120 520 H1280" />
+    <path d="M120 620 H1280" />
+    <path d="M120 720 H1280" />
+    <path d="M120 820 H1280" />
+    <path d="M260 260 V860" />
+    <path d="M460 260 V860" />
+    <path d="M660 260 V860" />
+    <path d="M860 260 V860" />
+    <path d="M1060 260 V860" />
+  </g>
+
+  <g fill="none" stroke="#0ea5e9" stroke-opacity="0.2" stroke-width="1">
+    <path d="M140 840 C360 760, 580 760, 880 840" />
+    <path d="M520 900 C720 840, 940 820, 1240 860" />
+  </g>
+
+  <g filter="url(#soft)" opacity="0.6">
+    <circle cx="480" cy="420" r="110" fill="#0ea5e9" />
+    <circle cx="820" cy="520" r="120" fill="#22d3ee" />
+  </g>
+
+  <g stroke="url(#stroke-a)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M470 300 L440 340 L470 420 L430 520 L470 640" />
+    <path d="M470 420 L520 520 L540 660" />
+    <path d="M440 340 L500 340 L560 450" />
+    <path d="M440 340 L400 380 L420 460" />
+    <path d="M500 340 L540 380 L560 450" />
+  </g>
+  <g fill="#38bdf8">
+    <circle cx="470" cy="300" r="16" />
+    <circle cx="440" cy="340" r="12" />
+    <circle cx="500" cy="340" r="12" />
+    <circle cx="470" cy="420" r="12" />
+    <circle cx="430" cy="520" r="12" />
+    <circle cx="470" cy="640" r="12" />
+    <circle cx="520" cy="520" r="12" />
+    <circle cx="540" cy="660" r="12" />
+    <circle cx="400" cy="380" r="10" />
+    <circle cx="420" cy="460" r="10" />
+    <circle cx="540" cy="380" r="10" />
+    <circle cx="560" cy="450" r="10" />
+  </g>
+
+  <g stroke="url(#stroke-b)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M720 420 L680 460 L710 520 L680 640 L640 720" />
+    <path d="M710 520 L760 620 L820 660 L860 660" />
+    <path d="M680 460 L740 460 L760 520 L820 520" />
+    <path d="M680 460 L640 520 L620 560" />
+  </g>
+  <g fill="#22d3ee">
+    <circle cx="720" cy="420" r="16" />
+    <circle cx="680" cy="460" r="12" />
+    <circle cx="740" cy="460" r="12" />
+    <circle cx="710" cy="520" r="12" />
+    <circle cx="680" cy="640" r="12" />
+    <circle cx="640" cy="720" r="12" />
+    <circle cx="760" cy="620" r="12" />
+    <circle cx="820" cy="660" r="12" />
+    <circle cx="860" cy="660" r="10" />
+    <circle cx="760" cy="520" r="10" />
+    <circle cx="820" cy="520" r="10" />
+    <circle cx="640" cy="520" r="10" />
+    <circle cx="620" cy="560" r="10" />
+  </g>
+
+  <g opacity="0.6" stroke="url(#accent)" stroke-width="4" stroke-linecap="round" fill="none">
+    <path d="M520 520 C620 520, 680 520, 760 620" />
+    <path d="M560 450 C640 470, 700 480, 760 520" />
+    <path d="M420 460 C520 500, 560 520, 640 520" />
+  </g>
+
+  <g opacity="0.65">
+    <rect x="1080" y="180" width="160" height="120" rx="14" ry="14" fill="#0f172a" stroke="#1d4ed8" stroke-width="2" />
+    <rect x="1098" y="202" width="124" height="16" rx="8" fill="#1d4ed8" opacity="0.6" />
+    <rect x="1098" y="232" width="92" height="10" rx="5" fill="#38bdf8" opacity="0.8" />
+    <rect x="1098" y="252" width="72" height="10" rx="5" fill="#22d3ee" opacity="0.7" />
+    <rect x="1098" y="272" width="52" height="10" rx="5" fill="#38bdf8" opacity="0.6" />
+  </g>
+
+  <g fill="#cbd5f5" font-family="Sora, Inter, system-ui, sans-serif" font-size="20" font-weight="600" opacity="0.72">
+    <text x="120" y="190">Fightlab 3D</text>
+    <text x="120" y="220" font-size="14" opacity="0.7">Pose-to-animation • Wireframe capture</text>
+  </g>
+</svg>

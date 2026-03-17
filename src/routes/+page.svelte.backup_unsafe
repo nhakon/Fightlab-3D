@@ -1,0 +1,938 @@
+﻿<script>
+  import { onMount, tick } from "svelte";
+  import * as THREE from "three";
+  import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+
+  // ---------- Config / State ----------
+  let canvas;
+  let scene, camera, renderer, controls;
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  let dragPlane = new THREE.Plane();
+  let offset = new THREE.Vector3();
+
+  let dragging = null;           // sphere mesh being dragged
+  let activePerson = null;       // "A" or "B"
+  let activeJointIdx = null;     // index in hierarchical skeleton
+  let shiftDragging = false;     // true if Shift held at pointerdown
+  let orbitEnabled = true;
+
+  let jointsA = {}, jointsB = {};let jointMeshesA = [], jointMeshesB = [];
+  let boneMeshesA = [], boneMeshesB = [];
+  let torsoA = null, torsoB = null; // invisible torso anchor (for clamping)
+  let pelvisA = null, pelvisB = null;
+  let spineA = null, spineB = null;
+  let chestA = null, chestB = null; // visible chest ellipsoid
+  let shoulderBarA = null, shoulderBarB = null;
+  let handBoxesA = { L: null, R: null }, handBoxesB = { L: null, R: null };
+  let footBoxesA = { L: null, R: null }, footBoxesB = { L: null, R: null };
+
+  let initialTorsoA = null, initialTorsoB = null; // center positions to clamp torso moves
+  const TORSO_MOVE_LIMIT = 0.18; // max meters torso center may shift from initial (small)
+  const TORSO_ROT_LIMIT_RAD = Math.PI * 0.5; // allow torso to lay fully horizontal
+  const TORSO_WIDTH_MIN = 0.28, TORSO_WIDTH_MAX = 0.6;
+  const TORSO_HEIGHT_MIN = 0.4, TORSO_HEIGHT_MAX = 0.9;
+  const TORSO_DEPTH_FIXED = 0.3;
+  const ELBOW_MAX_DEG = 165;
+  const KNEE_MAX_DEG = 170;
+
+  // Visual anatomy helpers
+  const HEAD_RADIUS = 0.14; // joint sphere radius used for head
+  const HEAD_DIAM = HEAD_RADIUS * 2;
+  const JOINT_BASE_R = 0.06; // default joint marker radius (hips/knees/etc.)
+  const SHOULDER_JOINT_SCALE = 1.18; // 10â€“20% larger shoulders
+  // Base geometry reference sizes for scaling (unit frustums)
+  const TORSO_BASE_TOP_R = 0.5;
+  const TORSO_BASE_BOTTOM_R = 0.35;
+  const TORSO_BASE_H = 1.0;
+  const PELVIS_BASE_TOP_R = 0.46;
+  const PELVIS_BASE_BOTTOM_R = 0.54;
+  const PELVIS_BASE_H = 1.0;
+  // Rounded limb accessory targets (ellipsoids, not boxes)
+  const HAND_W = 0.12, HAND_H = 0.06, HAND_L = 0.18; // previous box dims, now ellipsoid
+  const HAND_SPHERE_R = 0.06; // base radius for hand ellipsoid
+  const FOOT_W = 0.18, FOOT_H = 0.06, FOOT_L = 0.28; // compact feet
+  const FOOT_SPHERE_R = 0.09; // base radius for foot ellipsoid
+
+  // desired bone lengths (per person), recomputed on pose/frame change
+  let desiredLengthsA = new Map();
+  let desiredLengthsB = new Map();
+  let neutralTorsoLenA = 0; // hipCenter -> shoulderCenter distance in neutral
+  let neutralTorsoLenB = 0;
+  let skeletonA = null, skeletonB = null; // hierarchical skeletons
+
+  // ---------- Hierarchical skeleton (FK/CCD IK) ----------
+  const IDX = {
+    root: 0,
+    hipL: 1, kneeL: 2, footL: 3,
+    hipR: 4, kneeR: 5, footR: 6,
+    spine: 7,
+    shoulderL: 8, elbowL: 9, handL: 10,
+    shoulderR: 11, elbowR: 12, handR: 13,
+    neck: 14, head: 15
+  };
+  const TOP_ORDER = [
+    IDX.root,
+    IDX.hipL, IDX.kneeL, IDX.footL,
+    IDX.hipR, IDX.kneeR, IDX.footR,
+    IDX.spine,
+    IDX.shoulderL, IDX.elbowL, IDX.handL,
+    IDX.shoulderR, IDX.elbowR, IDX.handR,
+    IDX.neck, IDX.head
+  ];
+  const PARENT = [];
+  PARENT[IDX.root] = -1;
+  PARENT[IDX.hipL] = IDX.root; PARENT[IDX.kneeL] = IDX.hipL; PARENT[IDX.footL] = IDX.kneeL;
+  PARENT[IDX.hipR] = IDX.root; PARENT[IDX.kneeR] = IDX.hipR; PARENT[IDX.footR] = IDX.kneeR;
+  PARENT[IDX.spine] = IDX.root;
+  PARENT[IDX.shoulderL] = IDX.spine; PARENT[IDX.elbowL] = IDX.shoulderL; PARENT[IDX.handL] = IDX.elbowL;
+  PARENT[IDX.shoulderR] = IDX.spine; PARENT[IDX.elbowR] = IDX.shoulderR; PARENT[IDX.handR] = IDX.elbowR;
+  PARENT[IDX.neck] = IDX.spine; PARENT[IDX.head] = IDX.neck;
+
+  const NAME_TO_IDX = {
+    head: IDX.head, neck: IDX.neck,
+    shoulderL: IDX.shoulderL, shoulderR: IDX.shoulderR,
+    elbowL: IDX.elbowL, elbowR: IDX.elbowR,
+    handL: IDX.handL, handR: IDX.handR,
+    hipL: IDX.hipL, hipR: IDX.hipR,
+    kneeL: IDX.kneeL, kneeR: IDX.kneeR,
+    footL: IDX.footL, footR: IDX.footR
+  };
+
+  function jointsToVecs(j){ const o={}; for(const k of Object.keys(j)) o[k]=new THREE.Vector3(...j[k]); return o; }
+  function vecsToJoints(v){ const o={}; for(const k of Object.keys(v)) o[k]=[v[k].x,v[k].y,v[k].z]; return o; }
+  function centerOfJ(j,a,b){ return jointsToVecs(j) && new THREE.Vector3().addVectors(new THREE.Vector3(...j[a]), new THREE.Vector3(...j[b])).multiplyScalar(0.5); }
+  function centerFromVecs(j,a,b){ return new THREE.Vector3().addVectors(j[a], j[b]).multiplyScalar(0.5); }
+
+  function buildBindFromNeutral(neutral){
+    // neutral: joint-name -> [x,y,z]
+    const j = jointsToVecs(neutral);
+    const hipC = new THREE.Vector3().addVectors(j.hipL, j.hipR).multiplyScalar(0.5);
+    const shoulderC = new THREE.Vector3().addVectors(j.shoulderL, j.shoulderR).multiplyScalar(0.5);
+
+    const bind = {
+      rootPos: hipC.clone(),
+      rootRot: new THREE.Quaternion(),
+      bindDirParent: Array(16).fill(null),
+      restLength: Array(16).fill(0),
+      angleRot: Array(16).fill(null).map(()=> new THREE.Quaternion()),
+      worldPos: Array(16).fill(null).map(()=> new THREE.Vector3()),
+      worldRot: Array(16).fill(null).map(()=> new THREE.Quaternion()),
+      dims: { pelvisWidth: j.hipL.distanceTo(j.hipR) * 1.2, chestWidth: j.shoulderL.distanceTo(j.shoulderR) * 1.25, chestHeight: shoulderC.distanceTo(hipC) * 0.8, chestDepth: 0.32, torsoWidth: j.shoulderL.distanceTo(j.shoulderR) * 1.1, torsoHeight: shoulderC.distanceTo(hipC) * 1.05, torsoDepth: TORSO_DEPTH_FIXED }
+    };
+
+    // Helper to set child using parent->child direction and length
+    function setBind(childIdx, parentPos, parentRot, childPos){
+      const dirWorld = new THREE.Vector3().subVectors(childPos, parentPos);
+      const len = dirWorld.length();
+      const dirN = dirWorld.clone().normalize();
+      const dirParent = dirN.clone().applyQuaternion(parentRot.clone().invert());
+      bind.bindDirParent[childIdx] = dirParent;
+      bind.restLength[childIdx] = len;
+    }
+
+    // Initialize with identity angleRot; derive bindDirParent/restLength from neutral
+    // root
+    bind.worldPos[IDX.root] = hipC.clone();
+    bind.worldRot[IDX.root] = bind.rootRot.clone();
+
+    // Sequence in topological order, computing parent rots/positions from neutral (angleRot=identity)
+    const NEU = {};
+    NEU[IDX.root] = hipC.clone();
+    NEU[IDX.hipL] = j.hipL.clone(); NEU[IDX.kneeL] = j.kneeL.clone(); NEU[IDX.footL] = j.footL.clone();
+    NEU[IDX.hipR] = j.hipR.clone(); NEU[IDX.kneeR] = j.kneeR.clone(); NEU[IDX.footR] = j.footR.clone();
+    NEU[IDX.spine] = shoulderC.clone();
+    NEU[IDX.shoulderL] = j.shoulderL.clone(); NEU[IDX.elbowL] = j.elbowL.clone(); NEU[IDX.handL] = j.handL.clone();
+    NEU[IDX.shoulderR] = j.shoulderR.clone(); NEU[IDX.elbowR] = j.elbowR.clone(); NEU[IDX.handR] = j.handR.clone();
+    NEU[IDX.neck] = j.neck.clone(); NEU[IDX.head] = j.head.clone();
+
+    const worldRotTemp = Array(16).fill(null).map(()=> new THREE.Quaternion());
+    worldRotTemp[IDX.root].copy(bind.rootRot);
+    for (const i of TOP_ORDER) {
+      if (i === IDX.root) continue;
+      const p = PARENT[i];
+      const parentPos = NEU[p];
+      const parentRot = worldRotTemp[p];
+      setBind(i, parentPos, parentRot, NEU[i]);
+      worldRotTemp[i] = parentRot.clone(); // angleRot identity in neutral
+    }
+    return bind;
+  }
+
+  function computeFK(skel){
+    // skel: {rootPos, rootRot, bindDirParent[], restLength[], angleRot[], worldPos[], worldRot[]}
+    skel.worldPos[IDX.root].copy(skel.rootPos);
+    skel.worldRot[IDX.root].copy(skel.rootRot);
+    for (const i of TOP_ORDER) {
+      if (i === IDX.root) continue;
+      const p = PARENT[i];
+      const parentRot = skel.worldRot[p];
+      const dirParent = skel.bindDirParent[i].clone().applyQuaternion(skel.angleRot[i]);
+      const dirWorld = dirParent.clone().applyQuaternion(parentRot);
+      skel.worldPos[i].copy(skel.worldPos[p]).add(dirWorld.multiplyScalar(skel.restLength[i]));
+      skel.worldRot[i].copy(parentRot).multiply(skel.angleRot[i]);
+    }
+  }
+
+  function jointsFromSkeleton(skel){
+    const j = {};
+    j.head = [skel.worldPos[IDX.head].x, skel.worldPos[IDX.head].y, skel.worldPos[IDX.head].z];
+    j.neck = [skel.worldPos[IDX.neck].x, skel.worldPos[IDX.neck].y, skel.worldPos[IDX.neck].z];
+    j.shoulderL = [skel.worldPos[IDX.shoulderL].x, skel.worldPos[IDX.shoulderL].y, skel.worldPos[IDX.shoulderL].z];
+    j.shoulderR = [skel.worldPos[IDX.shoulderR].x, skel.worldPos[IDX.shoulderR].y, skel.worldPos[IDX.shoulderR].z];
+    j.elbowL = [skel.worldPos[IDX.elbowL].x, skel.worldPos[IDX.elbowL].y, skel.worldPos[IDX.elbowL].z];
+    j.elbowR = [skel.worldPos[IDX.elbowR].x, skel.worldPos[IDX.elbowR].y, skel.worldPos[IDX.elbowR].z];
+    j.handL = [skel.worldPos[IDX.handL].x, skel.worldPos[IDX.handL].y, skel.worldPos[IDX.handL].z];
+    j.handR = [skel.worldPos[IDX.handR].x, skel.worldPos[IDX.handR].y, skel.worldPos[IDX.handR].z];
+    j.hipL = [skel.worldPos[IDX.hipL].x, skel.worldPos[IDX.hipL].y, skel.worldPos[IDX.hipL].z];
+    j.hipR = [skel.worldPos[IDX.hipR].x, skel.worldPos[IDX.hipR].y, skel.worldPos[IDX.hipR].z];
+    j.kneeL = [skel.worldPos[IDX.kneeL].x, skel.worldPos[IDX.kneeL].y, skel.worldPos[IDX.kneeL].z];
+    j.kneeR = [skel.worldPos[IDX.kneeR].x, skel.worldPos[IDX.kneeR].y, skel.worldPos[IDX.kneeR].z];
+    j.footL = [skel.worldPos[IDX.footL].x, skel.worldPos[IDX.footL].y, skel.worldPos[IDX.footL].z];
+    j.footR = [skel.worldPos[IDX.footR].x, skel.worldPos[IDX.footR].y, skel.worldPos[IDX.footR].z];
+    return j;
+  }
+
+  function applyWorldPoseToSkeleton(skel, joints){
+    // Set angles so directions match target pose, preserving rest lengths
+    const j = jointsToVecs(joints);
+    const hipC = new THREE.Vector3().addVectors(j.hipL, j.hipR).multiplyScalar(0.5);
+    const shoulderC = new THREE.Vector3().addVectors(j.shoulderL, j.shoulderR).multiplyScalar(0.5);
+    // root position and rotation
+    skel.rootPos = hipC.clone();
+    skel.rootRot = new THREE.Quaternion();
+    // Temp world rot accumulation
+    skel.worldRot[IDX.root].copy(skel.rootRot);
+    skel.worldPos[IDX.root].copy(skel.rootPos);
+    const TV = [];
+    TV[IDX.root] = hipC.clone();
+    TV[IDX.hipL] = j.hipL.clone(); TV[IDX.kneeL] = j.kneeL.clone(); TV[IDX.footL] = j.footL.clone();
+    TV[IDX.hipR] = j.hipR.clone(); TV[IDX.kneeR] = j.kneeR.clone(); TV[IDX.footR] = j.footR.clone();
+    TV[IDX.spine] = shoulderC.clone();
+    TV[IDX.shoulderL] = j.shoulderL.clone(); TV[IDX.elbowL] = j.elbowL.clone(); TV[IDX.handL] = j.handL.clone();
+    TV[IDX.shoulderR] = j.shoulderR.clone(); TV[IDX.elbowR] = j.elbowR.clone(); TV[IDX.handR] = j.handR.clone();
+    TV[IDX.neck] = j.neck.clone(); TV[IDX.head] = j.head.clone();
+
+    for (const i of TOP_ORDER) {
+      if (i === IDX.root) continue;
+      const p = PARENT[i];
+      const parentRot = skel.worldRot[p];
+      const targetDirWorld = new THREE.Vector3().subVectors(TV[i], TV[p]).normalize();
+      const targetDirParent = targetDirWorld.clone().applyQuaternion(parentRot.clone().invert());
+      const fromDir = skel.bindDirParent[i].clone();
+      const q = new THREE.Quaternion().setFromUnitVectors(fromDir, targetDirParent);
+      skel.angleRot[i] = q;
+      // accumulate to compute child's world rot for next step
+      skel.worldRot[i] = parentRot.clone().multiply(q);
+      // position computed afterwards by computeFK
+    }
+    computeFK(skel);
+  }
+
+  function groundSkeleton(skel){
+    computeFK(skel);
+    let minY = Infinity;
+    for (const i of TOP_ORDER) minY = Math.min(minY, skel.worldPos[i].y);
+    const dy = (FLOOR_Y + 0.02) - minY;
+    if (Math.abs(dy) > 1e-6) { skel.rootPos.y += dy; computeFK(skel); }
+  }
+
+  function getPathToRoot(idx){
+    const path = [];
+    let i = idx;
+    while (i !== -1) { path.push(i); i = PARENT[i]; }
+    return path.reverse();
+  }
+
+  function ccdIKToTarget(skel, endIdx, target, iterations=10){
+    // CCD over the chain (root anchored)
+    computeFK(skel);
+    const path = getPathToRoot(endIdx); // [root,...,end]
+    for (let it=0; it<iterations; it++){
+      for (let k=path.length-2; k>=0; k--){
+        const joint = path[k];
+        const child = path[k+1];
+        const origin = skel.worldPos[joint].clone();
+        const end = skel.worldPos[endIdx].clone();
+        const vCur = end.clone().sub(origin);
+        const vTar = target.clone(); vTar.sub(origin);
+        if (vCur.lengthSq()<1e-10 || vTar.lengthSq()<1e-10) continue;
+        const qWorld = new THREE.Quaternion().setFromUnitVectors(vCur.clone().normalize(), vTar.clone().normalize());
+        // convert to parent (joint) space: angleRot belongs to child (branch from joint)
+        const parentWorldRot = skel.worldRot[joint];
+        const qLocal = parentWorldRot.clone().invert().multiply(qWorld).multiply(parentWorldRot);
+        skel.angleRot[child] = qLocal.clone().multiply(skel.angleRot[child]);
+        computeFK(skel);
+      }
+      // optional early exit
+      if (skel.worldPos[endIdx].distanceTo(target) < 1e-3) break;
+    }
+    // floor clamp via root shift to keep contact if needed
+    groundSkeleton(skel);
+  }
+
+  let poses = []; // saved frames
+  let comment = "";
+  let currentFrame = 0;
+  let playing = false;
+  let playbackMode = "auto";
+  let intervalId;
+  let startPosition = "neutral";
+
+  // floor
+  const FLOOR_Y = -0.55; // floor plane y
+  // edge rotation threshold as fraction of canvas dimension
+  const EDGE_THRESHOLD = 0.12;
+
+  // joint keys and bone pairs
+  const JOINT_KEYS = [
+    "head","neck",
+    "shoulderL","shoulderR",
+    "elbowL","elbowR",
+    "handL","handR",
+    "hipL","hipR",
+    "kneeL","kneeR",
+    "footL","footR"
+  ];
+
+  const BONE_PAIRS = [
+    ["head","neck"], ["neck","shoulderL"], ["neck","shoulderR"],
+    ["shoulderL","shoulderR"],
+    ["shoulderL","elbowL"], ["elbowL","handL"], ["shoulderR","elbowR"], ["elbowR","handR"],
+    // no shoulder-to-hip diagonals; torso handled by chest/pelvis visuals
+    ["hipL","hipR"],
+    ["hipL","kneeL"], ["kneeL","footL"], ["hipR","kneeR"], ["kneeR","footR"]
+  ];
+
+  function getBoneRadius(a, b) {
+    const arm = (a.includes('shoulder') && b.includes('elbow')) || (a.includes('elbow') && b.includes('hand'));
+    const leg = (a.includes('hip') && b.includes('knee')) || (a.includes('knee') && b.includes('foot'));
+    const core = (a === 'hipL' && b === 'hipR') || a === 'neck' || b === 'neck';
+    if (leg) return 0.045;
+    if (arm) return 0.035;
+    if (core) return 0.04;
+    return 0.04;
+  }
+
+  function getBoneRadii(a,b){
+    // [topRadius, bottomRadius] for tapered limbs (rounded; no blocky shapes)
+    const THIGH_SCALE = 1.2; // slightly thicker thighs
+    if ((a.includes('shoulder') && b.includes('elbow'))) return [0.055, 0.04]; // biceps thicker near shoulder
+    if ((a.includes('elbow') && b.includes('hand'))) return [0.04, 0.03]; // forearm thinner at wrist
+    if ((a.includes('hip') && b.includes('knee'))) return [0.06 * THIGH_SCALE, 0.045 * THIGH_SCALE]; // thighs 1.2x
+    if ((a.includes('knee') && b.includes('foot'))) return [0.045, 0.035]; // shin thinner at foot
+    if ((a.includes('shoulder') && b.includes('shoulder'))) return [0.06, 0.06]; // shoulder bar
+    if ((a.includes('hip') && b.includes('hip'))) return [0.055, 0.055]; // pelvis bar
+    return [0.04, 0.04];
+  }
+
+  // ---------- Poses: absolute 3D coordinates for A (usually lying) and B (opponent) ----------
+  // Values chosen so that lying ones are low near floor and standing ones are higher.
+  function basePose(x,y,z) {
+    return {
+      head:[x, y + 1.7, z], neck:[x, y + 1.55, z],
+      shoulderL:[x - 0.2, y + 1.5, z], shoulderR:[x + 0.2, y + 1.5, z],
+      elbowL:[x - 0.4, y + 1.3, z], elbowR:[x + 0.4, y + 1.3, z],
+      handL:[x - 0.45, y + 1.0, z], handR:[x + 0.45, y + 1.0, z],
+      hipL:[x - 0.15, y + 1.0, z], hipR:[x + 0.15, y + 1.0, z],
+      kneeL:[x - 0.15, y + 0.55, z], kneeR:[x + 0.15, y + 0.55, z],
+      footL:[x - 0.15, y + 0.05, z], footR:[x + 0.15, y + 0.05, z]};}
+  function lyingOnBack(x,y,z){
+    // Oriented along +Z (horizontal). Keep all joints near floor in Y.
+    const torsoZ = 0.5;     // shoulder-hip separation along Z
+    const neckZ = torsoZ + 0.12;
+    const headZ = torsoZ + 0.26;
+    const yBase = y + 0.06; // small clearance off floor
+    return {
+      head:[x, yBase + 0.10, z + headZ], neck:[x, yBase + 0.08, z + neckZ],
+      shoulderL:[x - 0.2, yBase + 0.06, z + torsoZ], shoulderR:[x + 0.2, yBase + 0.06, z + torsoZ],
+      elbowL:[x - 0.28, yBase + 0.05, z + 0.32], elbowR:[x + 0.28, yBase + 0.05, z + 0.32],
+      handL:[x - 0.35, yBase + 0.03, z + 0.20], handR:[x + 0.35, yBase + 0.03, z + 0.20],
+      hipL:[x - 0.15, yBase + 0.04, z], hipR:[x + 0.15, yBase + 0.04, z],
+      kneeL:[x - 0.15, yBase + 0.12, z + 0.22], kneeR:[x + 0.15, yBase + 0.12, z + 0.22],
+      footL:[x - 0.15, yBase + 0.02, z + 0.40], footR:[x + 0.15, yBase + 0.02, z + 0.40]};}
+  function lyingOnSide(x,y,z){
+    // Side-lying along +Z; small Y offsets to keep near floor
+    const torsoZ = 0.46;
+    const yBase = y + 0.06;
+    return {
+      head:[x + 0.04, yBase + 0.10, z + 0.60], neck:[x + 0.04, yBase + 0.08, z + 0.52],
+      shoulderL:[x - 0.18, yBase + 0.06, z + torsoZ], shoulderR:[x + 0.18, yBase + 0.06, z + (torsoZ - 0.04)],
+      elbowL:[x - 0.22, yBase + 0.05, z + 0.34], elbowR:[x + 0.22, yBase + 0.05, z + 0.34],
+      handL:[x - 0.26, yBase + 0.03, z + 0.20], handR:[x + 0.26, yBase + 0.03, z + 0.20],
+      hipL:[x - 0.15, yBase + 0.04, z], hipR:[x + 0.15, yBase + 0.04, z],
+      kneeL:[x - 0.15, yBase + 0.12, z + 0.18], kneeR:[x + 0.15, yBase + 0.12, z + 0.18],
+      footL:[x - 0.15, yBase + 0.02, z + 0.36], footR:[x + 0.15, yBase + 0.02, z + 0.36]};}
+  function kneelingOver(x,y,z){
+    return {
+      head:[x, y + 1.0, z], neck:[x, y + 0.85, z],
+      shoulderL:[x - 0.2, y + 0.8, z], shoulderR:[x + 0.2, y + 0.8, z],
+      elbowL:[x - 0.3, y + 0.5, z], elbowR:[x + 0.3, y + 0.5, z],
+      handL:[x - 0.3, y + 0.25, z], handR:[x + 0.3, y + 0.25, z],
+      hipL:[x - 0.15, y + 0.3, z], hipR:[x + 0.15, y + 0.3, z],
+      kneeL:[x - 0.15, y, z], kneeR:[x + 0.15, y, z],
+      footL:[x - 0.15, y - 0.25, z], footR:[x + 0.15, y - 0.25, z]};}
+  function sittingOnTop(x,y,z){
+    return {
+      head:[x, y + 1.2, z], neck:[x, y + 1.05, z],
+      shoulderL:[x - 0.2, y + 1.0, z], shoulderR:[x + 0.2, y + 1.0, z],
+      elbowL:[x - 0.3, y + 0.7, z], elbowR:[x + 0.3, y + 0.7, z],
+      handL:[x - 0.3, y + 0.45, z], handR:[x + 0.3, y + 0.45, z],
+      hipL:[x - 0.15, y + 0.5, z], hipR:[x + 0.15, y + 0.5, z],
+      kneeL:[x - 0.15, y + 0.2, z + 0.15], kneeR:[x + 0.15, y + 0.2, z + 0.15],
+      footL:[x - 0.15, y - 0.05, z + 0.3], footR:[x + 0.15, y - 0.05, z + 0.3]};}
+
+  function lyingClosedGuard(x,y,z){
+    const p = lyingOnBack(x,y,z);
+    p.kneeL = [x - 0.18, y + 0.1, z + 0.06];
+    p.kneeR = [x + 0.18, y + 0.1, z + 0.06];
+    p.footL = [x - 0.12, y - 0.1, z + 0.12];
+    p.footR = [x + 0.12, y - 0.1, z + 0.12];
+    return p;
+  }
+
+  // Higher-level BJJ pose builders
+  function poseNeutral(){
+    const A = basePose(0,0,0);
+    A.elbowL[2] += 0.15; A.elbowR[2] += 0.15;
+    A.handL[2] += 0.30;  A.handR[2] += 0.30; A.handL[1] += 0.05; A.handR[1] += 0.05;
+    const B = basePose(0.6,0,0.8);
+    B.elbowL[2] -= 0.15; B.elbowR[2] -= 0.15;
+    B.handL[2] -= 0.30;  B.handR[2] -= 0.30; B.handL[1] += 0.05; B.handR[1] += 0.05;
+    return { A, B };
+  }
+
+  function poseOpenGuard(){
+    const A = lyingOnBack(0,-0.05,0);
+    // Lift knees/feet for open guard hooks
+    A.kneeL[1] += 0.35; A.kneeR[1] += 0.35; A.kneeL[2] += 0.15; A.kneeR[2] += 0.15;
+    A.footL[1] += 0.35; A.footR[1] += 0.35; A.footL[2] += 0.35; A.footR[2] += 0.35;
+
+    // Keep torso mostly horizontal: increase shoulder Z offset rather than Y
+    const hipCA = [(A.hipL[0]+A.hipR[0])/2, (A.hipL[1]+A.hipR[1])/2, (A.hipL[2]+A.hipR[2])/2];
+    const targetTorsoZ = 0.48;
+    A.shoulderL = [A.shoulderL[0], hipCA[1] + 0.06, hipCA[2] + targetTorsoZ];
+    A.shoulderR = [A.shoulderR[0], hipCA[1] + 0.06, hipCA[2] + targetTorsoZ];
+    A.neck = [A.neck[0], hipCA[1] + 0.08, hipCA[2] + targetTorsoZ + 0.12];
+    A.head = [A.head[0], hipCA[1] + 0.10, hipCA[2] + targetTorsoZ + 0.26];
+    // Slightly lift elbows/hands to avoid visual shortening
+    A.elbowL[1] += 0.06; A.elbowR[1] += 0.06;
+    A.handL[1] += 0.04;  A.handR[1] += 0.04;
+
+    // Orange: increase spacing and slight knee bend
+    const B = kneelingOver(0.45,0,0.55);
+    B.kneeL[1] += 0.05; B.kneeR[1] += 0.05;
+    // Hands still near A's shins, with a bit of standoff
+    B.handL = [A.kneeL[0]-0.06, A.kneeL[1]+0.06, A.kneeL[2]-0.06];
+    B.handR = [A.kneeR[0]+0.06, A.kneeR[1]+0.06, A.kneeR[2]-0.06];
+    return { A, B };
+  }
+
+  function poseClosedGuard(){
+    const A = lyingOnBack(0,-0.02,0);
+    A.kneeL[1] += 0.45; A.kneeR[1] += 0.45; A.kneeL[2] += 0.10; A.kneeR[2] += 0.10;
+    // More spacing to avoid overlap
+    const B = kneelingOver(0.26,0,0.34);
+    const hipC = [(B.hipL[0]+B.hipR[0])/2, (B.hipL[1]+B.hipR[1])/2, (B.hipL[2]+B.hipR[2])/2];
+    A.footL = [hipC[0]-0.08, hipC[1]+0.30, hipC[2]-0.02];
+    A.footR = [hipC[0]+0.08, hipC[1]+0.30, hipC[2]-0.02];
+    B.handL = [hipC[0]-0.15, B.handL[1], hipC[2]-0.1];
+    B.handR = [hipC[0]+0.15, B.handR[1], hipC[2]-0.1];
+    return { A, B };
+  }
+
+  function poseKneeShield(){
+    const A = lyingOnSide(0,-0.02,0);
+    A.kneeL = [A.kneeL[0]-0.05, A.kneeL[1]+0.30, A.kneeL[2]+0.18];
+    A.footL = [A.footL[0]-0.02, A.footL[1]+0.24, A.footL[2]+0.30];
+    A.kneeR[1] -= 0.05; A.footR[2] += 0.05;
+    // More spacing
+    const B = kneelingOver(0.30,0,0.32);
+    B.handL = [A.kneeL[0]-0.02, A.kneeL[1]+0.02, A.kneeL[2]-0.05];
+    return { A, B };
+  }
+
+  function poseMount(){
+    const A = lyingOnBack(0,-0.03,0);
+    // Offset B slightly so figures don't visually overlap
+    const B = sittingOnTop(0.12,0,0.24);
+    B.kneeL = [B.kneeL[0]-0.18, B.kneeL[1], B.kneeL[2]+0.05];
+    B.kneeR = [B.kneeR[0]+0.18, B.kneeR[1], B.kneeR[2]+0.05];
+    B.footL = [B.footL[0]-0.18, B.footL[1]-0.02, B.footL[2]+0.18];
+    B.footR = [B.footR[0]+0.18, B.footR[1]-0.02, B.footR[2]+0.18];
+    B.handL[2] -= 0.10; B.handR[2] -= 0.10;
+    return { A, B };
+  }
+
+  const POSES = {
+    neutral: poseNeutral(),
+    openGuard: poseOpenGuard(),
+    closedGuard: poseClosedGuard(),
+    kneeShield: poseKneeShield(),
+    mount: poseMount()
+  };// ---------- Helpers ----------
+  function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
+  function toRad(deg){ return deg * Math.PI / 180; }
+  function pairKey(a,b){ return a < b ? `${a}|${b}` : `${b}|${a}`; }
+
+  function computeDesiredLengths(joints){
+    const m = new Map();
+    for (const [a,b] of BONE_PAIRS) {
+      const pa = new THREE.Vector3(...joints[a]);
+      const pb = new THREE.Vector3(...joints[b]);
+      m.set(pairKey(a,b), pa.distanceTo(pb));
+    }
+    return m;
+  }
+
+  function centerOf(joints, a, b){
+    const pa = new THREE.Vector3(...joints[a]);
+    const pb = new THREE.Vector3(...joints[b]);
+    return new THREE.Vector3().addVectors(pa, pb).multiplyScalar(0.5);
+  }
+
+  function computeTorsoLength(joints){
+    const shoulderCenter = centerOf(joints, 'shoulderL', 'shoulderR');
+    const hipCenter = centerOf(joints, 'hipL', 'hipR');
+    return shoulderCenter.distanceTo(hipCenter);
+  }
+
+  function translateAllJoints(joints, delta){
+    for (const key of Object.keys(joints)) {
+      const [x,y,z] = joints[key];
+      joints[key] = [x - delta.x, y - delta.y, z - delta.z];
+    }
+  }
+
+  // keep torso (shoulder center distance to hip center) equal to neutral
+  function enforceTorsoLength(joints, targetLen){
+    const sL = new THREE.Vector3(...joints.shoulderL);
+    const sR = new THREE.Vector3(...joints.shoulderR);
+    const hL = new THREE.Vector3(...joints.hipL);
+    const hR = new THREE.Vector3(...joints.hipR);
+    const shoulderCenter = new THREE.Vector3().addVectors(sL, sR).multiplyScalar(0.5);
+    const hipCenter = new THREE.Vector3().addVectors(hL, hR).multiplyScalar(0.5);
+    const dir = new THREE.Vector3().subVectors(shoulderCenter, hipCenter);
+    const curLen = dir.length();
+    if (curLen < 1e-6 || Math.abs(curLen - targetLen) < 1e-3) return;
+    dir.normalize();
+    const newShoulderCenter = hipCenter.clone().addScaledVector(dir, targetLen);
+    const delta = new THREE.Vector3().subVectors(newShoulderCenter, shoulderCenter);
+    // move the upper torso chain together to preserve relative proportions
+    const apply = (v) => [v.x + delta.x, v.y + delta.y, v.z + delta.z];
+    const _sL = new THREE.Vector3(...joints.shoulderL);
+    const _sR = new THREE.Vector3(...joints.shoulderR);
+    const _neck = new THREE.Vector3(...joints.neck);
+    const _head = new THREE.Vector3(...joints.head);
+    joints.shoulderL = apply(_sL);
+    joints.shoulderR = apply(_sR);
+    joints.neck      = apply(_neck);
+    joints.head      = apply(_head);
+  }
+
+  function stabilizeAndEnforce(person){
+    const joints = person === 'A' ? jointsA : jointsB;
+    const neutralTorso = person === 'A' ? neutralTorsoLenA : neutralTorsoLenB;
+    // store root (hip center) before constraints to keep figure from drifting
+    const hipBefore = centerOf(joints, 'hipL', 'hipR');
+    // a few iterations to converge lengths
+    for (let i=0;i<8;i++) {
+      enforceConstraints(person, 'hipL');
+      enforceTorsoLength(joints, neutralTorso);
+    }
+    // translate back so hip center stays where it was
+    const hipAfter = centerOf(joints, 'hipL', 'hipR');
+    const delta = new THREE.Vector3().subVectors(hipAfter, hipBefore);
+    if (delta.lengthSq() > 1e-10) translateAllJoints(joints, delta);
+  }
+
+  // Enforce exact neutral bone lengths by reconstructing chains with current directions
+  function enforceExactNeutralLengths(person){
+    const joints = person === 'A' ? jointsA : jointsB;
+    const desired = person === 'A' ? desiredLengthsA : desiredLengthsB;
+    const torsoLen = person === 'A' ? neutralTorsoLenA : neutralTorsoLenB;
+
+    const getL = (a,b)=> desired.get(pairKey(a,b)) ?? new THREE.Vector3(...joints[a]).distanceTo(new THREE.Vector3(...joints[b]));
+    const safeDir = (from, to, fallback)=>{
+      const v = new THREE.Vector3().subVectors(to, from);
+      if (v.lengthSq() < 1e-8) return fallback.clone().normalize();
+      return v.normalize();
+    };
+
+    // Anchor hipL; set hipR by pelvis width
+    const hipL = new THREE.Vector3(...joints.hipL);
+    const hipR = new THREE.Vector3(...joints.hipR);
+    const pelvisDir = safeDir(hipL, hipR, new THREE.Vector3(1,0,0));
+    const pelvisLen = getL('hipL','hipR');
+    const newHipR = hipL.clone().addScaledVector(pelvisDir, pelvisLen);
+    joints.hipR = [newHipR.x, newHipR.y, newHipR.z];
+    // recompute centers
+    const hipCenter = centerOf(joints, 'hipL','hipR');
+
+    // Torso center direction from hips
+    const curShoulderCenter = centerOf(joints, 'shoulderL','shoulderR');
+    let torsoDir = safeDir(hipCenter, curShoulderCenter, new THREE.Vector3(0,1,0));
+    const newShoulderCenter = hipCenter.clone().addScaledVector(torsoDir, torsoLen);
+
+    // Shoulder width symmetric around center
+    const curShoulderDir = safeDir(new THREE.Vector3(...joints.shoulderL), new THREE.Vector3(...joints.shoulderR), new THREE.Vector3(1,0,0));
+    const halfShoulder = getL('shoulderL','shoulderR') * 0.5;
+    const newShoulderL = newShoulderCenter.clone().addScaledVector(curShoulderDir.clone().multiplyScalar(-1), halfShoulder);
+    const newShoulderR = newShoulderCenter.clone().addScaledVector(curShoulderDir, halfShoulder);
+    joints.shoulderL = [newShoulderL.x, newShoulderL.y, newShoulderL.z];
+    joints.shoulderR = [newShoulderR.x, newShoulderR.y, newShoulderR.z];
+
+    // Neck and head along current directions
+    const dNS = 0.5*(getL('neck','shoulderL') + getL('neck','shoulderR'));
+    const neckDir = safeDir(newShoulderCenter, new THREE.Vector3(...joints.neck), torsoDir);
+    const newNeck = newShoulderCenter.clone().addScaledVector(neckDir, dNS);
+    joints.neck = [newNeck.x, newNeck.y, newNeck.z];
+    const headDir = safeDir(newNeck, new THREE.Vector3(...joints.head), neckDir);
+    const headLen = getL('head','neck');
+    const newHead = newNeck.clone().addScaledVector(headDir, headLen);
+    joints.head = [newHead.x, newHead.y, newHead.z];
+
+    // Arms: L and R
+    const placeArm = (side)=>{
+      const S = side==='L' ? newShoulderL : newShoulderR;
+      const shoulderKey = side==='L' ? 'shoulderL' : 'shoulderR';
+      const elbowKey = side==='L' ? 'elbowL' : 'elbowR';
+      const handKey = side==='L' ? 'handL' : 'handR';
+      const elbowDir = safeDir(S, new THREE.Vector3(...joints[elbowKey]), new THREE.Vector3(1,0,0));
+      const upperLen = getL(shoulderKey, elbowKey);
+      const newElbow = S.clone().addScaledVector(elbowDir, upperLen);
+      joints[elbowKey] = [newElbow.x, newElbow.y, newElbow.z];
+      const foreDir = safeDir(newElbow, new THREE.Vector3(...joints[handKey]), elbowDir);
+      const foreLen = getL(elbowKey, handKey);
+      const newHand = newElbow.clone().addScaledVector(foreDir, foreLen);
+      joints[handKey] = [newHand.x, newHand.y, newHand.z];
+    };
+    placeArm('L'); placeArm('R');
+
+    // Legs: L and R
+    const placeLeg = (side)=>{
+      const H = side==='L' ? hipL : newHipR;
+      const hipKey = side==='L' ? 'hipL' : 'hipR';
+      const kneeKey = side==='L' ? 'kneeL' : 'kneeR';
+      const footKey = side==='L' ? 'footL' : 'footR';
+      const kneeDir = safeDir(H, new THREE.Vector3(...joints[kneeKey]), new THREE.Vector3(0,-1,0));
+      const thighLen = getL(hipKey, kneeKey);
+      const newKnee = H.clone().addScaledVector(kneeDir, thighLen);
+      joints[kneeKey] = [newKnee.x, newKnee.y, newKnee.z];
+      const shinDir = safeDir(newKnee, new THREE.Vector3(...joints[footKey]), kneeDir);
+      const shinLen = getL(kneeKey, footKey);
+      const newFoot = newKnee.clone().addScaledVector(shinDir, shinLen);
+      joints[footKey] = [newFoot.x, newFoot.y, newFoot.z];
+    };
+    placeLeg('L'); placeLeg('R');
+
+    // Hinge limits
+    enforceElbowKneeHinges(joints, ELBOW_MAX_DEG, 'shoulderL','elbowL','handL');
+    enforceElbowKneeHinges(joints, ELBOW_MAX_DEG, 'shoulderR','elbowR','handR');
+    enforceElbowKneeHinges(joints, KNEE_MAX_DEG, 'hipL','kneeL','footL');
+    enforceElbowKneeHinges(joints, KNEE_MAX_DEG, 'hipR','kneeR','footR');
+  }
+
+  // Shift all joints so the lowest joint rests on the floor plane
+  function alignJointsToFloor(joints) {
+    let minY = Infinity;
+    for (const key of Object.keys(joints)) {
+      const y = joints[key][1];
+      if (y < minY) minY = y;
+    }
+    if (!isFinite(minY)) return;
+    const dy = (FLOOR_Y + 0.02) - minY;
+    if (Math.abs(dy) < 1e-6) return;
+    for (const key of Object.keys(joints)) {
+      const [x, y, z] = joints[key];
+      joints[key] = [x, y + dy, z];
+    }
+  }
+
+  function rotateAroundAxis(vec, axis, angle){
+    const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+    return vec.clone().applyQuaternion(q);
+  }
+
+  // Adjust endpoints to keep target length. If anchorKey provided, keep that joint fixed.
+  function adjustPairLength(joints, a, b, targetLen, anchorKey){
+    const pa = new THREE.Vector3(...joints[a]);
+    const pb = new THREE.Vector3(...joints[b]);
+    let v = new THREE.Vector3().subVectors(pb, pa);
+    const curLen = v.length();
+    if (curLen < 1e-6 || Math.abs(curLen - targetLen) < 1e-3) return;
+    v.normalize();
+    if (anchorKey === a) {
+      const newPb = pa.clone().addScaledVector(v, targetLen);
+      joints[b] = [newPb.x, newPb.y, newPb.z];
+    } else if (anchorKey === b) {
+      const newPa = pb.clone().addScaledVector(v, -targetLen);
+      joints[a] = [newPa.x, newPa.y, newPa.z];
+    } else {
+      // move both towards meeting target length, around midpoint
+      const mid = new THREE.Vector3().addVectors(pa, pb).multiplyScalar(0.5);
+      const dir = new THREE.Vector3().subVectors(pb, pa).normalize();
+      const half = targetLen * 0.5;
+      const newPa = mid.clone().addScaledVector(dir, -half);
+      const newPb = mid.clone().addScaledVector(dir, half);
+      joints[a] = [newPa.x, newPa.y, newPa.z];
+      joints[b] = [newPb.x, newPb.y, newPb.z];
+    }
+  }
+
+  function enforceElbowKneeHinges(joints, maxDeg, parent, middle, child, anchorKey){
+    const p = new THREE.Vector3(...joints[parent]);
+    const m = new THREE.Vector3(...joints[middle]);
+    const c = new THREE.Vector3(...joints[child]);
+    let u = new THREE.Vector3().subVectors(m, p);
+    let v = new THREE.Vector3().subVectors(c, m);
+    const Lu = u.length();
+    const Lv = v.length();
+    if (Lu < 1e-6 || Lv < 1e-6) return;
+    u.normalize();
+    v.normalize();
+    const minusU = u.clone().multiplyScalar(-1);
+    let dot = clamp(minusU.dot(v), -1, 1);
+    const angle = Math.acos(dot);
+    const maxRad = toRad(maxDeg);
+    if (angle <= maxRad + 1e-3) return;
+    let axis = new THREE.Vector3().crossVectors(minusU, v);
+    if (axis.lengthSq() < 1e-6) axis = new THREE.Vector3(0,1,0);
+    axis.normalize();
+    const vTarget = rotateAroundAxis(minusU, axis, maxRad);
+    // adjust child to respect hinge angle
+    const newC = m.clone().addScaledVector(vTarget, Lv);
+    joints[child] = [newC.x, newC.y, newC.z];
+  }
+
+  function enforceConstraints(person, anchorKey){
+    const joints = person === 'A' ? jointsA : jointsB;
+    const desired = person === 'A' ? desiredLengthsA : desiredLengthsB;
+    // maintain bone lengths
+    for (const [a,b] of BONE_PAIRS) {
+      const key = pairKey(a,b);
+      const L = desired.get(key);
+      if (L) adjustPairLength(joints, a, b, L, anchorKey);
+    }
+    // hinge limits
+    enforceElbowKneeHinges(joints, ELBOW_MAX_DEG, 'shoulderL','elbowL','handL', anchorKey);
+    enforceElbowKneeHinges(joints, ELBOW_MAX_DEG, 'shoulderR','elbowR','handR', anchorKey);
+    enforceElbowKneeHinges(joints, KNEE_MAX_DEG, 'hipL','kneeL','footL', anchorKey);
+    enforceElbowKneeHinges(joints, KNEE_MAX_DEG, 'hipR','kneeR','footR', anchorKey);
+  }
+
+  // ---------- Initialize joint objects ----------
+  function initJoints() {
+    jointsA = JSON.parse(JSON.stringify(POSES[startPosition].A));
+    jointsB = JSON.parse(JSON.stringify(POSES[startPosition].B));
+    // Ensure both figures start at the floor
+    alignJointsToFloor(jointsA);
+    alignJointsToFloor(jointsB);
+  }
+
+  // ---------- Create dummy (simple crash-dummy) ----------
+  function createDummy(joints, colorHex) {
+    const group = new THREE.Group();
+    const jointSpheres = [];
+    const boneList = [];
+
+    const jointMat = new THREE.MeshPhongMaterial({ color: 0x111111 });
+    const bodyMat = new THREE.MeshPhongMaterial({ color: colorHex, shininess: 30 });
+
+    // joint spheres (head bigger; ONLY shoulders slightly larger)
+    for (const key of JOINT_KEYS) {
+      const radius = key === "head"
+        ? HEAD_RADIUS
+        : (key.startsWith("shoulder") ? JOINT_BASE_R * SHOULDER_JOINT_SCALE : JOINT_BASE_R);
+      const sphere = new THREE.Mesh(new THREE.SphereGeometry(radius), jointMat);
+      sphere.position.set(...joints[key]);
+      sphere.userData.key = key;
+      group.add(sphere);
+      jointSpheres.push(sphere);
+    }
+
+    // bones (cylinders)
+    for (const [a, b] of BONE_PAIRS) {
+      const start = new THREE.Vector3(...joints[a]);
+      const end = new THREE.Vector3(...joints[b]);
+      const [rt, rb] = getBoneRadii(a, b);
+      const geom = new THREE.CylinderGeometry(rt, rb, 1, 14);
+      const cyl = new THREE.Mesh(geom, bodyMat);
+      alignCylinder(cyl, start, end);
+      group.add(cyl);
+      boneList.push({ mesh: cyl, a, b });
+    }
+
+    // torso anchor (invisible) and extras
+    const torsoGeom = new THREE.BoxGeometry(0.5, 0.6, 0.28);
+    const torso = new THREE.Mesh(torsoGeom, bodyMat);
+    torso.visible = false; // hide rectangle torso from view
+    group.add(torso);
+    // Pelvis: slightly rounded/trapezoidal frustum (vertical cylinder scaled in X/Z)
+    const pelvis = new THREE.Mesh(new THREE.CylinderGeometry(PELVIS_BASE_TOP_R, PELVIS_BASE_BOTTOM_R, PELVIS_BASE_H, 18), bodyMat);
+    group.add(pelvis);
+    const spine = new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.045,1,14), bodyMat);
+    group.add(spine);
+    // Torso visual: tapered frustum (smooth)
+    const chest = new THREE.Mesh(new THREE.CylinderGeometry(TORSO_BASE_TOP_R, TORSO_BASE_BOTTOM_R, TORSO_BASE_H, 24), bodyMat);
+    group.add(chest);
+    const shoulderBar = new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,1,14), bodyMat);
+    group.add(shoulderBar);
+    // Rounded hands/feet (ellipsoids) â€” remove blocky boxes
+    const handLBox = new THREE.Mesh(new THREE.SphereGeometry(HAND_SPHERE_R, 16, 12), bodyMat);
+    const handRBox = new THREE.Mesh(new THREE.SphereGeometry(HAND_SPHERE_R, 16, 12), bodyMat);
+    const footLBox = new THREE.Mesh(new THREE.SphereGeometry(FOOT_SPHERE_R, 18, 14), bodyMat);
+    const footRBox = new THREE.Mesh(new THREE.SphereGeometry(FOOT_SPHERE_R, 18, 14), bodyMat);
+    group.add(handLBox); group.add(handRBox); group.add(footLBox); group.add(footRBox);
+    // extras will be positioned after scene initialization with figure-specific dimensions
+
+    return { group, jointSpheres, boneList, torso, pelvis, spine, chest, shoulderBar, handLBox, handRBox, footLBox, footRBox};}
+
+  // align cylinder from start to end (use quaternion from Y axis)
+  function alignCylinder(mesh, start, end) {
+    const mid = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+    mesh.position.copy(mid);
+    const v = new THREE.Vector3().subVectors(end, start);
+    const length = v.length();
+    if (length < 1e-6) return;
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), v.clone().normalize());
+    mesh.quaternion.copy(q);
+    mesh.scale.set(1, length, 1);
+  }
+
+  // Update torso box from joints (shoulders & hips)
+  function updateTorsoFromJoints(torsoMesh, joints, dims) {
+    const sL = new THREE.Vector3(...joints.shoulderL);
+    const sR = new THREE.Vector3(...joints.shoulderR);
+    const hL = new THREE.Vector3(...joints.hipL);
+    const hR = new THREE.Vector3(...joints.hipR);
+    const shoulderCenter = new THREE.Vector3().addVectors(sL, sR).multiplyScalar(0.5);
+    const hipCenter = new THREE.Vector3().addVectors(hL, hR).multiplyScalar(0.5);
+
+    const mid = new THREE.Vector3().addVectors(shoulderCenter, hipCenter).multiplyScalar(0.5);
+    // clamp torso movement from its initial center later
+    torsoMesh.position.copy(mid);
+
+    // constant torso dimensions (from neutral)
+    const width = clamp(dims.torsoWidth, TORSO_WIDTH_MIN, TORSO_WIDTH_MAX);
+    const height = clamp(dims.torsoHeight, TORSO_HEIGHT_MIN, TORSO_HEIGHT_MAX);
+    const depth = dims.torsoDepth;
+    torsoMesh.scale.set(width / 0.5, height / 0.6, depth / 0.28);
+
+    // no torso caps/extra blocks
+
+    // rotate torso to align with vector from hipCenter -> shoulderCenter (tilt)
+    const forward = new THREE.Vector3().subVectors(shoulderCenter, hipCenter).normalize();
+    if (forward.lengthSq() > 0.0001) {
+      // compute quaternion that rotates (0,1,0) to forward vector direction in local Y axis
+      const up = new THREE.Vector3(0, 1, 0);
+      const q = new THREE.Quaternion().setFromUnitVectors(up, forward);
+      // clamp rotation magnitude to make torso not flip crazy
+      const angle = 2 * Math.acos(q.w);
+      const clampedAngle = Math.min(angle, TORSO_ROT_LIMIT_RAD);
+      if (angle > 1e-4) {
+        const axis = new THREE.Vector3(q.x, q.y, q.z).normalize();
+        torsoMesh.setRotationFromAxisAngle(axis, clampedAngle);
+      }
+    }
+  }
+
+  function updateBodyExtras(parts, joints, dims){
+    const { torso, pelvis, spine, chest, shoulderBar, handLBox, handRBox, footLBox, footRBox } = parts;
+    // Update invisible torso anchor (for limits/clamping elsewhere)
+    updateTorsoFromJoints(torso, joints, dims);
+
+    // ---- Hips / Pelvis (rounded trapezoid)
+    const hL = new THREE.Vector3(...joints.hipL);
+    const hR = new THREE.Vector3(...joints.hipR);
+    const hipCenter = new THREE.Vector3().addVectors(hL, hR).multiplyScalar(0.5);
+    const hipSpan = hL.distanceTo(hR);
+    const sL = new THREE.Vector3(...joints.shoulderL);
+    const sR = new THREE.Vector3(...joints.shoulderR);
+    const shoulderCenter = new THREE.Vector3().addVectors(sL, sR).multiplyScalar(0.5);
+    const shoulderW = sL.distanceTo(sR);
+    const targetPelvisW = Math.max(0.75 * shoulderW, hipSpan);
+    const pelvisDepth = TORSO_DEPTH_FIXED * 0.9;
+    const pelvisHeight = 0.18;
+    pelvis.position.copy(hipCenter);
+    const sxPelvis = (targetPelvisW) / (2 * PELVIS_BASE_TOP_R);
+    const szPelvis = pelvisDepth / (2 * PELVIS_BASE_TOP_R);
+    const syPelvis = pelvisHeight / PELVIS_BASE_H;
+    pelvis.scale.set(sxPelvis, syPelvis, szPelvis);
+    const hipDir = new THREE.Vector3().subVectors(hR, hL);
+    pelvis.rotation.set(0, Math.atan2(hipDir.z, hipDir.x), 0);
+
+    // ---- Spine connector
+    alignCylinder(spine, hipCenter, shoulderCenter);
+
+    // ---- Torso frustum (wider at shoulders, narrower at hips)
+    const chestCenter = new THREE.Vector3().lerpVectors(hipCenter, shoulderCenter, 0.58);
+    chest.position.copy(chestCenter);
+    const shoulderMarkerR = JOINT_BASE_R * SHOULDER_JOINT_SCALE;
+    const maxTopByMarkers = Math.max(0, shoulderW - 2 * shoulderMarkerR - 0.01);
+    const ratioTB = TORSO_BASE_BOTTOM_R / TORSO_BASE_TOP_R;
+    const targetTopNominal = 0.8 * shoulderW;
+    const minTopByHips = (targetPelvisW * 1.03) / ratioTB;
+    const torsoTopW = clamp(targetTopNominal, minTopByHips, maxTopByMarkers);
+    const spanHS = shoulderCenter.distanceTo(hipCenter);
+    const rawTorsoH = Math.min(HEAD_DIAM * 3.0, spanHS * 0.95);
+    const torsoDepth = clamp(dims.chestDepth ?? TORSO_DEPTH_FIXED, 0.26, 1.0);
+    const sxTorso = (torsoTopW) / (2 * TORSO_BASE_TOP_R);
+    const szTorso = torsoDepth / (2 * TORSO_BASE_TOP_R);
+    const syTorso = rawTorsoH / TORSO_BASE_H;
+    chest.scale.set(sxTorso, syTorso, szTorso);
+    const forward = new THREE.Vector3().subVectors(shoulderCenter, hipCenter).normalize();
+    if (forward.lengthSq() > 1e-6) {
+      const up = new THREE.Vector3(0,1,0);
+      const q = new THREE.Quaternion().setFromUnitVectors(up, forward);
+      const angle = 2 * Math.acos(q.w);
+      const clampedAngle = Math.min(angle, TORSO_ROT_LIMIT_RAD);
+      if (angle > 1e-4) {
+        const axis = new THREE.Vector3(q.x,q.y,q.z).normalize();
+        chest.setRotationFromAxisAngle(axis, clampedAngle);
+      }
+    }
+
+    // ---- Shoulder bar (kept slim, aligns to shoulders)
+    alignCylinder(shoulderBar, sL, sR);
+
+    // ---- Hands (rounded ellipsoids, align along forearm)
+    const handL = new THREE.Vector3(...joints.handL);
+    const elbowL = new THREE.Vector3(...joints.elbowL);
+    const vHL = new THREE.Vector3().subVectors(handL, elbowL);
+    if (vHL.length()>1e-6) {
+      handLBox.position.copy(handL);
+      handLBox.scale.set(HAND_W/(2*HAND_SPHERE_R), HAND_H/(2*HAND_SPHERE_R), HAND_L/(2*HAND_SPHERE_R));
+      const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), vHL.clone().normalize());
+      handLBox.quaternion.copy(q);
+    }
+    const handR = new THREE.Vector3(...joints.handR);
+    const elbowR = new THREE.Vector3(...joints.elbowR);
+    const vHR = new THREE.Vector3().subVectors(handR, elbowR);
+    if (vHR.length()>1e-6) {
+      handRBox.position.copy(handR);
+      handRBox.scale.set(HAND_W/(2*HAND_SPHERE_R), HAND_H/(2*HAND_SPHERE_R), HAND_L/(2*HAND_SPHERE_R));
+      const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), vHR.clone().normalize());
+      handRBox.quaternion.copy(q);
+    }
+
+    // ---- Feet: rounded ellipsoids, flat on ground, compact
+    const footL = new THREE.Vector3(...joints.footL);
+    const footR = new THREE.Vector3(...joints.footR);
+    const footCenterY = FLOOR_Y + (FOOT_H / 2);
+    const fwdXZ = new THREE.Vector3().subVectors(shoulderCenter, hipCenter); fwdXZ.y = 0; fwdXZ.normalize();
+    const yaw = Math.atan2(fwdXZ.x, fwdXZ.z);
+    const footScaleX = FOOT_W/(2*FOOT_SPHERE_R), footScaleY = FOOT_H/(2*FOOT_SPHERE_R), footScaleZ = FOOT_L/(2*FOOT_SPHERE_R);
+    const qFoot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
+    footLBox.position.set(footL.x, footCenterY, footL.z);
+    footLBox.scale.set(footScaleX, footScaleY, footScaleZ);
+    footLBox.setRotationFromQuaternion(qFoot);
+    footRBox.position.set(footR.x, footCenterY, footR.z);
+    footRBox.scale.set(footScaleX, footScaleY, footScaleZ);
+    footRBox.setRotationFromQuaternion(qFoot);
+  }
+
+  // keep exports last if any
+</script>
+
+<canvas bind:this={canvas} style="width:100vw; height:100vh; display:block;"></canvas>

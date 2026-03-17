@@ -1,0 +1,222 @@
+  <div class="preset-ui bottom" class:collapsed={toolbarCollapsed} bind:this={toolbarEl}>
+    <!-- Collapse toggle (top-right) -->
+    <button class="icon-btn toolbar-toggle" on:click={()=> toolbarCollapsed = !toolbarCollapsed} title="Show/hide extra controls">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  {#if !hidePresetControls}
+    <span style="font-size:13px; color:#444;">Preset</span>
+    <select bind:value={startPosition} on:change={() => setPosition(startPosition)} style="font-size:13px; padding:4px 6px; border:1px solid #ccc; border-radius:6px;">
+      <option value="neutral">Neutral</option>
+      <option value="openGuard">Open Guard</option>
+      <option value="closedGuard">Closed Guard</option>
+      <option value="halfGuard">Half Guard</option>
+      <option value="kneeShield">Knee Shield</option>
+      <option value="mount">Mount</option>
+      <option value="sideControl">Side Control</option>
+      <option value="backControl">Back Control</option>
+    </select>
+  {/if}
+    <!-- replaced by top-right toggle -->
+    <button class="btn btn--toggle" class:is-active={!singleJointMode}
+      on:click={toggleSingleJointMode}
+      title="Toggle movement mode (J)">{singleJointMode ? 'Single Joint Mode' : 'Natural Mode'}</button>
+  <button class="btn collapse-hide" on:click={removeAllConstraints} title="Release all grips (constraints)">Release Grips</button>
+  <button class="btn collapse-hide" on:click={mirrorPoseYZPlane} title="Mirror current pose across YZ plane">Mirror Pose</button>
+  <button class="btn btn--toggle collapse-hide" class:is-active={showControlSettings}
+    on:click={() => showControlSettings = !showControlSettings}
+    title="Toggle control settings panel">Control Settings</button>
+  <button class="btn btn--toggle" class:is-active={torsoFreeze}
+    on:click={toggleTorsoFreeze}
+    title="Lock torso position and hip bend (Q)">Torso Lock (Q)</button>
+  <!-- Custom Presets -->
+  <span class="meta-label collapse-hide" style="margin-left:8px; font-size:13px; color:#444;">Custom Presets</span>
+  <input class="input collapse-hide" type="text" bind:value={newPresetName} placeholder="Name preset" style="width:clamp(120px,22vw,200px);" />
+  <button class="btn collapse-hide" on:click={saveCurrentPreset} title="Save current pose as a named preset">Save Preset</button>
+  {#if savedPresets.length}
+    <select bind:this={savedPresetsSelectEl} class="input collapse-hide" style="width:auto; min-width:clamp(140px,22vw,220px);" on:change={(e)=> loadSavedPreset(+e.currentTarget.value)}>
+      <option value="" disabled selected>Select preset</option>
+      {#each savedPresets as pr, i}
+        <option value={i}>{pr.name}</option>
+      {/each}
+    </select>
+    <button class="btn collapse-hide" on:click={()=>{ const i = +(savedPresetsSelectEl?.value ?? -1); if (!isNaN(i)) deleteSavedPreset(i); }} title="Delete selected preset">Delete</button>
+  {/if}
+  <!-- Playback controls -->
+  <span class="meta-label collapse-hide" style="margin-left:8px; font-size:13px; color:#444;">Playbacks</span>
+  <input class="input collapse-hide" type="text" bind:value={newPlaybackName} placeholder="Name playback" style="width:clamp(120px,22vw,200px);" />
+  <button class="icon-btn collapse-hide" on:click={saveCurrentPlayback} title="Save playback">
+    <svg class="icon" viewBox="0 0 24 24">
+      <path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/>
+      <rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/>
+    </svg>
+  </button>
+  {#if savedPlaybacks.length}
+    <select class="input collapse-hide" style="width:auto; min-width:clamp(140px,22vw,220px);" on:change={(e)=> loadSavedPlayback(+e.currentTarget.value)}>
+      <option value="" disabled selected>Select saved</option>
+      {#each savedPlaybacks as pb, i}
+        <option value={i}>{pb.name} ({pb.frames?.length||0})</option>
+      {/each}
+    </select>
+    <button class="icon-btn collapse-hide" on:click={()=>{ const sel = (document.activeElement && document.activeElement.tagName==='SELECT') ? +document.activeElement.value : -1; if (!isNaN(sel)) deleteSavedPlayback(sel); }} title="Delete selected saved playback">
+      <svg class="icon" viewBox="0 0 24 24">
+        <path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  {/if}
+  <span class="meta-label collapse-hide" style="margin-left:8px; font-size:13px; color:#444;">Playback</span>
+  <input class="input collapse-hide" type="text" bind:value={comment} placeholder="Frame comment" style="width:clamp(120px,30vw,240px);" />
+  <button class="icon-btn collapse-hide" on:click={saveCurrentFrame} title="Save current frame">
+    <svg class="icon" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </button>
+  <button class="icon-btn" on:click={prevFrame} title="Previous frame">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <button class="icon-btn" on:click={nextFrame} title="Next frame">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause playback">
+    {#if playing}
+      <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
+    {:else}
+      <svg class="icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+    {/if}
+  </button>
+  <span style="font-size:12px; color:#666;">{poses.length? (currentFrame+1) : 0}/{poses.length}</span>
+  <label class="collapse-hide" for="playback-speed" style="font-size:12px; color:#444; margin-left:6px;">Speed</label>
+  <input class="collapse-hide" id="playback-speed" type="range" min="200" max="3000" step="100" value={playbackIntervalMs} on:input={(e)=>{ playbackIntervalMs = +e.currentTarget.value; if (playing) { try{ if (intervalId) clearInterval(intervalId); }catch(_){} intervalId = setInterval(()=>{ try{ nextFrame(); }catch(_){} }, Math.max(100, playbackIntervalMs|0)); } }} style="width:clamp(100px,22vw,180px);" />
+  <button class="btn btn--primary" on:click={() => fourViewMode = !fourViewMode} title="Toggle 4-view layout">{fourViewMode ? 'Single View' : '4-View'}</button>
+</div>
+
+{#if showControlSettings}
+  <div style="position:fixed; top:64px; left:12px; z-index:11; background:rgba(255,255,255,0.95); border:1px solid #ddd; border-radius:8px; padding:10px 12px; box-shadow:0 2px 6px rgba(0,0,0,0.08); min-width: 240px;">
+    <div style="font: 600 13px/1.2 system-ui, sans-serif; color:#333; margin-bottom:8px;">Controls</div>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+      <span style="font: 12px/1.2 system-ui, sans-serif; color:#444; white-space:nowrap;">Scroll sensitivity</span>
+      <input type="range" min="0.005" max="0.2" step="0.005" bind:value={scrollSensitivity} style="flex:1;" />
+      <input type="number" step="0.005" min="0.005" max="0.5" bind:value={scrollSensitivity} style="width:64px; font-size:12px; padding:2px 4px; border:1px solid #ccc; border-radius:4px;" />
+    </div>
+  </div>
+{/if}
+
+<!-- Removed menu panel/button per request -->
+{#if false}
+  <div class="menu-panel">
+    <div class="menu-section">
+      <div class="menu-title">Playback</div>
+      <div class="row gap-sm">
+        <button class="icon-btn" on:click={prevFrame} title="Previous frame">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn icon-btn--primary" on:click={togglePlayback} title="Play / Pause">
+          {#if playing}
+            <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
+          {:else}
+            <svg class="icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+          {/if}
+        </button>
+        <button class="icon-btn" on:click={nextFrame} title="Next frame">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <span class="counter">{poses.length? (currentFrame+1) : 0}/{poses.length}</span>
+      </div>
+      <div class="row gap-sm">
+        <label class="slim" for="menu-speed">Speed</label>
+        <input id="menu-speed" type="range" min="200" max="3000" step="100"
+          value={playbackIntervalMs}
+          on:input={(e)=>{ playbackIntervalMs = +e.currentTarget.value; if (playing) { try{ if (intervalId) clearInterval(intervalId); }catch(_){} intervalId = setInterval(()=>{ try{ nextFrame(); }catch(_){} }, Math.max(100, playbackIntervalMs|0)); } }}
+          class="range" />
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Modes</div>
+      <div class="row gap-sm wrap">
+        <button class="chip" class:chip--active={!singleJointMode} on:click={toggleSingleJointMode} title="Toggle Natural / Single Joint (J)">{singleJointMode ? 'Single Joint' : 'Natural'}</button>
+        <button class="chip" class:chip--active={torsoFreeze} on:click={toggleTorsoFreeze} title="Torso Lock (Q)">Torso Lock</button>
+        <button class="chip" on:click={()=> fourViewMode = !fourViewMode}>{fourViewMode ? 'Single View' : '4-View'}</button>
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Actions</div>
+      <div class="row gap-sm wrap">
+        <button class="btn btn--ghost" on:click={removeAllConstraints}>Release Grips</button>
+        <button class="btn btn--ghost" on:click={mirrorPoseYZPlane}>Mirror Pose</button>
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Presets</div>
+      <div class="row gap-sm wrap">
+        <select bind:value={startPosition} on:change={() => setPosition(startPosition)} class="input">
+          <option value="neutral">Neutral</option>
+          <option value="openGuard">Open Guard</option>
+          <option value="closedGuard">Closed Guard</option>
+          <option value="halfGuard">Half Guard</option>
+          <option value="kneeShield">Knee Shield</option>
+          <option value="mount">Mount</option>
+          <option value="sideControl">Side Control</option>
+          <option value="backControl">Back Control</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Saved Playbacks</div>
+      <div class="row gap-sm wrap">
+        <input class="input" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
+        <button class="icon-btn" on:click={saveCurrentPlayback} title="Save playback">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        </button>
+        {#if savedPlaybacks.length}
+          <select class="input" on:change={(e)=> loadSavedPlayback(+e.currentTarget.value)}>
+            <option value="" disabled selected>Select saved</option>
+            {#each savedPlaybacks as pb, i}
+              <option value={i}>{pb.name} ({pb.frames?.length||0})</option>
+            {/each}
+          </select>
+          <button class="icon-btn" on:click={()=>{ const sel = (document.activeElement && document.activeElement.tagName==='SELECT') ? +document.activeElement.value : -1; if (!isNaN(sel)) deleteSavedPlayback(sel); }} title="Delete selected">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </button>
+        {/if}
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Frame</div>
+      <div class="row gap-sm wrap">
+        <input class="input" type="text" bind:value={comment} placeholder="Frame comment" />
+        <button class="icon-btn" on:click={saveCurrentFrame} title="Save frame">
+          <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+  <canvas bind:this={canvas} style="width:100vw; height:100vh; display:block;"></canvas>
+
+{#if commentVisible}
+  <div class="comment-box" bind:this={commentEl} role="note" aria-live="polite" style="left: {commentPos.left}px; top: {commentPos.top}px;">
+    {commentText}
+  </div>
+{/if}
+
+{#if fourViewMode}
+  <!-- Labels and separators overlay -->
+  <div style="position:fixed; inset:0; pointer-events:none; z-index:5;">
+    <!-- separator lines -->
+    <div style="position:absolute; left:50%; top:0; bottom:0; width:1px; background:rgba(0,0,0,0.12);"></div>
+    <div style="position:absolute; top:50%; left:0; right:0; height:1px; background:rgba(0,0,0,0.12);"></div>
+    <!-- labels -->
+    <div style="position:absolute; left:12px; top:12px; font: 12px/1.2 system-ui, sans-serif; background:rgba(0,0,0,0.55); color:#fff; padding:2px 6px; border-radius:4px;">Perspective</div>
+    <div style="position:absolute; right:12px; top:12px; font: 12px/1.2 system-ui, sans-serif; background:rgba(0,0,0,0.55); color:#fff; padding:2px 6px; border-radius:4px;">Front</div>
+    <div style="position:absolute; left:12px; bottom: calc(50% + 12px); font: 12px/1.2 system-ui, sans-serif; background:rgba(0,0,0,0.55); color:#fff; padding:2px 6px; border-radius:4px;">Side</div>
+    <div style="position:absolute; right:12px; bottom: calc(50% + 12px); font: 12px/1.2 system-ui, sans-serif; background:rgba(0,0,0,0.55); color:#fff; padding:2px 6px; border-radius:4px;">Top</div>
+  </div>

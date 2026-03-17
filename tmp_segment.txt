@@ -1,0 +1,179 @@
+<!-- Top-left menu button -->
+<button class="menu-fab" on:click={() => menuOpen = !menuOpen} aria-label="Menu" title="Menu">
+  {#if !menuOpen}
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  {:else}
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  {/if}
+  <span class="menu-fab__label">Menu</span>
+</button>
+
+<!-- Slide-down menu panel -->
+{#if menuOpen}
+  <div class="menu-panel">
+    <div class="menu-section">
+      <div class="menu-title">Playback</div>
+      <div class="row gap-sm">
+        <button class="icon-btn" on:click={prevFrame} title="Previous frame">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn icon-btn--primary" on:click={togglePlayback} title="Play / Pause">
+          {#if playing}
+            <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
+          {:else}
+            <svg class="icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+          {/if}
+        </button>
+        <button class="icon-btn" on:click={nextFrame} title="Next frame">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <span class="counter">{poses.length? (currentFrame+1) : 0}/{poses.length}</span>
+      </div>
+      <div class="row gap-sm">
+        <label class="slim" for="menu-speed">Speed</label>
+        <input id="menu-speed" type="range" min="200" max="3000" step="100"
+          value={playbackIntervalMs}
+          on:input={(e)=>{ playbackIntervalMs = +e.currentTarget.value; if (playing) { try{ if (intervalId) clearInterval(intervalId); }catch(_){} intervalId = setInterval(()=>{ try{ nextFrame(); }catch(_){} }, Math.max(100, playbackIntervalMs|0)); } }}
+          class="range" />
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Modes</div>
+      <div class="row gap-sm wrap">
+        <button class="chip" class:chip--active={!singleJointMode} on:click={toggleSingleJointMode} title="Toggle Natural / Single Joint (J)">{singleJointMode ? 'Single Joint' : 'Natural'}</button>
+        <button class="chip" class:chip--active={torsoFreeze} on:click={toggleTorsoFreeze} title="Torso Lock (Q)">Torso Lock</button>
+        <button class="chip" on:click={()=> fourViewMode = !fourViewMode}>{fourViewMode ? 'Single View' : '4-View'}</button>
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Actions</div>
+      <div class="row gap-sm wrap">
+        <button class="btn btn--ghost" on:click={removeAllConstraints}>Release Grips</button>
+        <button class="btn btn--ghost" on:click={mirrorPoseYZPlane}>Mirror Pose</button>
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Presets</div>
+      <div class="row gap-sm wrap">
+        <select bind:value={startPosition} on:change={() => setPosition(startPosition)} class="input">
+          <option value="neutral">Neutral</option>
+          <option value="openGuard">Open Guard</option>
+          <option value="closedGuard">Closed Guard</option>
+          <option value="halfGuard">Half Guard</option>
+          <option value="kneeShield">Knee Shield</option>
+          <option value="mount">Mount</option>
+          <option value="sideControl">Side Control</option>
+          <option value="backControl">Back Control</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Saved Playbacks</div>
+      <div class="row gap-sm wrap">
+        <input class="input" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
+        <button class="btn btn--ghost" on:click={saveCurrentPlayback}>Save</button>
+        {#if savedPlaybacks.length}
+          <select class="input" on:change={(e)=> loadSavedPlayback(+e.currentTarget.value)}>
+            <option value="" disabled selected>Select saved</option>
+            {#each savedPlaybacks as pb, i}
+              <option value={i}>{pb.name} ({pb.frames?.length||0})</option>
+            {/each}
+          </select>
+          <button class="btn btn--ghost" on:click={()=>{ const sel = (document.activeElement && document.activeElement.tagName==='SELECT') ? +document.activeElement.value : -1; if (!isNaN(sel)) deleteSavedPlayback(sel); }}>Delete</button>
+        {/if}
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="menu-title">Frame</div>
+      <div class="row gap-sm wrap">
+        <input class="input" type="text" bind:value={comment} placeholder="Frame comment" />
+        <button class="btn btn--ghost" on:click={saveCurrentFrame}>Save Frame</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<canvas bind:this={canvas} style="width:100vw; height:100vh; display:block;"></canvas>
+
+{#if fourViewMode}
+  <!-- Labels and separators overlay -->
+  <div style="position:fixed; inset:0; pointer-events:none; z-index:5;">
+    <!-- separator lines -->
+    <div style="position:absolute; left:50%; top:0; bottom:0; width:1px; background:rgba(0,0,0,0.12);"></div>
+    <div style="position:absolute; top:50%; left:0; right:0; height:1px; background:rgba(0,0,0,0.12);"></div>
+    <!-- labels -->
+    <div style="position:absolute; left:12px; top:12px; font: 12px/1.2 system-ui, sans-serif; background:rgba(0,0,0,0.55); color:#fff; padding:2px 6px; border-radius:4px;">Perspective</div>
+    <div style="position:absolute; right:12px; top:12px; font: 12px/1.2 system-ui, sans-serif; background:rgba(0,0,0,0.55); color:#fff; padding:2px 6px; border-radius:4px;">Front</div>
+    <div style="position:absolute; left:12px; bottom: calc(50% + 12px); font: 12px/1.2 system-ui, sans-serif; background:rgba(0,0,0,0.55); color:#fff; padding:2px 6px; border-radius:4px;">Side</div>
+    <div style="position:absolute; right:12px; bottom: calc(50% + 12px); font: 12px/1.2 system-ui, sans-serif; background:rgba(0,0,0,0.55); color:#fff; padding:2px 6px; border-radius:4px;">Top</div>
+  </div>
+{/if}
+
+<!-- Custom crosshair cursor shown while joint is lock-orbiting (WASD) -->
+<div bind:this={lockCursorEl} style="position:fixed; z-index:1001; width:14px; height:14px; margin:-7px 0 0 -7px; border:2px solid #1e90ff; border-radius:50%; pointer-events:none; display:none;"></div>
+
+<style>
+  :global(.lil-gui) {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+  }
+  /* Responsive toolbar */
+  .preset-ui { backdrop-filter: saturate(180%) blur(8px); box-sizing: border-box; }
+  .preset-ui.bottom { position: fixed; bottom: 12px; left: 12px; right: 12px; z-index: 10; background: rgba(255,255,255,0.9); border:1px solid #ddd; border-radius:8px; padding:8px 10px; box-shadow:0 2px 6px rgba(0,0,0,0.08); display:flex; gap:8px; align-items:center; flex-wrap:wrap; max-width: calc(100vw - 24px); }
+  .preset-ui.side { position: fixed; top: 56px; left: 12px; bottom: 12px; width: min(340px, 42vw); z-index: 10; background: rgba(255,255,255,0.95); border:1px solid #ddd; border-radius:10px; padding:10px; box-shadow:0 8px 20px rgba(0,0,0,0.08); display:flex; flex-direction: column; gap: 8px; align-items: stretch; overflow: auto; }
+  .preset-ui.side .btn, .preset-ui.side .input, .preset-ui.side select { width: 100%; }
+  .preset-ui.side .meta-label { display: none; }
+  .btn { font: 13px/1 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 6px 10px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; color: #111; cursor: pointer; transition: background .15s, border-color .15s, box-shadow .15s; }
+  .btn:hover { background: #f7f8fa; border-color: #c4cbd3; }
+  .btn:focus-visible { outline: 2px solid #0b5bd3; outline-offset: 2px; }
+  .btn--primary { border-color: #3b82f6; color: #0b5bd3; background: #eef5ff; }
+  .btn--primary:hover { background: #e5f0ff; }
+  .btn--ghost { background: transparent; border-color: #d0d7de; }
+  .btn--toggle.is-active { border-color: #16a34a; color: #166534; background: #ecfdf5; }
+  .input { font: 13px/1.2 system-ui, sans-serif; padding: 6px 8px; border:1px solid #d0d7de; border-radius:8px; }
+  .input:focus-visible { outline: 2px solid #0b5bd3; outline-offset: 2px; }
+  .preset-ui.collapsed .collapse-hide { display: none !important; }
+  .icon { width: 18px; height: 18px; display: block; }
+  .icon-btn { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:9999px; border:1px solid #d0d7de; background:#fff; color:#111; cursor:pointer; transition: background .15s, border-color .15s, box-shadow .15s; }
+  .icon-btn:hover { background:#f7f8fa; border-color:#c4cbd3; }
+  .icon-btn--primary { border-color:#3b82f6; background:#eef5ff; color:#0b5bd3; }
+
+  .menu-fab { position:fixed; top:12px; left:12px; z-index:20; display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:9999px; border:1px solid #d0d7de; background:#fff; box-shadow:0 4px 10px rgba(0,0,0,0.08); cursor:pointer; }
+  .menu-fab__label { font: 13px/1 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:#111; }
+  .menu-panel { position:fixed; top:56px; left:12px; z-index:19; width: min(360px, calc(100vw - 24px)); max-height: 70vh; overflow:auto; background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,0.12); padding:12px; }
+  .menu-section { padding:8px 0; border-top:1px solid #f0f2f5; }
+  .menu-section:first-child { border-top: 0; padding-top:0; }
+  .menu-title { font: 600 13px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:#374151; margin: 0 0 8px 0; }
+  .row { display:flex; align-items:center; }
+  .gap-sm { gap:8px; }
+  .wrap { flex-wrap: wrap; }
+  .slim { font: 12px/1.2 system-ui, sans-serif; color:#555; }
+  .range { flex:1; }
+  .counter { font:12px/1.2 system-ui, sans-serif; color:#555; margin-left:8px; }
+  .chip { font: 12px/1 system-ui, sans-serif; padding:6px 10px; border:1px solid #d0d7de; border-radius:9999px; background:#fff; color:#111; cursor:pointer; }
+  .chip--active { border-color:#10b981; background:#ecfdf5; color:#065f46; }
+
+  @media (max-width: 900px){
+    .preset-ui { bottom: 10px; left: 10px; right: 10px; gap: 6px; padding: 6px 8px; }
+    .btn { padding: 5px 8px; font-size: 12px; }
+    .input { font-size: 12px; }
+  }
+  @media (max-width: 560px){
+    .meta-label { display: none; }
+    .preset-ui { gap: 6px; }
+  }
+</style>
+
+
+
+
+  
+
+ 
