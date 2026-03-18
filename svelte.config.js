@@ -5,7 +5,9 @@ const dev = process.env.NODE_ENV === 'development';
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	kit: {
-		adapter: adapter(),
+		adapter: adapter({
+			runtime: 'nodejs20.x'
+		}),
 		// Relax CSP to allow Vite HMR and environments that block eval by default
 		csp: {
 			mode: 'auto',
