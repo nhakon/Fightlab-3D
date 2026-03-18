@@ -204,6 +204,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </svelte:head>
 
+<svelte:window on:keydown={handleMediaKeydown} />
+
 <header class="site-nav">
   <div class="nav-shell container">
     <div class="brand">
@@ -257,8 +259,6 @@
       </div>
     </div>
   </section>
-
-  <svelte:window on:keydown={handleMediaKeydown} />
 
   {#if showCarousel}
     <section class="band band--light media-band" id="media-carousel">
