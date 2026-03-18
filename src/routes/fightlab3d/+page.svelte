@@ -258,9 +258,11 @@
     </div>
   </section>
 
+  <svelte:window on:keydown={handleMediaKeydown} />
+
   {#if showCarousel}
     <section class="band band--light media-band" id="media-carousel">
-      <div class="container media-shell" bind:this={mediaShellEl} role="region" aria-roledescription="carousel" aria-label="Technique media carousel" window:keydown={handleMediaKeydown}>
+      <div class="container media-shell" bind:this={mediaShellEl} role="region" aria-roledescription="carousel" aria-label="Technique media carousel">
         <div class="media-head" aria-hidden="true"></div>
         <div class="media-frame">
           <div
@@ -305,7 +307,7 @@
 
   <section class="band band--light statements" id="statements">
     <div class="container statements-grid">
-      <div class="statement statement--hero" tabindex="0">
+      <div class="statement statement--hero">
         <h2 class="serif">Tired of teammates pulling ahead?</h2>
         <p>Lock the sequence and actually do the moves to remember them easier.</p>
         <p>Refresh in seconds, keep timing sharp, and stop scrubbing through long videos on the mat.</p>
@@ -323,27 +325,27 @@
     </div>
     <div class="container">
       <div class="feature-row">
-        <article class="feature-card" tabindex="0">
+        <article class="feature-card">
           <h3><span class="eyebrow">01</span> Apply it right away</h3>
           <p>Pose and replay until muscle memory kicks in so you don't forget mid-round.</p>
         </article>
-        <article class="feature-card" tabindex="0">
+        <article class="feature-card">
           <h3><span class="eyebrow">02</span> New leg entanglements</h3>
           <p>Map an overwhelming set of entries in one place.</p>
         </article>
-        <article class="feature-card" tabindex="0">
+        <article class="feature-card">
           <h3><span class="eyebrow">03</span> Skip endless footage</h3>
           <p>Build, structure and organize your own animation with notes so you can refresh a technique fast before practice.</p>
         </article>
-        <article class="feature-card" tabindex="0">
+        <article class="feature-card">
           <h3><span class="eyebrow">04</span> Save mat time</h3>
           <p>Walk in already primedâ€”no rewatching long clips while partners wait.</p>
         </article>
-        <article class="feature-card" tabindex="0">
+        <article class="feature-card">
           <h3><span class="eyebrow">05</span> Keep progress on off-days</h3>
           <p>While watching technique actually animate the figures to do the movements to memorize better.</p>
         </article>
-        <article class="feature-card" tabindex="0">
+        <article class="feature-card">
           <h3><span class="eyebrow">06</span> Stay engaged when injured</h3>
           <p>Rehearse positions safely in 3D so details stick until youâ€™re cleared.</p>
         </article>
@@ -509,8 +511,26 @@
     .card-test-head { flex-direction:column; align-items:flex-start; }
     .card-range { min-height: 120vh; }
     .card-sticky { position: relative; top: auto; transform: none; }
-    .card-container { width:100% !important; flex-direction:column; gap:12px; }
-    .card { max-width: 420px; width:100%; margin:0 auto; border-radius:18px !important; transform:none !important; aspect-ratio: 4 / 5; max-height: clamp(280px, 70vw, 420px); }
+    .card-container {
+      width:100% !important;
+      max-width: calc(100% - 16px);
+      gap: 12px;
+      overflow-x: auto;
+      overflow-y: visible;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .card-container::-webkit-scrollbar { display: none; }
+    .card {
+      flex: 0 0 clamp(260px, 32vw, 340px);
+      width: clamp(260px, 32vw, 340px);
+      max-width: none;
+      margin: 0;
+      border-radius: 18px !important;
+      transform: none !important;
+      aspect-ratio: 4 / 5;
+      max-height: clamp(280px, 70vw, 420px);
+    }
     .card-inner { transform:none !important; }
     .card-back { padding:18px; }
     .card-sticky-header { opacity:1 !important; transform:none !important; }
