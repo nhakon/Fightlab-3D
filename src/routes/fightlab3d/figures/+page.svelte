@@ -4,6 +4,7 @@
   import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
   import { GUI } from "lil-gui";
   import * as Poses from "$lib/poses";
+  import { isSupabaseConfigured, requireSupabase } from "$lib/supabase";
   import poseNeutralPreset from "./jiu-jitsu-assets/pose-neutral.json";
   import poseOpenGuardPreset from "./jiu-jitsu-assets/pose-openGuard.json";
   import poseClosedGuardPreset from "./jiu-jitsu-assets/pose-closedGuard.json";
@@ -352,6 +353,8 @@ let toeRotateDrag = { active:false, person:null, side:null, startOffset:new THRE
   let activeJointIdx = null;     // index in hierarchical skeleton
   let shiftDragging = false;     // true if Shift+Ctrl held at pointerdown
   let ctrlDragging = false;      // true if Ctrl held at pointerdown (move one figure)
+  let touchOrbitDrag = { active: false, pointerId: null, lastX: 0, lastY: 0 };
+  let touchOrbitRotateRestore = false;
   let tabToeRotate = false;      // true while Tab held (rotate toe joint instead of translate)
   let orbitEnabled = true;
   let selectedPerson = 'A';      // current selected figure for ctrl-drag
@@ -1299,11 +1302,12 @@ function isLocked(person, key){
   let accountMenuEl;
   let accountToggleEl;
   let showAccountAuth = false;
-  const AUTH_STORAGE_KEY = 'pose-auth';
   let loginName = '';
   let loginEmail = '';
   let isLoggedIn = false;
   let authMessage = '';
+  let authBusy = false;
+  let authUnsubscribe = null;
   // User-defined presets (persisted locally)
   let savedPresets = [];
   let editingPresetIdx = -1;
@@ -1440,15 +1444,19 @@ function isLocked(person, key){
     applySceneTheme();
     try{ localStorage.setItem('darkMode', darkMode ? 'true' : 'false'); }catch(_){}
   }
-  onMount(()=>{
+  onMount(async ()=>{
     loadPinnedControls();
-    loadAuthState();
+    await loadAuthState();
     try{
       const saved = localStorage.getItem('darkMode');
       if (saved === 'true') darkMode = true;
     }catch(_){}
     applyDarkMode();
     applySceneTheme();
+    return ()=>{
+      try{ authUnsubscribe?.(); }catch(_){}
+      authUnsubscribe = null;
+    };
   });
   let startPosition = "neutral";
   const BUILTIN_PRESETS = [
@@ -3715,7 +3723,8 @@ function clampToDragLengths(person, jointKey, target){
       const t = e.target;
       if (showSavedPlaybacksMenu && !clickInside(t, playbacksMenuEl, playbacksToggleEl)) showSavedPlaybacksMenu = false;
       if (showSavedPresetsMenu && !clickInside(t, presetsMenuEl, presetsToggleEl)) showSavedPresetsMenu = false;
-      if (showAccountMenu && !clickInside(t, accountMenuEl, accountToggleEl)) showAccountMenu = false;
+      if (showAccountMenu && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllMenus();
+      if ((showAccountAuth || showAccountSettings || showAccountShortcuts) && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllSettingTabs();
       if (playbackContextMenu.visible && !clickInside(t, playbackContextEl, null)) closePlaybackContext();
     };
     window.addEventListener('pointerdown', handleGlobalPointer, true);
@@ -4436,44 +4445,117 @@ function clampToDragLengths(person, jointKey, target){
     commentText = '';
     commentVisible = false;
   }
-  const closeAllMenus = ()=>{ showSavedPlaybacksMenu = false; showSavedPresetsMenu = false; showAccountMenu = false; };
+  const closeAllSettingTabs = ()=>{
+    showAccountAuth = false;
+    showAccountSettings = false;
+    showAccountShortcuts = false;
+  };
+  const closeAllMenus = ()=>{
+    showSavedPlaybacksMenu = false;
+    showSavedPresetsMenu = false;
+    showAccountMenu = false;
+    closeAllSettingTabs();
+  };
+  function toggleAccountSetting(panel){
+    const next = (panel === 'account') ? !showAccountAuth : (panel === 'settings') ? !showAccountSettings : (panel === 'shortcuts') ? !showAccountShortcuts : false;
+    closeAllSettingTabs();
+    if (next){
+      if (panel === 'account') showAccountAuth = true;
+      else if (panel === 'settings') showAccountSettings = true;
+      else if (panel === 'shortcuts') showAccountShortcuts = true;
+      showAccountMenu = true;
+    }
+  }
   const clickInside = (target, ...nodes)=> nodes.filter(Boolean).some(node => node.contains(target));
 
-  function loadAuthState(){
-    try{
-      if (typeof localStorage === 'undefined') return;
-      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (raw){
-        const parsed = JSON.parse(raw);
-        loginName = parsed?.name || '';
-        loginEmail = parsed?.email || '';
-        isLoggedIn = !!parsed?.isLoggedIn && !!parsed?.email;
-      }
-    }catch(e){}
+  function applyAuthSession(session){
+    const user = session?.user ?? null;
+    isLoggedIn = !!user;
+    if (!user){
+      loginName = '';
+      loginEmail = '';
+      return;
+    }
+    loginEmail = user.email || '';
+    loginName =
+      user.user_metadata?.display_name ||
+      user.user_metadata?.name ||
+      user.email?.split('@')[0] ||
+      'User';
   }
-  function persistAuthState(){
+  async function loadAuthState(){
+    if (!isSupabaseConfigured) return;
     try{
-      if (typeof localStorage === 'undefined') return;
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ name: loginName, email: loginEmail, isLoggedIn }));
-    }catch(e){}
+      const supabase = requireSupabase();
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      applyAuthSession(data?.session ?? null);
+      const { data: authListener } = supabase.auth.onAuthStateChange((event, session)=>{
+        applyAuthSession(session);
+        if (event === 'SIGNED_IN') authMessage = 'Signed in.';
+        else if (event === 'SIGNED_OUT') authMessage = 'Signed out.';
+      });
+      authUnsubscribe = authListener?.subscription?.unsubscribe
+        ? () => authListener.subscription.unsubscribe()
+        : null;
+    }catch(error){
+      authMessage = error?.message || 'Unable to connect to Supabase.';
+    }
   }
-  function handleAuthSubmit(){
+  async function handleAuthSubmit(){
     authMessage = '';
+    if (!isSupabaseConfigured){
+      authMessage = 'Supabase is not configured yet.';
+      return;
+    }
     if (!loginEmail.trim()){
       authMessage = 'Email required.';
       return;
     }
-    if (!loginName.trim()){
-      loginName = loginEmail.split('@')[0] || 'User';
+    authBusy = true;
+    try{
+      if (!loginName.trim()){
+        loginName = loginEmail.split('@')[0] || 'User';
+      }
+      const supabase = requireSupabase();
+      const { error } = await supabase.auth.signInWithOtp({
+        email: loginEmail.trim(),
+        options: {
+          emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/fightlab3d/figures` : undefined,
+          data: {
+            name: loginName.trim(),
+            display_name: loginName.trim()
+          }
+        }
+      });
+      if (error) throw error;
+      authMessage = 'Check your email for the sign-in link.';
+    }catch(error){
+      authMessage = error?.message || 'Unable to start sign-in.';
+    }finally{
+      authBusy = false;
     }
-    isLoggedIn = true;
-    authMessage = 'Signed in locally';
-    persistAuthState();
   }
-  function logout(){
-    isLoggedIn = false;
-    authMessage = 'Signed out';
-    persistAuthState();
+  async function logout(){
+    authMessage = '';
+    if (!isSupabaseConfigured){
+      isLoggedIn = false;
+      loginName = '';
+      loginEmail = '';
+      return;
+    }
+    authBusy = true;
+    try{
+      const supabase = requireSupabase();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      applyAuthSession(null);
+      authMessage = 'Signed out.';
+    }catch(error){
+      authMessage = error?.message || 'Unable to sign out.';
+    }finally{
+      authBusy = false;
+    }
   }
 
   // ----- Save/Load playbacks (multiple sequences) -----
@@ -4996,6 +5078,7 @@ function clampToDragLengths(person, jointKey, target){
     el.addEventListener('pointerdown', pointerDownHandler, { capture: true });
     el.addEventListener('pointermove', pointerMoveHandler);
     el.addEventListener('pointerup', pointerUpHandler);
+    el.addEventListener('pointercancel', pointerUpHandler);
     el.addEventListener('pointerleave', pointerUpHandler);
     el.addEventListener('contextmenu', (e)=> e.preventDefault());
   }
@@ -5023,7 +5106,12 @@ function clampToDragLengths(person, jointKey, target){
     const rect = el.getBoundingClientRect();
     const view = viewAtEvent(event);
     activePointerView = view;
+    touchOrbitDrag.active = false;
     const cam = cameraForView(view) || camera;
+    const isCtrlLike = !!(event.ctrlKey || event.metaKey);
+    const ctrlShift = !!(event.shiftKey && isCtrlLike);
+    const ctrlOnly = !!(!event.shiftKey && isCtrlLike);
+    const isTouchOrbit = !!(((event.pointerType === 'touch' || event.pointerType === 'mouse' || !event.pointerType) && !isCtrlLike && !event.shiftKey && event.isPrimary !== false && (event.button === 0 || event.button == null)));
     const nx = (event.clientX - rect.left) / rect.width;
     const ny = (event.clientY - rect.top) / rect.height;
     const nearEdge = nx < EDGE_THRESHOLD || nx > (1-EDGE_THRESHOLD) || ny < EDGE_THRESHOLD || ny > (1-EDGE_THRESHOLD);
@@ -5034,11 +5122,20 @@ function clampToDragLengths(person, jointKey, target){
       edgeJointHit = pickJoint(event, { allowFallback: false });
       if (!edgeJointHit) edgeHandlePerson = hoverUpperHandlePerson || pickUpperHandle(event);
       if (!edgeJointHit && !edgeHandlePerson) edgeHipHit = pickHipBody(event);
-      if (!edgeJointHit && !edgeHandlePerson && !edgeHipHit) { orbitEnabled = true; controls.enabled = true; dragging = null; return; }
+      if (!edgeJointHit && !edgeHandlePerson && !edgeHipHit) {
+        orbitEnabled = true;
+        controls.enabled = true;
+        dragging = null;
+        if (view === 'persp' && isTouchOrbit){
+          touchOrbitDrag = { active: true, pointerId: event.pointerId, lastX: event.clientX, lastY: event.clientY };
+          try{ touchOrbitRotateRestore = !!controls?.enableRotate; controls.enableRotate = true; }catch(e){}
+          try{ event.preventDefault(); }catch(e){}
+        } else {
+          touchOrbitDrag.active = false;
+        }
+        return;
+      }
     }
-    const isCtrlLike = !!(event.ctrlKey || event.metaKey);
-    const ctrlShift = !!(isCtrlLike && event.shiftKey);
-    const ctrlOnly = !!(isCtrlLike && !event.shiftKey);
     if (isCtrlLike || event.shiftKey){
       try{
         event.preventDefault();
@@ -5068,7 +5165,9 @@ function clampToDragLengths(person, jointKey, target){
     let hit = edgeJointHit || pickJoint(event, { allowFallback: false });
     const hitBody = !hit ? (edgeHipHit || pickHipBody(event)) : null;
     if (!hit && !hitBody) {
-      hit = pickJoint(event, { allowFallback: true });
+      if (!isTouchOrbit || view !== 'persp') {
+        hit = pickJoint(event, { allowFallback: true });
+      }
     }
     // Block if already joint-dragging
     if (!dragging){
@@ -5421,6 +5520,11 @@ function clampToDragLengths(person, jointKey, target){
       // In perspective view allow OrbitControls, otherwise disable
       controls.enabled = (view === 'persp');
       orbitEnabled = (view === 'persp');
+      if (view === 'persp' && !dragging && isTouchOrbit){
+        touchOrbitDrag = { active: true, pointerId: event.pointerId, lastX: event.clientX, lastY: event.clientY };
+        try{ touchOrbitRotateRestore = !!controls?.enableRotate; controls.enableRotate = true; }catch(e){}
+        try{ event.preventDefault(); }catch(e){}
+      }
     }
   }
 
@@ -5659,6 +5763,27 @@ function clampToDragLengths(person, jointKey, target){
       else { c.set(orthoPan.startCenter.x + sx/topZoom, orthoPan.startCenter.y, orthoPan.startCenter.z - sy/topZoom); topCenter.copy(c); }
       return;
     }
+
+    const isTouchOrbit = touchOrbitDrag.active && (event.pointerType === 'touch' || event.pointerType === 'mouse' || !event.pointerType) && event.pointerId === touchOrbitDrag.pointerId && !dragging && !upperDrag.active && !lowerHandleDrag.active && !ctrlDragging && !shiftDragging;
+    if (isTouchOrbit){
+      try{
+        const dx = event.clientX - touchOrbitDrag.lastX;
+        const dy = event.clientY - touchOrbitDrag.lastY;
+        touchOrbitDrag.lastX = event.clientX;
+        touchOrbitDrag.lastY = event.clientY;
+        if (dx !== 0 || dy !== 0){
+          event.preventDefault();
+          if (controls){
+            controls.enableRotate = true;
+            controls.rotateLeft(-dx * 0.004);
+            controls.rotateUp(-dy * 0.004);
+            if (controls.update) controls.update();
+          }
+        }
+      }catch(e){}
+      return;
+    }
+
     // Handle hover highlight for upper handles when not dragging
     if (!dragging && !upperDrag.active && !lowerHandleDrag.active){
       try{
@@ -5959,6 +6084,10 @@ function clampToDragLengths(person, jointKey, target){
 
   function pointerUpHandler(event){
     try{ if (renderer?.domElement?.releasePointerCapture) renderer.domElement.releasePointerCapture(event.pointerId); }catch(e){}
+    if (touchOrbitDrag.pointerId != null && event?.pointerId === touchOrbitDrag.pointerId){
+      touchOrbitDrag = { active: false, pointerId: null, lastX: 0, lastY: 0 };
+      try{ controls.enableRotate = touchOrbitRotateRestore; }catch(e){}
+    }
     hoverUpperHandlePerson = null;
     dragTorsoAnchorA = null;
     dragTorsoAnchorB = null;
@@ -6241,7 +6370,7 @@ function clampToDragLengths(person, jointKey, target){
 
   <div class="scene-gradient" aria-hidden="true"></div>
   <div class="account-anchor">
-    <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { showAccountMenu = !showAccountMenu; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; }} title="Menu / Login">
+    <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
       <svg class="icon account-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span class="account-label">Menu</span>
     </button>
@@ -6251,7 +6380,7 @@ function clampToDragLengths(person, jointKey, target){
         <button
           type="button"
           class="shortcut-toggle account-subtoggle"
-          on:click={()=> showAccountAuth = !showAccountAuth}
+          on:click={()=> toggleAccountSetting('account')}
           aria-expanded={showAccountAuth}
           aria-controls="account-auth"
           title="Account access">
@@ -6267,10 +6396,19 @@ function clampToDragLengths(person, jointKey, target){
           <input id="account-name" class="input" bind:value={loginName} placeholder="Your name" style="width:100%;" />
           <label class="meta-label" for="account-email">Email</label>
           <input id="account-email" class="input" type="email" bind:value={loginEmail} placeholder="you@example.com" style="width:100%;" />
+          {#if !isSupabaseConfigured}
+            <span class="meta-label">Add `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` to enable login.</span>
+          {:else if isLoggedIn}
+            <span class="meta-label">Signed in as {loginEmail}</span>
+          {:else}
+            <span class="meta-label">We send a magic sign-in link to your email.</span>
+          {/if}
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn btn--primary" on:click={handleAuthSubmit}>{isLoggedIn ? 'Update profile' : 'Login / Sign up'}</button>
+            <button class="btn btn--primary" on:click={handleAuthSubmit} disabled={authBusy || !isSupabaseConfigured}>
+              {isLoggedIn ? 'Send new login link' : 'Login / Sign up'}
+            </button>
             {#if isLoggedIn}
-              <button class="btn" on:click={logout}>Log out</button>
+              <button class="btn" on:click={logout} disabled={authBusy}>Log out</button>
             {/if}
           </div>
           {#if authMessage}
@@ -6281,7 +6419,7 @@ function clampToDragLengths(person, jointKey, target){
         <button
           type="button"
           class="shortcut-toggle account-subtoggle"
-          on:click={()=> showAccountSettings = !showAccountSettings}
+          on:click={()=> toggleAccountSetting('settings')}
           aria-expanded={showAccountSettings}
           aria-controls="account-settings"
           title="Settings">
@@ -6315,7 +6453,7 @@ function clampToDragLengths(person, jointKey, target){
         <button
           type="button"
           class="shortcut-toggle"
-          on:click={()=> showAccountShortcuts = !showAccountShortcuts}
+          on:click={()=> toggleAccountSetting('shortcuts')}
           aria-expanded={showAccountShortcuts}
           aria-controls="account-shortcuts"
           title="Toggle shortcuts list">
@@ -6444,12 +6582,15 @@ function clampToDragLengths(person, jointKey, target){
               <button class="icon-btn" on:click={clearPlaybackQueue} title="Clear playback queue">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               </button>
+              <button class="icon-btn mobile-only-control mobile-undo-control" on:click={undoLastFigureMove} title="Undo (mobile)" aria-label="Undo">
+                <span class="mobile-undo-symbol" aria-hidden="true">↩</span>
+              </button>
             </div>
           </div>
           <div class="row-right">
             <div class="playback-dropdown">
-              <div class="input-with-icon two-actions input-row">
-                <input class="input" type="text" bind:value={newPlaybackName} placeholder="Name playback" style="width:clamp(130px,14vw,170px);" />
+            <div class="input-with-icon two-actions input-row playback-input-row">
+                <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
                 <button class="inline-action save-action" on:click={saveCurrentPlayback} title="Save playback">
                   <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
                 </button>
@@ -6631,9 +6772,9 @@ function clampToDragLengths(person, jointKey, target){
               </div>
             </div>
           </div>
-          <div class="row-right">
-            <div class="input-with-icon playback-comment" style="width:clamp(190px,22vw,260px); align-items:center;">
-              <input class="input" type="text" bind:value={comment} placeholder="Frame comment" style="width:100%;" />
+          <div class="row-right playback-comment-row">
+            <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
+              <input class="input" type="text" bind:value={comment} placeholder="Frame comment" />
               <button class="inline-action save-action" on:click={saveCurrentFrame} title="Save frame">
                 <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               </button>
@@ -6765,13 +6906,14 @@ function clampToDragLengths(person, jointKey, target){
   }
   /* Responsive toolbar */
   .preset-ui { backdrop-filter: saturate(180%) blur(10px); box-sizing: border-box; }
-  .preset-ui.bottom { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); right: auto; z-index: 10; background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)); border:1px solid rgba(212,228,255,0.9); border-radius:14px; padding:10px 22px; box-shadow:0 10px 28px rgba(15, 23, 42, 0.12); display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; max-width: min(1800px, calc(100vw - 24px)); width: fit-content; justify-content: center; }
-  .toolbar-layout { width:100%; }
-  .expanded-grid { display:grid; grid-template-columns: repeat(3, minmax(280px, 1fr)); grid-template-rows: repeat(2, auto); gap:8px 14px; align-items:center; justify-items:stretch; }
+  .preset-ui.bottom { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); right: auto; z-index: 10; background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)); border:1px solid rgba(212,228,255,0.9); border-radius:14px; padding:10px 22px; box-shadow:0 10px 28px rgba(15, 23, 42, 0.12); display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; width: clamp(280px, calc(100vw - 80px), 1680px); justify-content: center; }
+  .toolbar-layout { width:100%; padding-inline: 4px; box-sizing: border-box; }
+  .expanded-grid { display:grid; grid-template-columns: repeat(3, minmax(280px, 1fr)); grid-template-rows: repeat(2, auto); gap:4px 10px; align-items:start; justify-items:stretch; }
   .toolbar-row { display:contents; }
-  .row-left, .row-center, .row-right { display:flex; align-items:center; justify-content:flex-start; gap:10px; flex-wrap:wrap; }
+  .row-left, .row-center, .row-right { display:flex; align-items:center; justify-content:flex-start; gap:10px; flex-wrap:wrap; min-width:0; max-width:100%; }
   .row-center { justify-content:center; }
   .row-right { justify-content:flex-end; }
+  .playback-comment-row { justify-content:flex-start; }
   .toolbar-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .toolbar-actions.wrap-tight { flex-wrap:nowrap; }
   .controls-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; }
@@ -6796,7 +6938,7 @@ function clampToDragLengths(person, jointKey, target){
   .account-btn:hover, .account-btn:focus-visible { background: #f8fafc; border-color: #c5ccda; color: #0f172a; box-shadow: 0 8px 18px rgba(0,0,0,0.10); }
   .account-label { font-weight: 600; letter-spacing: 0.01em; }
   .account-icon { width: 17px; height: 17px; color: currentColor; }
-  .account-menu { position: absolute; top: calc(100% + 8px); left: 0; min-width: 210px; background: linear-gradient(150deg, rgba(255,255,255,0.95), rgba(234,242,255,0.9)); border: 1px solid #d8e3f5; border-radius: 14px; padding: 10px; box-shadow: 0 16px 40px rgba(15,23,42,0.18); color: #0f172a; z-index: 14; }
+  .account-menu { position: absolute; top: calc(100% + 8px); left: 0; min-width: 210px; width: min(92vw, 360px); max-width: min(92vw, 360px); background: linear-gradient(150deg, rgba(255,255,255,0.95), rgba(234,242,255,0.9)); border: 1px solid #d8e3f5; border-radius: 14px; padding: 10px; box-shadow: 0 16px 40px rgba(15,23,42,0.18); color: #0f172a; z-index: 14; box-sizing: border-box; }
   .account-menu .menu-title { color: #0f172a; }
   .account-menu .menu-item { color: #0f172a; }
   .account-menu .menu-item .name { color: #0f172a; }
@@ -6812,15 +6954,28 @@ function clampToDragLengths(person, jointKey, target){
   .icon-btn { position:relative; z-index:1; display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:9999px; border:1px solid #d0d7de; background:#fff; color:#111; cursor:pointer; transition: background .15s, border-color .15s, box-shadow .15s; }
   .icon-btn:hover { background:#f7f8fa; border-color:#c4cbd3; }
   .icon-btn--primary { border-color:#3b82f6; background:#eef5ff; color:#0b5bd3; }
-  .input-with-icon { position:relative; display:inline-block; z-index:0; }
-  .input-with-icon .input { padding-right: 34px; }
+  .input-with-icon { position:relative; display:flex; align-items:center; z-index:0; width: 100%; box-sizing: border-box; min-width:0; overflow: hidden; }
+  .input-with-icon .input { padding-right: 34px; width: 100%; box-sizing: border-box; }
   /* When the input has two inline action buttons (save + dropdown), add extra padding */
   .input-with-icon.two-actions .input { padding-right: 70px; }
+  .playback-input-row { width: min(100%, 260px); max-width: min(100%, 260px); box-sizing: border-box; flex: 0 0 auto; }
+  .playback-comment.playback-input-row { width: min(100%, 260px); max-width: min(100%, 260px); box-sizing: border-box; flex: 0 0 auto; }
+  .toolbar-field { width: clamp(130px, 14vw, 170px); min-width: 0; max-width: 100%; }
+  .toolbar-field--name { width: clamp(190px, 22vw, 260px); }
+  .toolbar-frame { width: clamp(190px, 22vw, 260px); max-width: 100%; }
+  .playback-comment { min-width: 0; }
+  .playback-comment .input { width: 100%; min-width: 0; box-sizing: border-box; }
+  .playback-comment { overflow: hidden; }
   .inline-action { position:absolute; right:6px; top:50%; transform: translateY(-50%); width:24px; height:24px; padding:0; border:0; background:transparent; cursor:pointer; color:#111; display:inline-flex; align-items:center; justify-content:center; }
   .inline-action.small { width:22px; height:22px; }
   .inline-action.small .icon { width:16px; height:16px; }
   .playback-comment .inline-action { right:8px; }
   .playback-comment .input { padding-right: 52px; box-sizing: border-box; }
+  .playback-dropdown { width: min(100%, 100%); max-width: 100%; box-sizing: border-box; min-width: 0; }
+  .toolbar-frame,
+  .toolbar-field,
+  .toolbar-field--name,
+  .playback-comment { min-width: 0; max-width: 100%; box-sizing: border-box; }
   .preset-select-wrap { position:relative; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .preset-trigger-wrap { position:relative; display:inline-block; }
   .preset-trigger { display:inline-flex; align-items:center; justify-content:space-between; gap:8px; width:clamp(140px,18vw,190px); padding:6px 42px 6px 10px; border:1px solid #cbd5e1; border-radius:8px; background:#fff; cursor:pointer; font: 13px/1.2 system-ui, sans-serif; }
@@ -6844,8 +6999,8 @@ function clampToDragLengths(person, jointKey, target){
   input[type="range"].slim::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; background: #3b82f6; border: 0; border-radius: 50%; margin-top: -4px; box-shadow: 0 2px 6px rgba(0,0,0,0.18); }
   input[type="range"].slim::-moz-range-track { height: 6px; background: #fff; border-radius: 9999px; border: 1px solid #000; box-shadow: inset 0 1px 0 rgba(0,0,0,0.08); }
   input[type="range"].slim::-moz-range-thumb { width: 14px; height: 14px; background: #3b82f6; border: 0; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.18); }
-  .menu-popup { position:absolute; bottom: 110%; right:0; background:linear-gradient(135deg, #ffffff 0%, #f6f7fb 100%); border:1px solid #d0d7de; border-radius:12px; box-shadow:0 10px 28px rgba(0,0,0,0.14); padding:6px; min-width: 200px; max-height: 240px; overflow:auto; z-index: 12; }
-  .preset-menu { display:grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap:8px 12px; min-width: 420px; }
+  .menu-popup { position:absolute; bottom: 110%; right:0; background:linear-gradient(135deg, #ffffff 0%, #f6f7fb 100%); border:1px solid #d0d7de; border-radius:12px; box-shadow:0 10px 28px rgba(0,0,0,0.14); padding:6px; min-width: 200px; max-height: 240px; max-width: min(100vw - 18px, 420px); width: min(420px, 100%); overflow:auto; z-index: 12; box-sizing: border-box; }
+  .preset-menu { display:grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap:8px 12px; min-width: 420px; width: min(100vw - 18px, 760px); max-width: calc(100vw - 18px); }
   .preset-menu-col { display:flex; flex-direction:column; gap:4px; }
   .menu-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px; cursor:pointer; border-radius:6px; }
   .menu-item:hover { background:#f7f8fa; }
@@ -6888,6 +7043,10 @@ function clampToDragLengths(person, jointKey, target){
   .save-action { border-radius:6px; }
   .save-action:hover { background:#e5f0ff; border-color:#3b82f6; color:#0b5bd3; }
   .btn--primary:hover { background:#dbe8ff; border-color:#2f6fe0; }
+  .mobile-only-control { display: none; }
+  .mobile-undo-control { color:#1f2937; background: transparent; border-color: #cbd5e1; }
+  .mobile-undo-control:hover { background: #f3f4f6; color:#1f2937; }
+  .mobile-undo-symbol { font-size: 18px; line-height: 1; font-family: "Segoe UI Symbol", Arial, sans-serif; transform: translateX(-2px); }
   .input-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .shortcut-toggle {
     width: 100%;
@@ -6991,8 +7150,9 @@ function clampToDragLengths(person, jointKey, target){
   .comment-box {
     position: fixed;
     right: 12px;
-    min-width: 200px;
-    max-width: min(64ch, 48vw);
+    left: auto;
+    min-width: 180px;
+    max-width: min(64ch, calc(100vw - 24px));
     width: fit-content;
     background: rgba(255,255,255,0.96);
     border: 1px solid #e5e7eb;
@@ -7035,27 +7195,86 @@ function clampToDragLengths(person, jointKey, target){
   }
 
 
-  @media (max-width: 1280px){
-    .controls-row--expanded { flex-wrap:wrap; }
-    .preset-ui.bottom { max-width: calc(100vw - 16px); }
+@media (max-width: 1280px){
+  .controls-row--expanded { flex-wrap:wrap; }
+  .preset-ui.bottom { max-width: calc(100vw - 16px); }
+}
+@media (max-width: 900px){
+  .preset-ui { bottom: 10px; left: 10px; right: 10px; gap: 6px; padding: 6px 8px; }
+  .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 20px); }
+  .expanded-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 8px; }
+  .toolbar-frame,
+  .toolbar-field,
+  .toolbar-field--name,
+  .playback-input-row { max-width: min(100%, 240px); width: min(100%, 240px); }
+  .playback-dropdown,
+  .row-right > .playback-dropdown,
+  .row-right { width: min(100%, 240px); max-width: min(100%, 240px); }
+  .playback-dropdown .input-with-icon.two-actions .input { padding-right: 64px; }
+  .playback-dropdown .input-with-icon {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
   }
-  @media (max-width: 900px){
-    .preset-ui { bottom: 10px; left: 10px; right: 10px; gap: 6px; padding: 6px 8px; }
-    .preset-ui.bottom { left: 10px; right: 10px; transform: none; width: calc(100vw - 20px); }
-    .btn { padding: 5px 8px; font-size: 12px; }
-    .input { font-size: 12px; }
+  .playback-dropdown .input-with-icon .input {
+    width: 0;
+    min-width: 0;
+    flex: 1 1 auto;
+    padding-right: 8px;
   }
+  .playback-dropdown .input-with-icon .inline-action {
+    position: static !important;
+    top: auto;
+    right: auto;
+    transform: none;
+    flex: 0 0 24px;
+    margin-left: 0;
+  }
+  .playback-dropdown .input-with-icon .inline-action + .inline-action {
+    margin-left: 2px;
+  }
+  .btn { padding: 5px 8px; font-size: 12px; }
+  .input { font-size: 12px; }
+}
   @media (max-width: 720px){
-    .preset-ui.bottom { left: 8px; right: 8px; width: calc(100vw - 16px); }
+    .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 16px); overflow: hidden; }
+    .preset-ui.bottom,
+    .toolbar-layout,
+    .toolbar-row { box-sizing: border-box; }
+    .expanded-grid { grid-template-columns: 1fr; }
+    .toolbar-row { display:flex; width:100%; flex-direction:column; gap:2px; align-items:stretch; padding-inline: 2px; box-sizing: border-box; }
+    .row-left, .row-center, .row-right { width:100%; justify-content: stretch; gap:4px; max-width: 100%; padding-inline: 2px; }
+    .row-left > *, .row-center > *, .row-right > * { width:100%; min-width: 0; max-width: 100%; }
+    .row-right > .playback-input-row { width: min(100%, 260px) !important; max-width: min(100%, 260px) !important; flex: 0 0 auto; }
+    .toolbar-actions { width:100%; }
     .toolbar-actions.wrap-tight { flex-wrap: wrap; }
-    .row-left, .row-center, .row-right { width: 100%; justify-content: center; }
+    .controls-row { width:100%; justify-content: stretch; }
+    .controls-row--expanded { flex-wrap: wrap; }
     .controls-row, .controls-row--expanded { width: 100%; }
     .btn { padding: 7px 10px; font-size: 13px; min-height: 36px; }
     .icon-btn { width: 40px; height: 40px; }
     .btn--fourview { display: none; }
-    .playback-comment { width: min(100%, 320px) !important; }
+    .playback-input-row { width: min(100%, 260px); max-width: min(100%, 260px); }
+    .preset-select-wrap,
+    .playback-dropdown,
+    .toolbar-actions { width: calc(100% - 4px); max-width: calc(100% - 4px); }
+    .toolbar-field,
+    .toolbar-field--name,
+    .toolbar-frame { max-width: min(100%, 260px); width: min(100%, 260px); }
+    .playback-comment { overflow: hidden; }
+    .playback-dropdown,
+    .playback-comment { overflow: hidden; }
+    .toolbar-actions .btn { flex: 1 1 auto; }
+    .menu-popup { width: min(100vw - 16px, 420px); max-width: min(100vw - 16px, 420px); }
+    :global(.preset-menu) { grid-template-columns: 1fr; min-width: 0; width: min(100vw - 16px, 760px); }
     :global(.playback-footer) { grid-template-columns: 1fr; }
     :global(.pf-controls) { flex-wrap: wrap; }
+  }
+  @media (pointer: coarse), (max-width: 768px){
+    .mobile-only-control { display: inline-flex; }
   }
   @media (max-width: 900px) and (orientation: portrait){
     .orientation-lock { display: flex; }
@@ -7068,5 +7287,49 @@ function clampToDragLengths(person, jointKey, target){
   @media (max-width: 560px){
     .meta-label { display: none; }
     .preset-ui { gap: 6px; }
+    .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 12px); padding: 6px; }
+    .toolbar-actions .btn { width: 100%; justify-content: center; }
+    .speed-track input { width: min(100%, 150px); }
+    .preset-trigger { width: 100%; }
+    .preset-select-wrap.with-actions { width: 100%; }
+    .row-left, .row-center, .row-right { padding-inline: 3px; }
+    .playback-input-row { width: min(100%, 260px) !important; max-width: min(100%, 260px) !important; overflow: hidden; }
+    .row-right > .playback-input-row { width: min(100%, 260px) !important; max-width: min(100%, 260px) !important; }
+    .playback-comment.playback-input-row { width: min(100%, 260px) !important; max-width: min(100%, 260px) !important; }
+    .input-with-icon { overflow: hidden; }
+    .toolbar-field,
+    .toolbar-field--name,
+    .toolbar-frame { width: min(100%, 260px); max-width: min(100%, 260px); }
+    .input-with-icon.two-actions .input { padding-right: 82px; }
+    .playback-dropdown .input-with-icon {
+      width: 100%;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      overflow: hidden;
+    }
+    .playback-dropdown .input-with-icon .input {
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 0;
+      padding-right: 8px;
+    }
+    .playback-dropdown .input-with-icon .inline-action {
+      position: static !important;
+      right: auto;
+      top: auto;
+      transform: none;
+      margin-left: 0;
+    }
+    .playback-dropdown .input-with-icon .inline-action + .inline-action {
+      margin-left: 2px;
+    }
+    .playback-comment { overflow: hidden; }
+    .playback-dropdown .input-with-icon.two-actions .input { padding-right: 64px; }
+    .toolbar-row { gap: 3px; }
+    .input-with-icon .input { width: 100%; max-width: 100%; }
+    .mobile-undo-control { width: 100%; border-radius: 12px; }
+    .playback-comment .input { width: 100%; }
   }
 </style>
