@@ -1307,6 +1307,7 @@ function isLocked(person, key){
   let isLoggedIn = false;
   let authMessage = '';
   let authDetail = '';
+  let authAttempted = false;
   let authBusy = false;
   let authUnsubscribe = null;
   // User-defined presets (persisted locally)
@@ -4523,6 +4524,7 @@ function clampToDragLengths(person, jointKey, target){
     }
   }
   async function handleAuthSubmit(){
+    authAttempted = true;
     authMessage = '';
     authDetail = '';
     if (!isSupabaseConfigured){
@@ -4559,6 +4561,7 @@ function clampToDragLengths(person, jointKey, target){
     }
   }
   async function logout(){
+    authAttempted = false;
     authMessage = '';
     authDetail = '';
     if (!isSupabaseConfigured){
@@ -6420,11 +6423,11 @@ function clampToDragLengths(person, jointKey, target){
           <input id="account-name" class="input" bind:value={loginName} placeholder="Your name" style="width:100%;" />
           <label class="meta-label" for="account-email">Email</label>
           <input id="account-email" class="input" type="email" bind:value={loginEmail} placeholder="you@example.com" style="width:100%;" />
-          {#if !isSupabaseConfigured}
+          {#if !isSupabaseConfigured && authAttempted}
             <span class="meta-label">Add `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_KEY` to enable login.</span>
           {:else if isLoggedIn}
             <span class="meta-label">Signed in as {loginEmail}</span>
-          {:else}
+          {:else if authAttempted}
             <span class="meta-label">We send a magic sign-in link to your email.</span>
           {/if}
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -6435,10 +6438,10 @@ function clampToDragLengths(person, jointKey, target){
               <button class="btn" on:click={logout} disabled={authBusy}>Log out</button>
             {/if}
           </div>
-          {#if authMessage}
+          {#if authAttempted && authMessage}
             <span class="meta-label">{authMessage}</span>
           {/if}
-          {#if authDetail}
+          {#if authAttempted && authDetail}
             <span class="meta-label">{authDetail}</span>
           {/if}
         </div>
