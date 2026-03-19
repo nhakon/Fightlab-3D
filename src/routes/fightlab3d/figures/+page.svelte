@@ -1306,6 +1306,7 @@ function isLocked(person, key){
   let loginEmail = '';
   let isLoggedIn = false;
   let authMessage = '';
+  let authDetail = '';
   let authBusy = false;
   let authUnsubscribe = null;
   // User-defined presets (persisted locally)
@@ -4483,6 +4484,24 @@ function clampToDragLengths(person, jointKey, target){
       user.email?.split('@')[0] ||
       'User';
   }
+  function formatAuthError(error){
+    const message = error?.message || '';
+    if (!message) return 'Unable to reach Supabase.';
+    if (message.toLowerCase() === 'failed to fetch'){
+      return 'Could not reach Supabase. Check your internet connection, firewall, or Supabase project URL.';
+    }
+    return message;
+  }
+  function formatAuthDetail(error){
+    const message = error?.message || '';
+    if (message.toLowerCase() === 'failed to fetch'){
+      if (typeof navigator !== 'undefined' && navigator.onLine === false){
+        return 'This browser appears to be offline.';
+      }
+      return 'If you are on a school or work network, requests to supabase.co may be blocked. Also confirm the project is active in Supabase.';
+    }
+    return '';
+  }
   async function loadAuthState(){
     if (!isSupabaseConfigured) return;
     try{
@@ -4499,13 +4518,15 @@ function clampToDragLengths(person, jointKey, target){
         ? () => authListener.subscription.unsubscribe()
         : null;
     }catch(error){
-      authMessage = error?.message || 'Unable to connect to Supabase.';
+      authMessage = formatAuthError(error);
+      authDetail = formatAuthDetail(error);
     }
   }
   async function handleAuthSubmit(){
     authMessage = '';
+    authDetail = '';
     if (!isSupabaseConfigured){
-      authMessage = 'Supabase is not configured yet.';
+      authMessage = 'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
       return;
     }
     if (!loginEmail.trim()){
@@ -4531,13 +4552,15 @@ function clampToDragLengths(person, jointKey, target){
       if (error) throw error;
       authMessage = 'Check your email for the sign-in link.';
     }catch(error){
-      authMessage = error?.message || 'Unable to start sign-in.';
+      authMessage = formatAuthError(error);
+      authDetail = formatAuthDetail(error);
     }finally{
       authBusy = false;
     }
   }
   async function logout(){
     authMessage = '';
+    authDetail = '';
     if (!isSupabaseConfigured){
       isLoggedIn = false;
       loginName = '';
@@ -4552,7 +4575,8 @@ function clampToDragLengths(person, jointKey, target){
       applyAuthSession(null);
       authMessage = 'Signed out.';
     }catch(error){
-      authMessage = error?.message || 'Unable to sign out.';
+      authMessage = formatAuthError(error);
+      authDetail = formatAuthDetail(error);
     }finally{
       authBusy = false;
     }
@@ -6397,7 +6421,7 @@ function clampToDragLengths(person, jointKey, target){
           <label class="meta-label" for="account-email">Email</label>
           <input id="account-email" class="input" type="email" bind:value={loginEmail} placeholder="you@example.com" style="width:100%;" />
           {#if !isSupabaseConfigured}
-            <span class="meta-label">Add `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` to enable login.</span>
+            <span class="meta-label">Add `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_KEY` to enable login.</span>
           {:else if isLoggedIn}
             <span class="meta-label">Signed in as {loginEmail}</span>
           {:else}
@@ -6413,6 +6437,9 @@ function clampToDragLengths(person, jointKey, target){
           </div>
           {#if authMessage}
             <span class="meta-label">{authMessage}</span>
+          {/if}
+          {#if authDetail}
+            <span class="meta-label">{authDetail}</span>
           {/if}
         </div>
         {/if}

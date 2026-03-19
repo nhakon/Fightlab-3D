@@ -2,12 +2,12 @@ import { createClient } from '@supabase/supabase-js';
 import { env } from '$env/dynamic/public';
 
 const supabaseUrl = env.PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = env.PUBLIC_SUPABASE_ANON_KEY;
+const supabasePublishableKey = env.PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
 
 export const supabase = isSupabaseConfigured
-	? createClient(supabaseUrl, supabaseAnonKey, {
+	? createClient(supabaseUrl, supabasePublishableKey, {
 			auth: {
 				persistSession: true,
 				autoRefreshToken: true,
@@ -19,7 +19,7 @@ export const supabase = isSupabaseConfigured
 export function requireSupabase() {
 	if (!supabase) {
 		throw new Error(
-			'Missing Supabase environment variables. Set PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY.'
+			'Missing Supabase environment variables. Set PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_PUBLISHABLE_KEY.'
 		);
 	}
 
