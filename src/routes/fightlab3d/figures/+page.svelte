@@ -7305,6 +7305,19 @@ function clampToDragLengths(person, jointKey, target){
   }
   @media (pointer: coarse), (max-width: 768px){
     .mobile-only-control { display: inline-flex; }
+    .account-menu {
+      max-height: calc(100dvh - 76px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
+    }
+    .account-menu .panel-block,
+    .account-menu .shortcut-list {
+      touch-action: pan-y;
+    }
   }
   @media (max-width: 900px) and (orientation: portrait){
     .orientation-lock { display: flex; }
