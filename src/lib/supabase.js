@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
+import { env } from '$env/dynamic/public';
 
-const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL;
-const supabasePublishableKey = import.meta.env.PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+const supabaseUrl = (env.PUBLIC_SUPABASE_URL || '').trim();
+const supabasePublishableKey = (
+	env.PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+	env.PUBLIC_SUPABASE_PUBLISHABLE ||
+	''
+).trim();
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
 
