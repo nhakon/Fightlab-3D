@@ -6431,7 +6431,7 @@ function clampToDragLengths(person, jointKey, target){
             <span class="meta-label">We send a magic sign-in link to your email.</span>
           {/if}
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn btn--primary" on:click={handleAuthSubmit} disabled={authBusy || !isSupabaseConfigured}>
+            <button class="btn btn--primary" on:click={handleAuthSubmit} disabled={authBusy}>
               {isLoggedIn ? 'Send new login link' : 'Login / Sign up'}
             </button>
             {#if isLoggedIn}
