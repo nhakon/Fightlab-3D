@@ -4528,7 +4528,7 @@ function clampToDragLengths(person, jointKey, target){
     authMessage = '';
     authDetail = '';
     if (!isSupabaseConfigured){
-      authMessage = 'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
+      authMessage = 'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
       return;
     }
     if (!loginEmail.trim()){
@@ -6424,7 +6424,7 @@ function clampToDragLengths(person, jointKey, target){
           <label class="meta-label" for="account-email">Email</label>
           <input id="account-email" class="input" type="email" bind:value={loginEmail} placeholder="you@example.com" style="width:100%;" />
           {#if !isSupabaseConfigured && authAttempted}
-            <span class="meta-label">Add `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_KEY` to enable login.</span>
+            <span class="meta-label">Add `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` or `PUBLIC_SUPABASE_PUBLISHABLE_KEY` to enable login.</span>
           {:else if isLoggedIn}
             <span class="meta-label">Signed in as {loginEmail}</span>
           {:else if authAttempted}
