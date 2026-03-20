@@ -164,9 +164,12 @@
         authMessage = 'Account already exists. Use Log in with the same email and password.';
         authDetail = '';
       } else if (authMode === 'login' && isInvalidCredentialError(error)) {
-        authMessage =
-          'Invalid login credentials. If this account was created before password login was added, use Reset password to set a password.';
-        authDetail = '';
+        const recovered = await tryRecoverPasswordLogin();
+        if (!recovered) {
+          authMessage =
+            'Invalid login credentials. If this account was created before password login was added, use Reset password to set a password.';
+          authDetail = '';
+        }
       } else {
         authMessage = formatAuthError(error);
         authDetail = formatAuthDetail(error);
@@ -203,6 +206,39 @@
       authDetail = formatAuthDetail(error);
     } finally {
       authBusy = false;
+    }
+  }
+
+  async function tryRecoverPasswordLogin() {
+    const supabase = requireSupabase();
+    try {
+      const { error: signUpError } = await supabase.auth.signUp({
+        email: loginEmail.trim(),
+        password: loginPassword,
+        options: {
+          emailRedirectTo:
+            typeof window !== 'undefined' ? `${window.location.origin}/fightlab3d/login?mode=login` : undefined
+        }
+      });
+      if (signUpError && !isAlreadyRegisteredError(signUpError)) {
+        throw signUpError;
+      }
+    } catch (_) {
+      return false;
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginEmail.trim(),
+        password: loginPassword
+      });
+      if (error) throw error;
+      await finalizeAuth(data?.session ?? null);
+      authMessage = 'Signed in. Redirecting...';
+      authDetail = '';
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
