@@ -4564,7 +4564,7 @@ function clampToDragLengths(person, jointKey, target){
       const { error } = await supabase.auth.signInWithOtp({
         email: loginEmail.trim(),
         options: {
-          emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/fightlab3d/figures` : undefined,
+          emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/fightlab3d/login` : undefined,
           data: {
             name: loginName.trim(),
             display_name: loginName.trim()
@@ -4572,7 +4572,7 @@ function clampToDragLengths(person, jointKey, target){
         }
       });
       if (error) throw error;
-      authMessage = 'Check your email for the sign-in link.';
+      authMessage = 'Check your email for the sign-in link. Open it on the same device and browser you want to use.';
     }catch(error){
       authMessage = formatAuthError(error);
       authDetail = formatAuthDetail(error);
