@@ -11,6 +11,7 @@
   let authDetail = '';
   let authBusy = false;
   let authUnsubscribe = null;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   function formatAuthError(error) {
     const message = error?.message || '';
@@ -36,6 +37,35 @@
     const user = session?.user ?? null;
     if (!user) return;
     goto('/fightlab3d/figures');
+  }
+
+  async function finalizeAuth(session) {
+    const supabase = requireSupabase();
+    if (session?.access_token && session?.refresh_token) {
+      try {
+        const { error } = await supabase.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token
+        });
+        if (error) throw error;
+      } catch (_) {}
+    }
+    for (let i = 0; i < 12; i += 1) {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (data?.session) {
+          applyAuthSession(data.session);
+          return true;
+        }
+      } catch (_) {}
+      await sleep(120);
+    }
+    if (session) {
+      applyAuthSession(session);
+      return true;
+    }
+    return false;
   }
 
   async function loadAuthState() {
@@ -95,7 +125,7 @@
         });
         if (error) throw error;
         if (data?.session) {
-          applyAuthSession(data.session);
+          await finalizeAuth(data.session);
           authMessage = 'Account created. Redirecting...';
         } else {
           authMessage = 'Account created. Check your email if confirmation is required, then log in.';
@@ -107,7 +137,7 @@
           password: loginPassword
         });
         if (error) throw error;
-        applyAuthSession(data?.session ?? null);
+        await finalizeAuth(data?.session ?? null);
         authMessage = 'Signed in. Redirecting...';
       }
     } catch (error) {

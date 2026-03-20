@@ -1311,6 +1311,7 @@ function isLocked(person, key){
   let authAttempted = false;
   let authBusy = false;
   let authUnsubscribe = null;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   // User-defined presets (persisted locally)
   let savedPresets = [];
   let editingPresetIdx = -1;
@@ -3587,13 +3588,12 @@ function clampToDragLengths(person, jointKey, target){
         goto('/fightlab3d/login');
         return;
       }
-      const supabase = requireSupabase();
-      const { data, error } = await supabase.auth.getSession();
-      if (error || !data?.session){
+      const session = await waitForAuthSession();
+      if (!session){
         goto('/fightlab3d/login');
         return;
       }
-      applyAuthSession(data.session);
+      applyAuthSession(session);
     }catch(_){
       goto('/fightlab3d/login');
       return;
@@ -4542,6 +4542,17 @@ function clampToDragLengths(person, jointKey, target){
       authMessage = formatAuthError(error);
       authDetail = formatAuthDetail(error);
     }
+  }
+  async function waitForAuthSession(){
+    if (!isSupabaseConfigured) return null;
+    const supabase = requireSupabase();
+    for (let i = 0; i < 12; i += 1){
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      if (data?.session) return data.session;
+      await sleep(120);
+    }
+    return null;
   }
   async function handleAuthSubmit(){
     authAttempted = true;
