@@ -3712,7 +3712,12 @@ function clampToDragLengths(person, jointKey, target){
       shoulderCenterToNeckLenB = baselineB?.neckCenterLen ?? computeShoulderCenterToNeckLen(POSES.neutral.B);
 
       updateMeshesFromJoints();
-      attachPointerEvents();
+      animate();
+      try{
+        attachPointerEvents();
+      }catch(error){
+        console.error('Fightlab 3D pointer setup failed.', error);
+      }
       window.addEventListener('resize', onResize);
       // Intercept wheel for ortho zoom when in 4-view
       renderer.domElement.addEventListener('wheel', wheelHandler, { passive: false });
@@ -3754,7 +3759,6 @@ function clampToDragLengths(person, jointKey, target){
       window.addEventListener('pointerdown', handleGlobalPointer, true);
       // Pointer lock disabled to keep OS cursor visible while dragging
       onDestroy(()=>{ window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); window.removeEventListener('pointerdown', handleGlobalPointer, true); });
-      animate();
 
       // Build live GUI pose editor
       if (ENABLE_LIL_GUI){
