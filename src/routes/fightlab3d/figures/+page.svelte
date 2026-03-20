@@ -1,5 +1,6 @@
 ﻿<script>
   import { onMount, tick, onDestroy } from "svelte";
+  import { goto } from "$app/navigation";
   import * as THREE from "three";
   import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
   import { GUI } from "lil-gui";
@@ -3580,7 +3581,23 @@ function clampToDragLengths(person, jointKey, target){
   }
 
   // ---------- Scene creation ----------
-  onMount(() => {
+  onMount(async () => {
+    try{
+      if (!isSupabaseConfigured){
+        goto('/fightlab3d/login');
+        return;
+      }
+      const supabase = requireSupabase();
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data?.session){
+        goto('/fightlab3d/login');
+        return;
+      }
+      applyAuthSession(data.session);
+    }catch(_){
+      goto('/fightlab3d/login');
+      return;
+    }
     initJoints();
     // skeletons from neutral and apply start pose
     skeletonA = buildBindFromNeutral(POSES.neutral.A);
@@ -4513,7 +4530,10 @@ function clampToDragLengths(person, jointKey, target){
       const { data: authListener } = supabase.auth.onAuthStateChange((event, session)=>{
         applyAuthSession(session);
         if (event === 'SIGNED_IN') authMessage = 'Signed in.';
-        else if (event === 'SIGNED_OUT') authMessage = 'Signed out.';
+        else if (event === 'SIGNED_OUT') {
+          authMessage = 'Signed out.';
+          goto('/fightlab3d/login');
+        }
       });
       authUnsubscribe = authListener?.subscription?.unsubscribe
         ? () => authListener.subscription.unsubscribe()
@@ -4568,6 +4588,7 @@ function clampToDragLengths(person, jointKey, target){
       isLoggedIn = false;
       loginName = '';
       loginEmail = '';
+      goto('/fightlab3d/login');
       return;
     }
     authBusy = true;
@@ -4577,6 +4598,7 @@ function clampToDragLengths(person, jointKey, target){
       if (error) throw error;
       applyAuthSession(null);
       authMessage = 'Signed out.';
+      goto('/fightlab3d/login');
     }catch(error){
       authMessage = formatAuthError(error);
       authDetail = formatAuthDetail(error);

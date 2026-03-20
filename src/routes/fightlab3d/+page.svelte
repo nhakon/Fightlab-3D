@@ -213,7 +213,7 @@
       <span class="brand-text">Fightlab 3D</span>
     </div>
     <div class="nav-actions">
-      <a class="nav-link-btn primary" href="/fightlab3d/figures">Start free</a>
+      <a class="nav-link-btn primary" href="/fightlab3d/login">Start free</a>
     </div>
   </div>
 </header>
@@ -225,7 +225,7 @@
         <h1 class="display">Memorize techniques faster</h1>
         <p class="lead">Fightlab 3D is a martial arts pose-to-animation creator.</p>
         <div class="hero-actions">
-          <a class="nav-link-btn ghost" href="/fightlab3d/figures">Start free</a>
+          <a class="nav-link-btn ghost" href="/fightlab3d/login">Start free</a>
         </div>
       </div>
       <div class="hero-visual">
@@ -359,7 +359,7 @@
         <h2 class="section-title">Ready to start?</h2>
         <p class="muted">Get Fightlab 3D and keep every technique at your fingertips.</p>
       </div>
-      <a class="nav-link-btn primary" href="/fightlab3d/figures">Start free</a>
+      <a class="nav-link-btn primary" href="/fightlab3d/login">Start free</a>
     </div>
   </section>
 
