@@ -6441,23 +6441,19 @@ function clampToDragLengths(person, jointKey, target){
         </button>
         {#if showAccountAuth}
         <div id="account-auth" class="menu-item panel-block" style="flex-direction:column; align-items:flex-start; gap:6px; padding:10px;">
-          <label class="meta-label" for="account-name">Name</label>
-          <input id="account-name" class="input" bind:value={loginName} placeholder="Your name" style="width:100%;" />
-          <label class="meta-label" for="account-email">Email</label>
-          <input id="account-email" class="input" type="email" bind:value={loginEmail} placeholder="you@example.com" style="width:100%;" />
-          {#if !isSupabaseConfigured && authAttempted}
-            <span class="meta-label">Add `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` or `PUBLIC_SUPABASE_PUBLISHABLE_KEY` to enable login.</span>
-          {:else if isLoggedIn}
+          {#if isLoggedIn}
             <span class="meta-label">Signed in as {loginEmail}</span>
-          {:else if authAttempted}
-            <span class="meta-label">We send a magic sign-in link to your email.</span>
+            {#if loginName}
+              <span class="meta-label">Name: {loginName}</span>
+            {/if}
+          {:else}
+            <span class="meta-label">You need to log in from the dedicated login page.</span>
           {/if}
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn btn--primary" on:click={handleAuthSubmit} disabled={authBusy}>
-              {isLoggedIn ? 'Send new login link' : 'Login / Sign up'}
-            </button>
             {#if isLoggedIn}
               <button class="btn" on:click={logout} disabled={authBusy}>Log out</button>
+            {:else}
+              <button class="btn btn--primary" on:click={() => goto('/fightlab3d/login')}>Go to login</button>
             {/if}
           </div>
           {#if authAttempted && authMessage}

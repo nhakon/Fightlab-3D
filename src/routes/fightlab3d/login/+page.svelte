@@ -5,12 +5,12 @@
 
   let loginName = '';
   let loginEmail = '';
-  let otpCode = '';
+  let loginPassword = '';
+  let authMode = 'signup';
   let authMessage = '';
   let authDetail = '';
   let authBusy = false;
   let authUnsubscribe = null;
-  let codeSent = false;
 
   function formatAuthError(error) {
     const message = error?.message || '';
@@ -60,8 +60,6 @@
   async function handleAuthSubmit() {
     authMessage = '';
     authDetail = '';
-    codeSent = false;
-    otpCode = '';
     if (!isSupabaseConfigured) {
       authMessage =
         'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
@@ -71,59 +69,47 @@
       authMessage = 'Email required.';
       return;
     }
+    if (!loginPassword.trim()) {
+      authMessage = 'Password required.';
+      return;
+    }
+    if (authMode === 'signup' && !loginName.trim()) {
+      authMessage = 'Name required.';
+      return;
+    }
     authBusy = true;
     try {
-      if (!loginName.trim()) {
-        loginName = loginEmail.split('@')[0] || 'User';
-      }
       const supabase = requireSupabase();
-      const { error } = await supabase.auth.signInWithOtp({
-        email: loginEmail.trim(),
-        options: {
-          data: {
-            name: loginName.trim(),
-            display_name: loginName.trim()
+      if (authMode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({
+          email: loginEmail.trim(),
+          password: loginPassword,
+          options: {
+            data: {
+              name: loginName.trim(),
+              display_name: loginName.trim()
+            },
+            emailRedirectTo:
+              typeof window !== 'undefined' ? `${window.location.origin}/fightlab3d/login` : undefined
           }
+        });
+        if (error) throw error;
+        if (data?.session) {
+          applyAuthSession(data.session);
+          authMessage = 'Account created. Redirecting...';
+        } else {
+          authMessage = 'Account created. Check your email if confirmation is required, then log in.';
+          authMode = 'login';
         }
-      });
-      if (error) throw error;
-      codeSent = true;
-      authMessage = 'Check your email for the login code, then enter it below.';
-    } catch (error) {
-      authMessage = formatAuthError(error);
-      authDetail = formatAuthDetail(error);
-    } finally {
-      authBusy = false;
-    }
-  }
-
-  async function handleOtpVerify() {
-    authMessage = '';
-    authDetail = '';
-    if (!isSupabaseConfigured) {
-      authMessage =
-        'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
-      return;
-    }
-    if (!loginEmail.trim()) {
-      authMessage = 'Email required.';
-      return;
-    }
-    if (!otpCode.trim()) {
-      authMessage = 'Enter the code from your email.';
-      return;
-    }
-    authBusy = true;
-    try {
-      const supabase = requireSupabase();
-      const { data, error } = await supabase.auth.verifyOtp({
-        email: loginEmail.trim(),
-        token: otpCode.trim(),
-        type: 'email'
-      });
-      if (error) throw error;
-      applyAuthSession(data?.session ?? null);
-      authMessage = 'Signed in.';
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: loginEmail.trim(),
+          password: loginPassword
+        });
+        if (error) throw error;
+        applyAuthSession(data?.session ?? null);
+        authMessage = 'Signed in. Redirecting...';
+      }
     } catch (error) {
       authMessage = formatAuthError(error);
       authDetail = formatAuthDetail(error);
@@ -159,12 +145,39 @@
       <div class="auth-copy">
         <span class="eyebrow">Fightlab 3D</span>
         <h1>Login or sign up</h1>
-        <p>Start with your email first. The editor opens only after you sign in.</p>
+        <p>Create an account or log in with email and password before entering the editor.</p>
       </div>
 
       <div class="auth-form">
-        <label class="label" for="login-name">Name</label>
-        <input id="login-name" class="input" bind:value={loginName} placeholder="Your name" />
+        <div class="mode-toggle">
+          <button
+            class:mode-active={authMode === 'signup'}
+            type="button"
+            on:click={() => {
+              authMode = 'signup';
+              authMessage = '';
+              authDetail = '';
+            }}
+          >
+            Sign up
+          </button>
+          <button
+            class:mode-active={authMode === 'login'}
+            type="button"
+            on:click={() => {
+              authMode = 'login';
+              authMessage = '';
+              authDetail = '';
+            }}
+          >
+            Log in
+          </button>
+        </div>
+
+        {#if authMode === 'signup'}
+          <label class="label" for="login-name">Name</label>
+          <input id="login-name" class="input" bind:value={loginName} placeholder="Your name" />
+        {/if}
 
         <label class="label" for="login-email">Email</label>
         <input
@@ -175,25 +188,22 @@
           placeholder="you@example.com"
         />
 
+        <label class="label" for="login-password">Password</label>
+        <input
+          id="login-password"
+          class="input"
+          type="password"
+          bind:value={loginPassword}
+          placeholder="Choose a password"
+        />
+
         <button class="submit-btn" on:click={handleAuthSubmit} disabled={authBusy}>
-          {authBusy ? 'Sending code...' : 'Send login code'}
+          {#if authBusy}
+            {authMode === 'signup' ? 'Creating account...' : 'Logging in...'}
+          {:else}
+            {authMode === 'signup' ? 'Create account' : 'Log in'}
+          {/if}
         </button>
-
-        {#if codeSent}
-          <label class="label" for="login-code">Email code</label>
-          <input
-            id="login-code"
-            class="input"
-            bind:value={otpCode}
-            inputmode="numeric"
-            autocomplete="one-time-code"
-            placeholder="Enter the code from your email"
-          />
-
-          <button class="submit-btn submit-btn--secondary" on:click={handleOtpVerify} disabled={authBusy}>
-            {authBusy ? 'Verifying...' : 'Verify code'}
-          </button>
-        {/if}
 
         {#if authMessage}
           <p class="message">{authMessage}</p>
@@ -294,6 +304,29 @@
     border: 1px solid rgba(148, 163, 184, 0.18);
   }
 
+  .mode-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .mode-toggle button {
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: rgba(15, 23, 42, 0.72);
+    color: #cbd5f5;
+    font: 13px/1.2 'Sora', 'Inter', system-ui, sans-serif;
+    cursor: pointer;
+  }
+
+  .mode-toggle button.mode-active {
+    background: rgba(37, 99, 235, 0.18);
+    border-color: rgba(96, 165, 250, 0.45);
+    color: #ffffff;
+  }
+
   .label {
     font: 13px/1.3 'Sora', 'Inter', system-ui, sans-serif;
     color: #cbd5f5;
@@ -324,13 +357,6 @@
     font: 14px/1.2 'Sora', 'Inter', system-ui, sans-serif;
     cursor: pointer;
     box-shadow: 0 14px 28px rgba(37, 99, 235, 0.28);
-  }
-
-  .submit-btn--secondary {
-    margin-top: 0;
-    background: rgba(15, 23, 42, 0.9);
-    border: 1px solid rgba(148, 163, 184, 0.28);
-    box-shadow: none;
   }
 
   .submit-btn:disabled {
