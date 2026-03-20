@@ -1312,6 +1312,7 @@ function isLocked(person, key){
   let authBusy = false;
   let authUnsubscribe = null;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const FIGURES_BOOT_TIMEOUT_MS = 5000;
   // User-defined presets (persisted locally)
   let savedPresets = [];
   let editingPresetIdx = -1;
@@ -3598,174 +3599,184 @@ function clampToDragLengths(person, jointKey, target){
       goto('/fightlab3d/login');
       return;
     }
-    initJoints();
-    // skeletons from neutral and apply start pose
-    skeletonA = buildBindFromNeutral(POSES.neutral.A);
-    skeletonB = buildBindFromNeutral(POSES.neutral.B);
-    applyWorldPoseToSkeleton(skeletonA, POSES[startPosition].A);
-    applyWorldPoseToSkeleton(skeletonB, POSES[startPosition].B);
-    groundSkeleton(skeletonA);
-    groundSkeleton(skeletonB);
+    const bootTimeout = window.setTimeout(() => {
+      uiReady = true;
+    }, FIGURES_BOOT_TIMEOUT_MS);
     try{
-      computeFK(skeletonA);
-      headPreferredA = skeletonA.angleRot[IDX.head]?.clone() || null;
-    }catch(e){ headPreferredA = null; }
-    try{
-      computeFK(skeletonB);
-      headPreferredB = skeletonB.angleRot[IDX.head]?.clone() || null;
-    }catch(e){ headPreferredB = null; }
-    jointsA = jointsFromSkeleton(skeletonA);
-    jointsB = jointsFromSkeleton(skeletonB);
+      initJoints();
+      // skeletons from neutral and apply start pose
+      skeletonA = buildBindFromNeutral(POSES.neutral.A);
+      skeletonB = buildBindFromNeutral(POSES.neutral.B);
+      applyWorldPoseToSkeleton(skeletonA, POSES[startPosition].A);
+      applyWorldPoseToSkeleton(skeletonB, POSES[startPosition].B);
+      groundSkeleton(skeletonA);
+      groundSkeleton(skeletonB);
+      try{
+        computeFK(skeletonA);
+        headPreferredA = skeletonA.angleRot[IDX.head]?.clone() || null;
+      }catch(e){ headPreferredA = null; }
+      try{
+        computeFK(skeletonB);
+        headPreferredB = skeletonB.angleRot[IDX.head]?.clone() || null;
+      }catch(e){ headPreferredB = null; }
+      jointsA = jointsFromSkeleton(skeletonA);
+      jointsB = jointsFromSkeleton(skeletonB);
 
-    // scene
-    scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.05, 1000);
-    camera.position.set(2, 1.6, 3);
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    try{
-      if (renderer.outputColorSpace !== undefined && THREE.SRGBColorSpace) {
-        renderer.outputColorSpace = THREE.SRGBColorSpace;
-      } else if (renderer.outputEncoding !== undefined && THREE.sRGBEncoding) {
-        renderer.outputEncoding = THREE.sRGBEncoding;
-      }
-    }catch(e){}
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.2;
-    // Disable mouse-based camera rotation; keep zoom and potential pan
-    try{
-      controls.enableRotate = false;
-      controls.enablePan = false;
-    }catch(e){}
-    // Ortho cameras (for 4-view mode)
-    camFront = new THREE.OrthographicCamera(-1,1,1,-1,0.01,1000);
-    camSide  = new THREE.OrthographicCamera(-1,1,1,-1,0.01,1000);
-    camTop   = new THREE.OrthographicCamera(-1,1,1,-1,0.01,1000);
-    setOrthoFrustums();
-    updateOrthoCameras();
-    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
-    const key = new THREE.DirectionalLight(0xffffff, 0.85);
-    key.position.set(2.5, 5.5, 3.5);
-    scene.add(key);
-    const rim = new THREE.DirectionalLight(0xb8c8ff, 0.25);
-    rim.position.set(-3, 2.5, -4);
-    scene.add(rim);
-
-    // ground
-    groundMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(6,6),
-      new THREE.MeshStandardMaterial({ color: darkMode ? 0x203453 : 0xe8edf3, roughness: 0.95, metalness: 0.0 })
-    );
-    groundMesh.rotation.x = -Math.PI/2;
-    groundMesh.position.y = FLOOR_Y;
-    scene.add(groundMesh);
-
-    // dummies
-    const scheme0 = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
-    const dA = createDummy(jointsA, scheme0.A, 'A');
-    const dB = createDummy(jointsB, scheme0.B, 'B');
-    scene.add(dA.group); scene.add(dB.group);
-    figureGroupA = dA.group; figureGroupB = dB.group;
-    jointMeshesA = dA.jointSpheres; boneMeshesA = dA.boneList;
-    torsoA = dA.torso; pelvisA = dA.pelvis; spineA = dA.spine; chestA = dA.chest; shoulderBarA = dA.shoulderBar;
-    handBoxesA = { L: dA.handLBox, R: dA.handRBox }; footBoxesA = { L: dA.footLBox, R: dA.footRBox };
-    toeJointsA = { L: dA.toeLJoint, R: dA.toeRJoint };
-    jointMeshesB = dB.jointSpheres; boneMeshesB = dB.boneList;
-    torsoB = dB.torso; pelvisB = dB.pelvis; spineB = dB.spine; chestB = dB.chest; shoulderBarB = dB.shoulderBar;
-    handBoxesB = { L: dB.handLBox, R: dB.handRBox }; footBoxesB = { L: dB.footLBox, R: dB.footRBox };
-    toeJointsB = { L: dB.toeLJoint, R: dB.toeRJoint };
-    if (handBoxesA?.L){ handBoxesA.L.userData.person = 'A'; handBoxesA.R.userData.person = 'A'; }
-    if (handBoxesB?.L){ handBoxesB.L.userData.person = 'B'; handBoxesB.R.userData.person = 'B'; }
-    upperHandleA = dA.upperHandle; upperHandleB = dB.upperHandle;
-    function setHandleVisual(h, color, emissive, scale=1){
-      if (!h) return;
-      h.scale.set(scale, scale, scale);
-      h.traverse(m=>{
-        if (m.isMesh && m.material){
-          if (m.material.color) m.material.color.setHex(color);
-          if (m.material.emissive) m.material.emissive.setHex(emissive);
+      // scene
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.05, 1000);
+      camera.position.set(2, 1.6, 3);
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      try{
+        if (renderer.outputColorSpace !== undefined && THREE.SRGBColorSpace) {
+          renderer.outputColorSpace = THREE.SRGBColorSpace;
+        } else if (renderer.outputEncoding !== undefined && THREE.sRGBEncoding) {
+          renderer.outputEncoding = THREE.sRGBEncoding;
         }
-      });
+      }catch(e){}
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.2;
+      // Disable mouse-based camera rotation; keep zoom and potential pan
+      try{
+        controls.enableRotate = false;
+        controls.enablePan = false;
+      }catch(e){}
+      // Ortho cameras (for 4-view mode)
+      camFront = new THREE.OrthographicCamera(-1,1,1,-1,0.01,1000);
+      camSide  = new THREE.OrthographicCamera(-1,1,1,-1,0.01,1000);
+      camTop   = new THREE.OrthographicCamera(-1,1,1,-1,0.01,1000);
+      setOrthoFrustums();
+      updateOrthoCameras();
+      scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+      const key = new THREE.DirectionalLight(0xffffff, 0.85);
+      key.position.set(2.5, 5.5, 3.5);
+      scene.add(key);
+      const rim = new THREE.DirectionalLight(0xb8c8ff, 0.25);
+      rim.position.set(-3, 2.5, -4);
+      scene.add(rim);
+
+      // ground
+      groundMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(6,6),
+        new THREE.MeshStandardMaterial({ color: darkMode ? 0x203453 : 0xe8edf3, roughness: 0.95, metalness: 0.0 })
+      );
+      groundMesh.rotation.x = -Math.PI/2;
+      groundMesh.position.y = FLOOR_Y;
+      scene.add(groundMesh);
+
+      // dummies
+      const scheme0 = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
+      const dA = createDummy(jointsA, scheme0.A, 'A');
+      const dB = createDummy(jointsB, scheme0.B, 'B');
+      scene.add(dA.group); scene.add(dB.group);
+      figureGroupA = dA.group; figureGroupB = dB.group;
+      jointMeshesA = dA.jointSpheres; boneMeshesA = dA.boneList;
+      torsoA = dA.torso; pelvisA = dA.pelvis; spineA = dA.spine; chestA = dA.chest; shoulderBarA = dA.shoulderBar;
+      handBoxesA = { L: dA.handLBox, R: dA.handRBox }; footBoxesA = { L: dA.footLBox, R: dA.footRBox };
+      toeJointsA = { L: dA.toeLJoint, R: dA.toeRJoint };
+      jointMeshesB = dB.jointSpheres; boneMeshesB = dB.boneList;
+      torsoB = dB.torso; pelvisB = dB.pelvis; spineB = dB.spine; chestB = dB.chest; shoulderBarB = dB.shoulderBar;
+      handBoxesB = { L: dB.handLBox, R: dB.handRBox }; footBoxesB = { L: dB.footLBox, R: dB.footRBox };
+      toeJointsB = { L: dB.toeLJoint, R: dB.toeRJoint };
+      if (handBoxesA?.L){ handBoxesA.L.userData.person = 'A'; handBoxesA.R.userData.person = 'A'; }
+      if (handBoxesB?.L){ handBoxesB.L.userData.person = 'B'; handBoxesB.R.userData.person = 'B'; }
+      upperHandleA = dA.upperHandle; upperHandleB = dB.upperHandle;
+      function setHandleVisual(h, color, emissive, scale=1){
+        if (!h) return;
+        h.scale.set(scale, scale, scale);
+        h.traverse(m=>{
+          if (m.isMesh && m.material){
+            if (m.material.color) m.material.color.setHex(color);
+            if (m.material.emissive) m.material.emissive.setHex(emissive);
+          }
+        });
+      }
+      const ROT_GREEN = 0x00b050, ROT_EMISS = 0x003a20;
+      // Make the head handle icon smaller via scale
+      if (upperHandleA){ setHandleVisual(upperHandleA, ROT_GREEN, ROT_EMISS, 0.75); upperHandleA.userData.defaultColor = ROT_GREEN; upperHandleA.userData.person='A'; }
+      if (upperHandleB){ setHandleVisual(upperHandleB, ROT_GREEN, ROT_EMISS, 0.75); upperHandleB.userData.defaultColor = ROT_GREEN; upperHandleB.userData.person='B'; }
+
+      // Ensure torso colors and body colors reflect current mode/lock state
+      applyColorblindScheme();
+
+      // Capture mount-based baseline and use its lengths as master reference
+      captureBaselineFromMount();
+      desiredLengthsA = baselineA?.lenMap ?? computeDesiredLengths(POSES.neutral.A);
+      desiredLengthsB = baselineB?.lenMap ?? computeDesiredLengths(POSES.neutral.B);
+      neutralTorsoLenA = baselineA?.torsoLen ?? computeTorsoLength(POSES.neutral.A);
+      neutralTorsoLenB = baselineB?.torsoLen ?? computeTorsoLength(POSES.neutral.B);
+      shoulderCenterToNeckLenA = baselineA?.neckCenterLen ?? computeShoulderCenterToNeckLen(POSES.neutral.A);
+      shoulderCenterToNeckLenB = baselineB?.neckCenterLen ?? computeShoulderCenterToNeckLen(POSES.neutral.B);
+
+      updateMeshesFromJoints();
+      attachPointerEvents();
+      window.addEventListener('resize', onResize);
+      // Intercept wheel for ortho zoom when in 4-view
+      renderer.domElement.addEventListener('wheel', wheelHandler, { passive: false });
+      // Key listeners
+      const kd = (e)=>{
+        // Ignore single-key shortcuts while typing in inputs (allow Ctrl/Cmd combos)
+        if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undoLastFigureMove(); return; }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); try{ saveCurrentFrame(); }catch(_){} return; }
+        if (e.key === 'Escape') { closeAllMenus(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); nextFrame(); return; }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); prevFrame(); return; }
+        if (e.key === 'Control') { armRotateSyncOnCtrlTap(e); return; }
+        if (dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); startDepthNudge(-1); return; }
+        if (!dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); togglePlayback(); return; }
+        if (dragging && (e.key === 'f' || e.key === 'F' || e.code === 'KeyF')) { e.preventDefault(); startDepthNudge(1); return; }
+        if (e.key === 'Tab') { e.preventDefault(); tabToeRotate = true; return; }
+        if (e.key === 'h' || e.key === 'H') { e.preventDefault(); toggleUI(); return; }
+        if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); toggleTorsoFreeze(); return; }
+        if (e.key === 'e' || e.key === 'E') { e.preventDefault(); toggleSingleJointMode(); return; }
+        handleWASDKeyDown(e);
+      };
+      const ku = (e)=>{
+        if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
+        if (e.code === 'Space' || e.key === ' ' || e.key === 'f' || e.key === 'F' || e.code === 'KeyF') { stopDepthNudge(); }
+        if (e.key === 'Tab') { tabToeRotate = false; return; }
+        handleWASDKeyUp(e);
+      };
+      window.addEventListener('keydown', kd);
+      window.addEventListener('keyup', ku);
+      const handleGlobalPointer = (e)=>{
+        const t = e.target;
+        if (showSavedPlaybacksMenu && !clickInside(t, playbacksMenuEl, playbacksToggleEl)) showSavedPlaybacksMenu = false;
+        if (showSavedPresetsMenu && !clickInside(t, presetsMenuEl, presetsToggleEl)) showSavedPresetsMenu = false;
+        if (showAccountMenu && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllMenus();
+        if ((showAccountAuth || showAccountSettings || showAccountShortcuts) && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllSettingTabs();
+        if (playbackContextMenu.visible && !clickInside(t, playbackContextEl, null)) closePlaybackContext();
+      };
+      window.addEventListener('pointerdown', handleGlobalPointer, true);
+      // Pointer lock disabled to keep OS cursor visible while dragging
+      onDestroy(()=>{ window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); window.removeEventListener('pointerdown', handleGlobalPointer, true); });
+      animate();
+
+      // Build live GUI pose editor
+      if (ENABLE_LIL_GUI){
+        buildPoseGUI();
+        applyUiVisibility();
+      }
+      // Initialize playback and custom presets (do not auto-create a frame; snapshot when user saves/plays)
+      try{
+        restoreSavedPlaybacks();
+        restorePlaybackFolders();
+        ensurePlaybackFoldersFromSaved();
+        playbackGroups = groupPlaybacks(savedPlaybacks);
+        restoreSavedPresets();
+        restorePresetOverrides();
+      }catch(e){}
+      uiReady = true;
+    } catch (error) {
+      console.error('Fightlab 3D failed to initialize.', error);
+      uiReady = true;
+    } finally {
+      window.clearTimeout(bootTimeout);
     }
-    const ROT_GREEN = 0x00b050, ROT_EMISS = 0x003a20;
-    // Make the head handle icon smaller via scale
-    if (upperHandleA){ setHandleVisual(upperHandleA, ROT_GREEN, ROT_EMISS, 0.75); upperHandleA.userData.defaultColor = ROT_GREEN; upperHandleA.userData.person='A'; }
-    if (upperHandleB){ setHandleVisual(upperHandleB, ROT_GREEN, ROT_EMISS, 0.75); upperHandleB.userData.defaultColor = ROT_GREEN; upperHandleB.userData.person='B'; }
-
-    // Ensure torso colors and body colors reflect current mode/lock state
-    applyColorblindScheme();
-
-    // Capture mount-based baseline and use its lengths as master reference
-    captureBaselineFromMount();
-    desiredLengthsA = baselineA?.lenMap ?? computeDesiredLengths(POSES.neutral.A);
-    desiredLengthsB = baselineB?.lenMap ?? computeDesiredLengths(POSES.neutral.B);
-    neutralTorsoLenA = baselineA?.torsoLen ?? computeTorsoLength(POSES.neutral.A);
-    neutralTorsoLenB = baselineB?.torsoLen ?? computeTorsoLength(POSES.neutral.B);
-    shoulderCenterToNeckLenA = baselineA?.neckCenterLen ?? computeShoulderCenterToNeckLen(POSES.neutral.A);
-    shoulderCenterToNeckLenB = baselineB?.neckCenterLen ?? computeShoulderCenterToNeckLen(POSES.neutral.B);
-
-    updateMeshesFromJoints();
-    attachPointerEvents();
-    window.addEventListener('resize', onResize);
-    // Intercept wheel for ortho zoom when in 4-view
-    renderer.domElement.addEventListener('wheel', wheelHandler, { passive: false });
-    // Key listeners
-    const kd = (e)=>{
-      // Ignore single-key shortcuts while typing in inputs (allow Ctrl/Cmd combos)
-      if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undoLastFigureMove(); return; }
-      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); try{ saveCurrentFrame(); }catch(_){} return; }
-      if (e.key === 'Escape') { closeAllMenus(); return; }
-      if (e.key === 'ArrowRight') { e.preventDefault(); nextFrame(); return; }
-      if (e.key === 'ArrowLeft') { e.preventDefault(); prevFrame(); return; }
-      if (e.key === 'Control') { armRotateSyncOnCtrlTap(e); return; }
-      if (dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); startDepthNudge(-1); return; }
-      if (!dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); togglePlayback(); return; }
-      if (dragging && (e.key === 'f' || e.key === 'F' || e.code === 'KeyF')) { e.preventDefault(); startDepthNudge(1); return; }
-      if (e.key === 'Tab') { e.preventDefault(); tabToeRotate = true; return; }
-      if (e.key === 'h' || e.key === 'H') { e.preventDefault(); toggleUI(); return; }
-      if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); toggleTorsoFreeze(); return; }
-      if (e.key === 'e' || e.key === 'E') { e.preventDefault(); toggleSingleJointMode(); return; }
-      handleWASDKeyDown(e);
-    };
-    const ku = (e)=>{
-      if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
-      if (e.code === 'Space' || e.key === ' ' || e.key === 'f' || e.key === 'F' || e.code === 'KeyF') { stopDepthNudge(); }
-      if (e.key === 'Tab') { tabToeRotate = false; return; }
-      handleWASDKeyUp(e);
-    };
-    window.addEventListener('keydown', kd);
-    window.addEventListener('keyup', ku);
-    const handleGlobalPointer = (e)=>{
-      const t = e.target;
-      if (showSavedPlaybacksMenu && !clickInside(t, playbacksMenuEl, playbacksToggleEl)) showSavedPlaybacksMenu = false;
-      if (showSavedPresetsMenu && !clickInside(t, presetsMenuEl, presetsToggleEl)) showSavedPresetsMenu = false;
-      if (showAccountMenu && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllMenus();
-      if ((showAccountAuth || showAccountSettings || showAccountShortcuts) && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllSettingTabs();
-      if (playbackContextMenu.visible && !clickInside(t, playbackContextEl, null)) closePlaybackContext();
-    };
-    window.addEventListener('pointerdown', handleGlobalPointer, true);
-    // Pointer lock disabled to keep OS cursor visible while dragging
-    onDestroy(()=>{ window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); window.removeEventListener('pointerdown', handleGlobalPointer, true); });
-    animate();
-
-    // Build live GUI pose editor
-    if (ENABLE_LIL_GUI){
-      buildPoseGUI();
-      applyUiVisibility();
-    }
-    // Initialize playback and custom presets (do not auto-create a frame; snapshot when user saves/plays)
-    try{
-      restoreSavedPlaybacks();
-      restorePlaybackFolders();
-      ensurePlaybackFoldersFromSaved();
-      playbackGroups = groupPlaybacks(savedPlaybacks);
-      restoreSavedPresets();
-      restorePresetOverrides();
-    }catch(e){}
-    uiReady = true;
   });
 
   function cycleLockState(){
@@ -4546,7 +4557,7 @@ function clampToDragLengths(person, jointKey, target){
   async function waitForAuthSession(){
     if (!isSupabaseConfigured) return null;
     const supabase = requireSupabase();
-    for (let i = 0; i < 12; i += 1){
+    for (let i = 0; i < 20; i += 1){
       const { data, error } = await supabase.auth.getSession();
       if (error) throw error;
       if (data?.session) return data.session;
