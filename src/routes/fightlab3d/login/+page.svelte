@@ -38,6 +38,11 @@
     return message.includes('already registered') || message.includes('user already exists');
   }
 
+  function isInvalidCredentialError(error) {
+    const message = `${error?.message || error || ''}`.toLowerCase();
+    return message.includes('invalid login credentials') || message.includes('invalid credentials');
+  }
+
   function applyRequestedAuthMode() {
     if (typeof window === 'undefined') return;
     const requestedMode = new URLSearchParams(window.location.search).get('mode');
@@ -158,10 +163,44 @@
         authMode = 'login';
         authMessage = 'Account already exists. Use Log in with the same email and password.';
         authDetail = '';
+      } else if (authMode === 'login' && isInvalidCredentialError(error)) {
+        authMessage =
+          'Invalid login credentials. If this account was created before password login was added, use Reset password to set a password.';
+        authDetail = '';
       } else {
         authMessage = formatAuthError(error);
         authDetail = formatAuthDetail(error);
       }
+    } finally {
+      authBusy = false;
+    }
+  }
+
+  async function handlePasswordReset() {
+    authMessage = '';
+    authDetail = '';
+    if (!isSupabaseConfigured) {
+      authMessage =
+        'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
+      return;
+    }
+    if (!loginEmail.trim()) {
+      authMessage = 'Enter your email first.';
+      return;
+    }
+    authBusy = true;
+    try {
+      const supabase = requireSupabase();
+      const { error } = await supabase.auth.resetPasswordForEmail(loginEmail.trim(), {
+        redirectTo:
+          typeof window !== 'undefined' ? `${window.location.origin}/fightlab3d/login?mode=login` : undefined
+      });
+      if (error) throw error;
+      authMessage = 'Password reset email sent. Open the link, set your password, then log in.';
+      authDetail = '';
+    } catch (error) {
+      authMessage = formatAuthError(error);
+      authDetail = formatAuthDetail(error);
     } finally {
       authBusy = false;
     }
@@ -254,6 +293,11 @@
             {authMode === 'signup' ? 'Create account' : 'Log in'}
           {/if}
         </button>
+        {#if authMode === 'login'}
+          <button class="toggle-btn" on:click={handlePasswordReset} disabled={authBusy}>
+            Reset password
+          </button>
+        {/if}
 
         {#if authMessage}
           <p class="message">{authMessage}</p>
