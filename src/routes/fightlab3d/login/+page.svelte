@@ -5,10 +5,12 @@
 
   let loginName = '';
   let loginEmail = '';
+  let otpCode = '';
   let authMessage = '';
   let authDetail = '';
   let authBusy = false;
   let authUnsubscribe = null;
+  let codeSent = false;
 
   function formatAuthError(error) {
     const message = error?.message || '';
@@ -58,6 +60,8 @@
   async function handleAuthSubmit() {
     authMessage = '';
     authDetail = '';
+    codeSent = false;
+    otpCode = '';
     if (!isSupabaseConfigured) {
       authMessage =
         'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
@@ -76,8 +80,6 @@
       const { error } = await supabase.auth.signInWithOtp({
         email: loginEmail.trim(),
         options: {
-          emailRedirectTo:
-            typeof window !== 'undefined' ? `${window.location.origin}/fightlab3d/login` : undefined,
           data: {
             name: loginName.trim(),
             display_name: loginName.trim()
@@ -85,7 +87,43 @@
         }
       });
       if (error) throw error;
-      authMessage = 'Check your email for the sign-in link. Open it on the same device and browser you want to use.';
+      codeSent = true;
+      authMessage = 'Check your email for the login code, then enter it below.';
+    } catch (error) {
+      authMessage = formatAuthError(error);
+      authDetail = formatAuthDetail(error);
+    } finally {
+      authBusy = false;
+    }
+  }
+
+  async function handleOtpVerify() {
+    authMessage = '';
+    authDetail = '';
+    if (!isSupabaseConfigured) {
+      authMessage =
+        'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
+      return;
+    }
+    if (!loginEmail.trim()) {
+      authMessage = 'Email required.';
+      return;
+    }
+    if (!otpCode.trim()) {
+      authMessage = 'Enter the code from your email.';
+      return;
+    }
+    authBusy = true;
+    try {
+      const supabase = requireSupabase();
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: loginEmail.trim(),
+        token: otpCode.trim(),
+        type: 'email'
+      });
+      if (error) throw error;
+      applyAuthSession(data?.session ?? null);
+      authMessage = 'Signed in.';
     } catch (error) {
       authMessage = formatAuthError(error);
       authDetail = formatAuthDetail(error);
@@ -138,8 +176,24 @@
         />
 
         <button class="submit-btn" on:click={handleAuthSubmit} disabled={authBusy}>
-          {authBusy ? 'Sending link...' : 'Login / Sign up'}
+          {authBusy ? 'Sending code...' : 'Send login code'}
         </button>
+
+        {#if codeSent}
+          <label class="label" for="login-code">Email code</label>
+          <input
+            id="login-code"
+            class="input"
+            bind:value={otpCode}
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            placeholder="Enter the code from your email"
+          />
+
+          <button class="submit-btn submit-btn--secondary" on:click={handleOtpVerify} disabled={authBusy}>
+            {authBusy ? 'Verifying...' : 'Verify code'}
+          </button>
+        {/if}
 
         {#if authMessage}
           <p class="message">{authMessage}</p>
@@ -270,6 +324,13 @@
     font: 14px/1.2 'Sora', 'Inter', system-ui, sans-serif;
     cursor: pointer;
     box-shadow: 0 14px 28px rgba(37, 99, 235, 0.28);
+  }
+
+  .submit-btn--secondary {
+    margin-top: 0;
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    box-shadow: none;
   }
 
   .submit-btn:disabled {
