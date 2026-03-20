@@ -3586,17 +3586,17 @@ function clampToDragLengths(person, jointKey, target){
   onMount(async () => {
     try{
       if (!isSupabaseConfigured){
-        goto('/fightlab3d/login');
+        goto('/fightlab3d/login?mode=login');
         return;
       }
       const session = await waitForAuthSession();
       if (!session){
-        goto('/fightlab3d/login');
+        goto('/fightlab3d/login?mode=login');
         return;
       }
       applyAuthSession(session);
     }catch(_){
-      goto('/fightlab3d/login');
+      goto('/fightlab3d/login?mode=login');
       return;
     }
     const bootTimeout = window.setTimeout(() => {
@@ -4547,7 +4547,7 @@ function clampToDragLengths(person, jointKey, target){
         if (event === 'SIGNED_IN') authMessage = 'Signed in.';
         else if (event === 'SIGNED_OUT') {
           authMessage = 'Signed out.';
-          goto('/fightlab3d/login');
+          goto('/fightlab3d/login?mode=login');
         }
       });
       authUnsubscribe = authListener?.subscription?.unsubscribe
@@ -4614,7 +4614,7 @@ function clampToDragLengths(person, jointKey, target){
       isLoggedIn = false;
       loginName = '';
       loginEmail = '';
-      goto('/fightlab3d/login');
+      goto('/fightlab3d/login?mode=login');
       return;
     }
     authBusy = true;
@@ -4624,7 +4624,7 @@ function clampToDragLengths(person, jointKey, target){
       if (error) throw error;
       applyAuthSession(null);
       authMessage = 'Signed out.';
-      goto('/fightlab3d/login');
+      goto('/fightlab3d/login?mode=login');
     }catch(error){
       authMessage = formatAuthError(error);
       authDetail = formatAuthDetail(error);
@@ -6479,7 +6479,7 @@ function clampToDragLengths(person, jointKey, target){
             {#if isLoggedIn}
               <button class="btn" on:click={logout} disabled={authBusy}>Log out</button>
             {:else}
-              <button class="btn btn--primary" on:click={() => goto('/fightlab3d/login')}>Go to login</button>
+              <button class="btn btn--primary" on:click={() => goto('/fightlab3d/login?mode=login')}>Go to login</button>
             {/if}
           </div>
           {#if authAttempted && authMessage}

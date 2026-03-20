@@ -33,6 +33,19 @@
     return '';
   }
 
+  function isAlreadyRegisteredError(error) {
+    const message = `${error?.message || error || ''}`.toLowerCase();
+    return message.includes('already registered') || message.includes('user already exists');
+  }
+
+  function applyRequestedAuthMode() {
+    if (typeof window === 'undefined') return;
+    const requestedMode = new URLSearchParams(window.location.search).get('mode');
+    if (requestedMode === 'login' || requestedMode === 'signup') {
+      authMode = requestedMode;
+    }
+  }
+
   function applyAuthSession(session) {
     const user = session?.user ?? null;
     if (!user) return;
@@ -141,14 +154,21 @@
         authMessage = 'Signed in. Redirecting...';
       }
     } catch (error) {
-      authMessage = formatAuthError(error);
-      authDetail = formatAuthDetail(error);
+      if (authMode === 'signup' && isAlreadyRegisteredError(error)) {
+        authMode = 'login';
+        authMessage = 'Account already exists. Use Log in with the same email and password.';
+        authDetail = '';
+      } else {
+        authMessage = formatAuthError(error);
+        authDetail = formatAuthDetail(error);
+      }
     } finally {
       authBusy = false;
     }
   }
 
   onMount(async () => {
+    applyRequestedAuthMode();
     await loadAuthState();
     return () => {
       try {
