@@ -4652,6 +4652,12 @@ function clampToDragLengths(person, jointKey, target){
         .maybeSingle();
       if (error) throw error;
       if (data){
+        const currentLocalSavedPlaybacks = Array.isArray(savedPlaybacks)
+          ? savedPlaybacks.map(normalizeSavedPlayback)
+          : [];
+        const currentLocalPlaybackFolders = Array.isArray(playbackFolders)
+          ? playbackFolders.map(folderKey).filter(Boolean)
+          : [];
         const remoteSavedPlaybacks = Array.isArray(data.saved_playbacks)
           ? data.saved_playbacks.map(normalizeSavedPlayback)
           : [];
@@ -4659,13 +4665,13 @@ function clampToDragLengths(person, jointKey, target){
           ? data.playback_folders.map(folderKey).filter(Boolean)
           : [];
         const mergedPlaybackFolders = Array.from(
-          new Set([...remotePlaybackFolders, ...localPlaybackFolders].filter(Boolean))
+          new Set([...remotePlaybackFolders, ...currentLocalPlaybackFolders].filter(Boolean))
         );
         const remoteHasLibrary = remoteSavedPlaybacks.length > 0 || remotePlaybackFolders.length > 0;
-        savedPlaybacks = remoteHasLibrary ? remoteSavedPlaybacks : localSavedPlaybacks;
+        savedPlaybacks = remoteHasLibrary ? remoteSavedPlaybacks : currentLocalSavedPlaybacks;
         playbackFolders = mergedPlaybackFolders;
         if (
-          !remoteHasLibrary && (localSavedPlaybacks.length > 0 || localPlaybackFolders.length > 0)
+          !remoteHasLibrary && (currentLocalSavedPlaybacks.length > 0 || currentLocalPlaybackFolders.length > 0)
         ) {
           shouldResyncLibrary = true;
         }
