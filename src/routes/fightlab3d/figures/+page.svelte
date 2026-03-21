@@ -3774,13 +3774,7 @@ function clampToDragLengths(person, jointKey, target){
       }
       // Initialize playback and custom presets (do not auto-create a frame; snapshot when user saves/plays)
       try{
-        restoreSavedPlaybacks();
-        restorePlaybackFolders();
-        await hydratePlaybackLibrary(session);
-        ensurePlaybackFoldersFromSaved();
-        playbackGroups = groupPlaybacks(savedPlaybacks);
-        playbackFolderView = null;
-        playbacksMenuVersion += 1;
+        await hydratePlaybackLibraryForSession(session);
         restoreSavedPresets();
         restorePresetOverrides();
       }catch(e){}
@@ -4566,8 +4560,14 @@ function clampToDragLengths(person, jointKey, target){
       const { data, error } = await supabase.auth.getSession();
       if (error) throw error;
       applyAuthSession(data?.session ?? null);
+      if (data?.session?.user?.id){
+        await hydratePlaybackLibraryForSession(data.session);
+      }
       const { data: authListener } = supabase.auth.onAuthStateChange((event, session)=>{
         applyAuthSession(session);
+        if (session?.user?.id){
+          void hydratePlaybackLibraryForSession(session);
+        }
         if (event === 'SIGNED_IN') authMessage = 'Signed in.';
         else if (event === 'SIGNED_OUT') {
           authMessage = 'Signed out.';
@@ -4724,6 +4724,14 @@ function clampToDragLengths(person, jointKey, target){
     if (shouldResyncLibrary){
       void flushPlaybackSync();
     }
+  }
+  async function hydratePlaybackLibraryForSession(session){
+    restoreSavedPlaybacks();
+    restorePlaybackFolders();
+    await hydratePlaybackLibrary(session);
+    ensurePlaybackFoldersFromSaved();
+    playbackFolderView = null;
+    playbacksMenuVersion += 1;
   }
   async function handleAuthSubmit(){
     authAttempted = true;
