@@ -4960,6 +4960,9 @@ function clampToDragLengths(person, jointKey, target){
     if (idx >= 0) arr.splice(idx,1); else arr.push(f);
     openPlaybackFolders = arr;
   }
+  function refreshPlaybackFolderView(){
+    playbackFolderView = playbackFolderView ? `${playbackFolderView}` : null;
+  }
   function ensurePlaybackFoldersFromSaved(){
     const set = new Set(playbackFolders.map(folderKey).filter(Boolean));
     savedPlaybacks.forEach(pb=>{
@@ -4981,7 +4984,7 @@ function clampToDragLengths(person, jointKey, target){
     // force reactive refresh for the current view so new folders appear immediately
     playbackFolders = [...playbackFolders];
     playbackGroups = [...playbackGroups];
-    playbackFolderView = `${playbackFolderView}`;
+    refreshPlaybackFolderView();
     playbacksMenuVersion += 1;
     syncOpenPlaybackFolders();
   }
@@ -5002,7 +5005,7 @@ function clampToDragLengths(person, jointKey, target){
     // force view refresh so the removal shows immediately
     playbackFolders = [...playbackFolders];
     playbackGroups = [...playbackGroups];
-    playbackFolderView = `${playbackFolderView}`;
+    refreshPlaybackFolderView();
     playbacksMenuVersion += 1;
     syncOpenPlaybackFolders();
   }
@@ -5026,7 +5029,7 @@ function clampToDragLengths(person, jointKey, target){
     // refresh view immediately and enter the target folder
     playbackFolders = [...playbackFolders];
     playbackGroups = [...playbackGroups];
-    playbackFolderView = folder ?? '';
+    playbackFolderView = folder ? `${folder}` : null;
     playbacksMenuVersion += 1;
     syncOpenPlaybackFolders();
   }
@@ -5134,7 +5137,7 @@ function clampToDragLengths(person, jointKey, target){
     playbackGroups = groupPlaybacks(savedPlaybacks);
     // refresh current view so the list updates immediately
     playbackGroups = [...playbackGroups];
-    playbackFolderView = `${playbackFolderView}`;
+    refreshPlaybackFolderView();
     playbacksMenuVersion += 1;
   }
 
