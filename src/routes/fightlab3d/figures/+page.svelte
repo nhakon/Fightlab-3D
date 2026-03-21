@@ -3610,6 +3610,11 @@ function clampToDragLengths(person, jointKey, target){
       uiReady = true;
     }, FIGURES_BOOT_TIMEOUT_MS);
     try{
+      const initialPresetKey = readSelectedPreset();
+      if (initialPresetKey && POSES[initialPresetKey]){
+        startPosition = initialPresetKey;
+      }
+      restorePresetOverrides();
       initJoints();
       // skeletons from neutral and apply start pose
       skeletonA = buildBindFromNeutral(POSES.neutral.A);
@@ -3776,7 +3781,6 @@ function clampToDragLengths(person, jointKey, target){
       try{
         await hydratePlaybackLibraryForSession(session);
         restoreSavedPresets();
-        restorePresetOverrides();
         restoreSelectedPreset();
       }catch(e){}
       uiReady = true;
@@ -4878,6 +4882,16 @@ function clampToDragLengths(person, jointKey, target){
   function persistSelectedPreset(){
     try{ localStorage.setItem('selectedBuiltinPresetV1', String(startPosition || 'neutral')); }catch(e){}
   }
+  function readSelectedPreset(){
+    try{
+      const raw = String(localStorage.getItem('selectedBuiltinPresetV1') || '').trim();
+      if (!raw) return '';
+      if (!BUILTIN_PRESETS.some((preset) => preset.key === raw)) return '';
+      return raw;
+    }catch(e){
+      return '';
+    }
+  }
   function restorePresetOverrides(){
     presetOverrides = {};
     importedPoses = {};
@@ -4899,9 +4913,8 @@ function clampToDragLengths(person, jointKey, target){
   }
   function restoreSelectedPreset(){
     try{
-      const raw = String(localStorage.getItem('selectedBuiltinPresetV1') || '').trim();
+      const raw = readSelectedPreset();
       if (!raw) return;
-      if (!BUILTIN_PRESETS.some((preset) => preset.key === raw)) return;
       if (presetOverrides[raw]){
         startPosition = raw;
         applyPresetOverrideToPose(raw, presetOverrides[raw], { applyToScene: true });
