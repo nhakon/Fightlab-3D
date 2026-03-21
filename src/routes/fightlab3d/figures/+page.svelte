@@ -4642,6 +4642,7 @@ function clampToDragLengths(person, jointKey, target){
     playbackSyncUserId = user.id;
     const localSavedPlaybacks = Array.isArray(savedPlaybacks) ? savedPlaybacks.map(normalizeSavedPlayback) : [];
     const localPlaybackFolders = Array.isArray(playbackFolders) ? playbackFolders.map(folderKey).filter(Boolean) : [];
+    let shouldResyncLibrary = false;
     try{
       const supabase = requireSupabase();
       const { data, error } = await supabase
@@ -4651,22 +4652,38 @@ function clampToDragLengths(person, jointKey, target){
         .maybeSingle();
       if (error) throw error;
       if (data){
-        savedPlaybacks = Array.isArray(data.saved_playbacks)
+        const remoteSavedPlaybacks = Array.isArray(data.saved_playbacks)
           ? data.saved_playbacks.map(normalizeSavedPlayback)
           : [];
-        playbackFolders = Array.isArray(data.playback_folders)
+        const remotePlaybackFolders = Array.isArray(data.playback_folders)
           ? data.playback_folders.map(folderKey).filter(Boolean)
           : [];
+        const mergedPlaybackFolders = Array.from(
+          new Set([...remotePlaybackFolders, ...localPlaybackFolders].filter(Boolean))
+        );
+        const remoteHasLibrary = remoteSavedPlaybacks.length > 0 || remotePlaybackFolders.length > 0;
+        savedPlaybacks = remoteHasLibrary ? remoteSavedPlaybacks : localSavedPlaybacks;
+        playbackFolders = mergedPlaybackFolders;
+        if (
+          !remoteHasLibrary && (localSavedPlaybacks.length > 0 || localPlaybackFolders.length > 0)
+        ) {
+          shouldResyncLibrary = true;
+        }
+        if (mergedPlaybackFolders.length !== remotePlaybackFolders.length) {
+          shouldResyncLibrary = true;
+        }
         writeSavedPlaybacksToLocalStorage();
         writePlaybackFoldersToLocalStorage();
       } else {
         savedPlaybacks = localSavedPlaybacks;
         playbackFolders = localPlaybackFolders;
+        shouldResyncLibrary = localSavedPlaybacks.length > 0 || localPlaybackFolders.length > 0;
       }
     }catch(error){
       console.error('Failed to load Fightlab playbacks from Supabase.', error);
       savedPlaybacks = localSavedPlaybacks;
       playbackFolders = localPlaybackFolders;
+      shouldResyncLibrary = false;
     }finally{
       playbackSyncLoaded = true;
     }
@@ -4674,13 +4691,20 @@ function clampToDragLengths(person, jointKey, target){
     if (!Array.isArray(playbackFolders)) playbackFolders = [];
     playbackGroups = groupPlaybacks(savedPlaybacks);
     syncOpenPlaybackFolders();
-    if (!savedPlaybacks.length && !playbackFolders.length && (localSavedPlaybacks.length || localPlaybackFolders.length)){
+    if (
+      !savedPlaybacks.length &&
+      !playbackFolders.length &&
+      (localSavedPlaybacks.length || localPlaybackFolders.length)
+    ){
       savedPlaybacks = localSavedPlaybacks;
       playbackFolders = localPlaybackFolders;
       writeSavedPlaybacksToLocalStorage();
       writePlaybackFoldersToLocalStorage();
       playbackGroups = groupPlaybacks(savedPlaybacks);
       syncOpenPlaybackFolders();
+      shouldResyncLibrary = true;
+    }
+    if (shouldResyncLibrary){
       queuePlaybackSync();
     }
   }
