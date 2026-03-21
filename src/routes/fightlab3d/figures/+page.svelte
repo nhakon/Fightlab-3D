@@ -4945,6 +4945,7 @@ function clampToDragLengths(person, jointKey, target){
   }
   let playbackGroups = groupPlaybacks(savedPlaybacks);
   $: topPlaybackGroups = Array.isArray(playbackGroups) ? playbackGroups.filter(g => !g.folder || g.folder.indexOf('/') === -1) : [];
+  $: topPlaybackFolders = childFolders('');
   function syncOpenPlaybackFolders(){
     const all = playbackGroups.map(g=> g.folder);
     const set = new Set(openPlaybackFolders || []);
@@ -6837,23 +6838,23 @@ function clampToDragLengths(person, jointKey, target){
                       </button>
                       <span class="name" style="flex:none; color:#555;">Folders</span>
                     </div>
-                    {#if topPlaybackGroups.length || playbacksInFolder('').length}
-                      {#each topPlaybackGroups as grp (grp.folder)}
+                    {#if topPlaybackFolders.length || playbacksInFolder('').length}
+                      {#each topPlaybackFolders as folderName (folderName)}
                         <div class="menu-item folder-row menu-section-title" role="listitem">
                           <button
                             type="button"
                             class="menu-row-btn"
                             style="flex:1; text-align:left; display:flex; align-items:center; gap:6px;"
-                            on:click={() => playbackFolderView = grp.folder}
-                            on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, grp.folder)}
-                            on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); playbackFolderView = grp.folder; }}}
+                            on:click={() => playbackFolderView = folderName}
+                            on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, folderName)}
+                            on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); playbackFolderView = folderName; }}}
                             on:dragover|preventDefault={() => {
-                              if (draggingPlaybackIdx!=null) movePlaybackToFolder(draggingPlaybackIdx, grp.folder);
+                              if (draggingPlaybackIdx!=null) movePlaybackToFolder(draggingPlaybackIdx, folderName);
                             }}>
                             <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
-                            <span class="name">{grp.folder}</span>
+                            <span class="name">{folderName}</span>
                           </button>
-                          <button class="inline-action small danger-action" on:click|stopPropagation={() => deletePlaybackFolder(grp.folder)} title="Delete folder">
+                          <button class="inline-action small danger-action" on:click|stopPropagation={() => deletePlaybackFolder(folderName)} title="Delete folder">
                             <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                           </button>
                         </div>
