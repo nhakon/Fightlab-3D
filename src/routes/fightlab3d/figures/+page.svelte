@@ -4931,10 +4931,10 @@ function clampToDragLengths(person, jointKey, target){
     persistSavedPresets();
   }
   function deepCopyFrames(frames){ try{ return JSON.parse(JSON.stringify(frames||[])); }catch(e){ return []; } }
-  function groupPlaybacks(list=[]){
+  function groupPlaybacks(list=[], folders=[]){
     const map = new Map();
     // seed with known folders so empty folders appear
-    playbackFolders.forEach(f=>{ const k = folderKey(f); if (k) map.set(k, []); });
+    folders.forEach(f=>{ const k = folderKey(f); if (k) map.set(k, []); });
     list.forEach((pb, i)=>{
       const folder = folderKey(pb.folder);
       if (!folder) return;
@@ -4943,7 +4943,8 @@ function clampToDragLengths(person, jointKey, target){
     });
     return Array.from(map.entries()).map(([folder, items])=>({ folder, items }));
   }
-  let playbackGroups = groupPlaybacks(savedPlaybacks);
+  let playbackGroups = [];
+  $: playbackGroups = groupPlaybacks(savedPlaybacks, playbackFolders);
   $: topPlaybackGroups = Array.isArray(playbackGroups) ? playbackGroups.filter(g => !g.folder || g.folder.indexOf('/') === -1) : [];
   $: topPlaybackFolders = Array.from(
     new Set([
