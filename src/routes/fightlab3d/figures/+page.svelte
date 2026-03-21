@@ -4946,12 +4946,16 @@ function clampToDragLengths(person, jointKey, target){
   let playbackGroups = groupPlaybacks(savedPlaybacks);
   $: topPlaybackGroups = Array.isArray(playbackGroups) ? playbackGroups.filter(g => !g.folder || g.folder.indexOf('/') === -1) : [];
   $: topPlaybackFolders = Array.from(
-    new Set(
-      (Array.isArray(playbackFolders) ? playbackFolders : [])
+    new Set([
+      ...(Array.isArray(playbackFolders) ? playbackFolders : [])
         .map(folderKey)
         .filter(Boolean)
+        .filter((f) => f.indexOf('/') === -1),
+      ...(Array.isArray(playbackGroups) ? playbackGroups : [])
+        .map((group) => folderKey(group?.folder))
+        .filter(Boolean)
         .filter((f) => f.indexOf('/') === -1)
-    )
+    ])
   );
   function syncOpenPlaybackFolders(){
     const all = playbackGroups.map(g=> g.folder);
