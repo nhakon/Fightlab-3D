@@ -1306,6 +1306,7 @@ function isLocked(person, key){
   let loginName = '';
   let loginEmail = '';
   let isLoggedIn = false;
+  let authUserId = '';
   let authMessage = '';
   let authDetail = '';
   let authAttempted = false;
@@ -1313,6 +1314,12 @@ function isLocked(person, key){
   let authUnsubscribe = null;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const FIGURES_BOOT_TIMEOUT_MS = 5000;
+  const PLAYBACK_SYNC_DEBOUNCE_MS = 350;
+  let playbackSyncLoaded = false;
+  let playbackSyncUserId = '';
+  let playbackSyncTimer = null;
+  let playbackSyncInFlight = false;
+  let playbackSyncQueued = false;
   // User-defined presets (persisted locally)
   let savedPresets = [];
   let editingPresetIdx = -1;
@@ -3769,6 +3776,7 @@ function clampToDragLengths(person, jointKey, target){
       try{
         restoreSavedPlaybacks();
         restorePlaybackFolders();
+        await hydratePlaybackLibrary(session);
         ensurePlaybackFoldersFromSaved();
         playbackGroups = groupPlaybacks(savedPlaybacks);
         restoreSavedPresets();
@@ -4506,10 +4514,15 @@ function clampToDragLengths(person, jointKey, target){
     const user = session?.user ?? null;
     isLoggedIn = !!user;
     if (!user){
+      authUserId = '';
+      playbackSyncLoaded = false;
+      playbackSyncUserId = '';
       loginName = '';
       loginEmail = '';
       return;
     }
+    authUserId = user.id || '';
+    playbackSyncUserId = authUserId;
     loginEmail = user.email || '';
     loginName =
       user.user_metadata?.display_name ||
@@ -4568,6 +4581,108 @@ function clampToDragLengths(person, jointKey, target){
       await sleep(120);
     }
     return null;
+  }
+  function normalizeSavedPlayback(pb){
+    if (!pb || typeof pb !== 'object') return pb;
+    return { ...pb, folder: folderKey(pb.folder) };
+  }
+  function writeSavedPlaybacksToLocalStorage(){
+    try{ localStorage.setItem('savedPlaybacks', JSON.stringify(savedPlaybacks)); }catch(e){}
+  }
+  function writePlaybackFoldersToLocalStorage(){
+    try{ localStorage.setItem('playbackFolders', JSON.stringify(playbackFolders)); }catch(e){}
+  }
+  async function flushPlaybackSync(){
+    if (!playbackSyncLoaded || !playbackSyncUserId || !isSupabaseConfigured) return;
+    if (playbackSyncInFlight){
+      playbackSyncQueued = true;
+      return;
+    }
+    playbackSyncInFlight = true;
+    playbackSyncQueued = false;
+    try{
+      const supabase = requireSupabase();
+      const savedPlaybacksSnapshot = JSON.parse(JSON.stringify(savedPlaybacks || []));
+      const playbackFoldersSnapshot = JSON.parse(JSON.stringify(playbackFolders || []));
+      const { error } = await supabase
+        .from('fightlab_user_playback_data')
+        .upsert(
+          {
+            user_id: playbackSyncUserId,
+            saved_playbacks: savedPlaybacksSnapshot,
+            playback_folders: playbackFoldersSnapshot
+          },
+          { onConflict: 'user_id' }
+        );
+      if (error) throw error;
+    }catch(error){
+      console.error('Failed to sync Fightlab playbacks to Supabase.', error);
+    }finally{
+      playbackSyncInFlight = false;
+      if (playbackSyncQueued){
+        playbackSyncQueued = false;
+        void flushPlaybackSync();
+      }
+    }
+  }
+  function queuePlaybackSync(){
+    if (!playbackSyncLoaded || !playbackSyncUserId || !isSupabaseConfigured) return;
+    if (playbackSyncTimer){
+      clearTimeout(playbackSyncTimer);
+    }
+    playbackSyncTimer = setTimeout(() => {
+      playbackSyncTimer = null;
+      void flushPlaybackSync();
+    }, PLAYBACK_SYNC_DEBOUNCE_MS);
+  }
+  async function hydratePlaybackLibrary(session){
+    if (!isSupabaseConfigured) return;
+    const user = session?.user ?? null;
+    if (!user?.id) return;
+    playbackSyncUserId = user.id;
+    const localSavedPlaybacks = Array.isArray(savedPlaybacks) ? savedPlaybacks.map(normalizeSavedPlayback) : [];
+    const localPlaybackFolders = Array.isArray(playbackFolders) ? playbackFolders.map(folderKey).filter(Boolean) : [];
+    try{
+      const supabase = requireSupabase();
+      const { data, error } = await supabase
+        .from('fightlab_user_playback_data')
+        .select('saved_playbacks, playback_folders')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (error) throw error;
+      if (data){
+        savedPlaybacks = Array.isArray(data.saved_playbacks)
+          ? data.saved_playbacks.map(normalizeSavedPlayback)
+          : [];
+        playbackFolders = Array.isArray(data.playback_folders)
+          ? data.playback_folders.map(folderKey).filter(Boolean)
+          : [];
+        writeSavedPlaybacksToLocalStorage();
+        writePlaybackFoldersToLocalStorage();
+      } else {
+        savedPlaybacks = localSavedPlaybacks;
+        playbackFolders = localPlaybackFolders;
+      }
+    }catch(error){
+      console.error('Failed to load Fightlab playbacks from Supabase.', error);
+      savedPlaybacks = localSavedPlaybacks;
+      playbackFolders = localPlaybackFolders;
+    }finally{
+      playbackSyncLoaded = true;
+    }
+    if (!Array.isArray(savedPlaybacks)) savedPlaybacks = [];
+    if (!Array.isArray(playbackFolders)) playbackFolders = [];
+    playbackGroups = groupPlaybacks(savedPlaybacks);
+    syncOpenPlaybackFolders();
+    if (!savedPlaybacks.length && !playbackFolders.length && (localSavedPlaybacks.length || localPlaybackFolders.length)){
+      savedPlaybacks = localSavedPlaybacks;
+      playbackFolders = localPlaybackFolders;
+      writeSavedPlaybacksToLocalStorage();
+      writePlaybackFoldersToLocalStorage();
+      playbackGroups = groupPlaybacks(savedPlaybacks);
+      syncOpenPlaybackFolders();
+      queuePlaybackSync();
+    }
   }
   async function handleAuthSubmit(){
     authAttempted = true;
@@ -4635,7 +4750,8 @@ function clampToDragLengths(person, jointKey, target){
 
   // ----- Save/Load playbacks (multiple sequences) -----
   function persistSavedPlaybacks(){
-    try{ localStorage.setItem('savedPlaybacks', JSON.stringify(savedPlaybacks)); }catch(e){}
+    writeSavedPlaybacksToLocalStorage();
+    queuePlaybackSync();
   }
   function restoreSavedPlaybacks(){
     try{
@@ -4650,7 +4766,8 @@ function clampToDragLengths(person, jointKey, target){
     }catch(e){}
   }
   function persistPlaybackFolders(){
-    try{ localStorage.setItem('playbackFolders', JSON.stringify(playbackFolders)); }catch(e){}
+    writePlaybackFoldersToLocalStorage();
+    queuePlaybackSync();
   }
   function restorePlaybackFolders(){
     try{
