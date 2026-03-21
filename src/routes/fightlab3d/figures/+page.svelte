@@ -3779,6 +3779,8 @@ function clampToDragLengths(person, jointKey, target){
         await hydratePlaybackLibrary(session);
         ensurePlaybackFoldersFromSaved();
         playbackGroups = groupPlaybacks(savedPlaybacks);
+        playbackFolderView = null;
+        playbacksMenuVersion += 1;
         restoreSavedPresets();
         restorePresetOverrides();
       }catch(e){}
@@ -6862,8 +6864,8 @@ function clampToDragLengths(person, jointKey, target){
                       </button>
                       <span class="name" style="flex:none; color:#555;">Folders</span>
                     </div>
-                    {#if topPlaybackFolders.length || playbacksInFolder('').length}
-                      {#each topPlaybackFolders as folderName (folderName)}
+                    {#if childFolders('').length || playbacksInFolder('').length}
+                      {#each childFolders('') as folderName (folderName)}
                         <div class="menu-item folder-row menu-section-title" role="listitem">
                           <button
                             type="button"
