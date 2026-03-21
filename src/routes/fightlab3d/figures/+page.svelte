@@ -4498,6 +4498,15 @@ function clampToDragLengths(person, jointKey, target){
     showAccountMenu = false;
     closeAllSettingTabs();
   };
+  function toggleSavedPlaybacksMenu(){
+    const next = !showSavedPlaybacksMenu;
+    showSavedPlaybacksMenu = next;
+    showSavedPresetsMenu = false;
+    if (next){
+      playbackFolderView = null;
+      playbacksMenuVersion += 1;
+    }
+  }
   function toggleAccountSetting(panel){
     const next = (panel === 'account') ? !showAccountAuth : (panel === 'settings') ? !showAccountSettings : (panel === 'shortcuts') ? !showAccountShortcuts : false;
     closeAllSettingTabs();
@@ -6831,7 +6840,7 @@ function clampToDragLengths(person, jointKey, target){
                 <button class="inline-action save-action" on:click={saveCurrentPlayback} title="Save playback">
                   <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
                 </button>
-                <button class="inline-action" style="right:36px;" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={()=>{ showSavedPlaybacksMenu = !showSavedPlaybacksMenu; showSavedPresetsMenu=false; }}>
+                <button class="inline-action" style="right:36px;" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
                   <svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
               </div>
