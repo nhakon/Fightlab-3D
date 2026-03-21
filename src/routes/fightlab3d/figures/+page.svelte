@@ -3777,6 +3777,7 @@ function clampToDragLengths(person, jointKey, target){
         await hydratePlaybackLibraryForSession(session);
         restoreSavedPresets();
         restorePresetOverrides();
+        restoreSelectedPreset();
       }catch(e){}
       uiReady = true;
     } catch (error) {
@@ -4167,6 +4168,7 @@ function clampToDragLengths(person, jointKey, target){
     const poseKey = map.get(key);
     if (!poseKey || !POSES[poseKey]) return;
     startPosition = poseKey;
+    persistSelectedPreset();
     showFrameComments = false;
     comment = '';
     commentText = '';
@@ -4872,6 +4874,9 @@ function clampToDragLengths(person, jointKey, target){
   function persistPresetOverrides(){
     try{ localStorage.setItem('presetOverridesV1', JSON.stringify(presetOverrides)); }catch(e){}
   }
+  function persistSelectedPreset(){
+    try{ localStorage.setItem('selectedBuiltinPresetV1', String(startPosition || 'neutral')); }catch(e){}
+  }
   function restorePresetOverrides(){
     presetOverrides = {};
     importedPoses = {};
@@ -4890,6 +4895,14 @@ function clampToDragLengths(person, jointKey, target){
       presetOverrides = {};
       importedPoses = {};
     }
+  }
+  function restoreSelectedPreset(){
+    try{
+      const raw = String(localStorage.getItem('selectedBuiltinPresetV1') || '').trim();
+      if (!raw) return;
+      if (!BUILTIN_PRESETS.some((preset) => preset.key === raw)) return;
+      setPosition(raw);
+    }catch(e){}
   }
   function saveCurrentPreset(){
     const nameRaw = (newPresetName||"").trim();
