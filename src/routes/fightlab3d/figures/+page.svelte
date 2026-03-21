@@ -4705,7 +4705,7 @@ function clampToDragLengths(person, jointKey, target){
       shouldResyncLibrary = true;
     }
     if (shouldResyncLibrary){
-      queuePlaybackSync();
+      void flushPlaybackSync();
     }
   }
   async function handleAuthSubmit(){
@@ -4791,7 +4791,7 @@ function clampToDragLengths(person, jointKey, target){
   }
   function persistPlaybackFolders(){
     writePlaybackFoldersToLocalStorage();
-    queuePlaybackSync();
+    void flushPlaybackSync();
   }
   function restorePlaybackFolders(){
     try{
