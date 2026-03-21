@@ -51,6 +51,10 @@
     }
   }
 
+  function getNormalizedEmail() {
+    return loginEmail.trim().toLowerCase();
+  }
+
   function applyAuthSession(session) {
     const user = session?.user ?? null;
     if (!user) return;
@@ -113,7 +117,7 @@
         'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
       return;
     }
-    if (!loginEmail.trim()) {
+    if (!getNormalizedEmail()) {
       authMessage = 'Email required.';
       return;
     }
@@ -130,7 +134,7 @@
       const supabase = requireSupabase();
       if (authMode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
-          email: loginEmail.trim(),
+          email: getNormalizedEmail(),
           password: loginPassword,
           options: {
             data: {
@@ -151,7 +155,7 @@
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
-          email: loginEmail.trim(),
+          email: getNormalizedEmail(),
           password: loginPassword
         });
         if (error) throw error;
@@ -187,14 +191,14 @@
         'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
       return;
     }
-    if (!loginEmail.trim()) {
+    if (!getNormalizedEmail()) {
       authMessage = 'Enter your email first.';
       return;
     }
     authBusy = true;
     try {
       const supabase = requireSupabase();
-      const { error } = await supabase.auth.resetPasswordForEmail(loginEmail.trim(), {
+      const { error } = await supabase.auth.resetPasswordForEmail(getNormalizedEmail(), {
         redirectTo:
           typeof window !== 'undefined' ? `${window.location.origin}/fightlab3d/login?mode=login` : undefined
       });
@@ -213,7 +217,7 @@
     const supabase = requireSupabase();
     try {
       const { error: signUpError } = await supabase.auth.signUp({
-        email: loginEmail.trim(),
+        email: getNormalizedEmail(),
         password: loginPassword,
         options: {
           emailRedirectTo:
@@ -229,7 +233,7 @@
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail.trim(),
+        email: getNormalizedEmail(),
         password: loginPassword
       });
       if (error) throw error;
@@ -310,6 +314,11 @@
           class="input"
           type="email"
           bind:value={loginEmail}
+          autocomplete="email"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          inputmode="email"
           placeholder="you@example.com"
         />
 
@@ -319,6 +328,10 @@
           class="input"
           type="password"
           bind:value={loginPassword}
+          autocomplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
           placeholder="Choose a password"
         />
 
