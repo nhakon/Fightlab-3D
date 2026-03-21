@@ -4593,7 +4593,7 @@ function clampToDragLengths(person, jointKey, target){
     try{ localStorage.setItem('playbackFolders', JSON.stringify(playbackFolders)); }catch(e){}
   }
   async function flushPlaybackSync(){
-    if (!playbackSyncLoaded || !playbackSyncUserId || !isSupabaseConfigured) return;
+    if (!playbackSyncUserId || !isSupabaseConfigured) return;
     if (playbackSyncInFlight){
       playbackSyncQueued = true;
       return;
@@ -4626,7 +4626,7 @@ function clampToDragLengths(person, jointKey, target){
     }
   }
   function queuePlaybackSync(){
-    if (!playbackSyncLoaded || !playbackSyncUserId || !isSupabaseConfigured) return;
+    if (!playbackSyncUserId || !isSupabaseConfigured) return;
     if (playbackSyncTimer){
       clearTimeout(playbackSyncTimer);
     }
