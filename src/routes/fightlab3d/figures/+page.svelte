@@ -2673,6 +2673,15 @@ function isLocked(person, key){
     if (!store.R) store.R = new THREE.Vector3();
     if (store.L.lengthSq() < 1e-6) store.L.copy(fwdXZ).multiplyScalar(FOOT_L);
     if (store.R.lengthSq() < 1e-6) store.R.copy(fwdXZ).multiplyScalar(FOOT_L);
+    const clampToeOffset = (v)=>{
+      const lenSq = v.lengthSq();
+      if (lenSq < 1e-6) return;
+      const d = Math.sqrt(lenSq);
+      if (Math.abs(d - FOOT_L) < 1e-6) return;
+      v.multiplyScalar(FOOT_L / d);
+    };
+    clampToeOffset(store.L);
+    clampToeOffset(store.R);
 
     const toeLPos = heelL.clone().add(store.L);
     const toeRPos = heelR.clone().add(store.R);
@@ -4227,6 +4236,7 @@ function clampToDragLengths(person, jointKey, target){
     presetOverrides[poseKey] = snapshot;
     applyPresetOverrideToPose(poseKey, snapshot);
     persistPresetOverrides();
+    persistSelectedPreset();
     console.info(`Preset "${poseKey}" updated to current pose and saved.`);
   }
 
@@ -4892,6 +4902,11 @@ function clampToDragLengths(person, jointKey, target){
       const raw = String(localStorage.getItem('selectedBuiltinPresetV1') || '').trim();
       if (!raw) return;
       if (!BUILTIN_PRESETS.some((preset) => preset.key === raw)) return;
+      if (presetOverrides[raw]){
+        startPosition = raw;
+        applyPresetOverrideToPose(raw, presetOverrides[raw], { applyToScene: true });
+        return;
+      }
       setPosition(raw);
     }catch(e){}
   }
