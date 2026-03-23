@@ -3625,6 +3625,9 @@ function clampToDragLengths(person, jointKey, target){
       applyWorldPoseToSkeleton(skeletonB, POSES[startPosition].B);
       groundSkeleton(skeletonA);
       groundSkeleton(skeletonB);
+      if (importedPoses[startPosition]){
+        applyImportedPoseState(importedPoses[startPosition]);
+      }
       try{
         computeFK(skeletonA);
         headPreferredA = skeletonA.angleRot[IDX.head]?.clone() || null;
@@ -3715,9 +3718,6 @@ function clampToDragLengths(person, jointKey, target){
 
       // Ensure torso colors and body colors reflect current mode/lock state
       applyColorblindScheme();
-      if (importedPoses[startPosition]){
-        applyImportedPose(startPosition);
-      }
 
       // Capture mount-based baseline and use its lengths as master reference
       captureBaselineFromMount();
@@ -5268,8 +5268,7 @@ function clampToDragLengths(person, jointKey, target){
     input.click();
   }
 
-  function applyImportedPose(poseKey){
-    const data = importedPoses[poseKey];
+  function applyImportedPoseState(data){
     if (!data) return;
     const applyOne = (skel, part, which)=>{
       if (part?.joints){
@@ -5303,6 +5302,12 @@ function clampToDragLengths(person, jointKey, target){
       setToe(toeOffsets.A, data.toeOffsets.A);
       setToe(toeOffsets.B, data.toeOffsets.B);
     }
+  }
+
+  function applyImportedPose(poseKey){
+    const data = importedPoses[poseKey];
+    if (!data) return;
+    applyImportedPoseState(data);
     updateMeshesFromJoints();
     refreshGuiFromSkeletons();
   }
