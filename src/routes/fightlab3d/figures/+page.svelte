@@ -3625,6 +3625,9 @@ function clampToDragLengths(person, jointKey, target){
       applyWorldPoseToSkeleton(skeletonB, POSES[startPosition].B);
       groundSkeleton(skeletonA);
       groundSkeleton(skeletonB);
+      if (importedPoses[startPosition]){
+        applyImportedPose(startPosition);
+      }
       try{
         computeFK(skeletonA);
         headPreferredA = skeletonA.angleRot[IDX.head]?.clone() || null;
@@ -4901,7 +4904,7 @@ function clampToDragLengths(person, jointKey, target){
       for (const [poseKey, data] of Object.entries(BUILTIN_PRESET_OVERRIDES)){
         if (!poseKey || !data) continue;
         presetOverrides[poseKey] = data;
-        applyPresetOverrideToPose(poseKey, data, { applyToScene: poseKey === startPosition });
+        applyPresetOverrideToPose(poseKey, data);
       }
     }catch(e){
       console.error('Failed to restore built-in preset overrides', e);
@@ -4916,7 +4919,7 @@ function clampToDragLengths(person, jointKey, target){
       for (const [poseKey, data] of Object.entries(parsed)){
         if (!poseKey || !data) continue;
         presetOverrides[poseKey] = data;
-        applyPresetOverrideToPose(poseKey, data, { applyToScene: poseKey === startPosition });
+        applyPresetOverrideToPose(poseKey, data);
       }
     }catch(e){
       console.error('Failed to restore local preset overrides', e);
