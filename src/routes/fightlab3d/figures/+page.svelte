@@ -3625,9 +3625,6 @@ function clampToDragLengths(person, jointKey, target){
       applyWorldPoseToSkeleton(skeletonB, POSES[startPosition].B);
       groundSkeleton(skeletonA);
       groundSkeleton(skeletonB);
-      if (importedPoses[startPosition]){
-        applyImportedPose(startPosition);
-      }
       try{
         computeFK(skeletonA);
         headPreferredA = skeletonA.angleRot[IDX.head]?.clone() || null;
@@ -3718,6 +3715,9 @@ function clampToDragLengths(person, jointKey, target){
 
       // Ensure torso colors and body colors reflect current mode/lock state
       applyColorblindScheme();
+      if (importedPoses[startPosition]){
+        applyImportedPose(startPosition);
+      }
 
       // Capture mount-based baseline and use its lengths as master reference
       captureBaselineFromMount();
