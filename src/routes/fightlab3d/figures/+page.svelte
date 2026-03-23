@@ -4897,15 +4897,18 @@ function clampToDragLengths(person, jointKey, target){
       return '';
     }
   }
+  function seedBuiltinPresetOverrides(){
+    for (const [poseKey, data] of Object.entries(BUILTIN_PRESET_OVERRIDES)){
+      if (!poseKey || !data) continue;
+      presetOverrides[poseKey] = data;
+      applyPresetOverrideToPose(poseKey, data);
+    }
+  }
   function restorePresetOverrides(){
     presetOverrides = {};
     importedPoses = {};
     try{
-      for (const [poseKey, data] of Object.entries(BUILTIN_PRESET_OVERRIDES)){
-        if (!poseKey || !data) continue;
-        presetOverrides[poseKey] = data;
-        applyPresetOverrideToPose(poseKey, data);
-      }
+      seedBuiltinPresetOverrides();
     }catch(e){
       console.error('Failed to restore built-in preset overrides', e);
       presetOverrides = {};
@@ -4925,6 +4928,7 @@ function clampToDragLengths(person, jointKey, target){
       console.error('Failed to restore local preset overrides', e);
     }
   }
+  seedBuiltinPresetOverrides();
   function restoreSelectedPreset(){
     try{
       const raw = readSelectedPreset();
