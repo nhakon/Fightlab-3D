@@ -4689,6 +4689,9 @@ function clampToDragLengths(person, jointKey, target){
   function writePlaybackFoldersToLocalStorage(){
     try{ localStorage.setItem('playbackFolders', JSON.stringify(playbackFolders)); }catch(e){}
   }
+  function writeSavedPresetsToLocalStorage(){
+    try{ localStorage.setItem('savedPresets', JSON.stringify(savedPresets)); }catch(e){}
+  }
   async function flushPlaybackSync(){
     if (!playbackSyncUserId || !isSupabaseConfigured()) return;
     if (playbackSyncInFlight){
@@ -4701,13 +4704,15 @@ function clampToDragLengths(person, jointKey, target){
       const supabase = requireSupabase();
       const savedPlaybacksSnapshot = JSON.parse(JSON.stringify(savedPlaybacks || []));
       const playbackFoldersSnapshot = JSON.parse(JSON.stringify(playbackFolders || []));
+      const savedPresetsSnapshot = JSON.parse(JSON.stringify(savedPresets || []));
       const { error } = await supabase
         .from('fightlab_user_playback_data')
         .upsert(
           {
             user_id: playbackSyncUserId,
             saved_playbacks: savedPlaybacksSnapshot,
-            playback_folders: playbackFoldersSnapshot
+            playback_folders: playbackFoldersSnapshot,
+            saved_presets: savedPresetsSnapshot
           },
           { onConflict: 'user_id' }
         );
@@ -4739,12 +4744,22 @@ function clampToDragLengths(person, jointKey, target){
     playbackSyncUserId = user.id;
     const localSavedPlaybacks = Array.isArray(savedPlaybacks) ? savedPlaybacks.map(normalizeSavedPlayback) : [];
     const localPlaybackFolders = Array.isArray(playbackFolders) ? playbackFolders.map(folderKey).filter(Boolean) : [];
+    const localSavedPresets = (() => {
+      try{
+        const raw = localStorage.getItem('savedPresets');
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      }catch(e){
+        return [];
+      }
+    })();
     let shouldResyncLibrary = false;
     try{
       const supabase = requireSupabase();
       const { data, error } = await supabase
         .from('fightlab_user_playback_data')
-        .select('saved_playbacks, playback_folders')
+        .select('saved_playbacks, playback_folders, saved_presets')
         .eq('user_id', user.id)
         .maybeSingle();
       if (error) throw error;
@@ -4761,15 +4776,23 @@ function clampToDragLengths(person, jointKey, target){
         const remotePlaybackFolders = Array.isArray(data.playback_folders)
           ? data.playback_folders.map(folderKey).filter(Boolean)
           : [];
+        const remoteSavedPresets = Array.isArray(data.saved_presets)
+          ? data.saved_presets
+          : [];
         const mergedPlaybackFolders = Array.from(
           new Set([...remotePlaybackFolders, ...currentLocalPlaybackFolders].filter(Boolean))
         );
         const remoteHasLibrary = remoteSavedPlaybacks.length > 0 || remotePlaybackFolders.length > 0;
+        const remoteHasSavedPresets = remoteSavedPresets.length > 0;
         savedPlaybacks = remoteHasLibrary ? remoteSavedPlaybacks : currentLocalSavedPlaybacks;
         playbackFolders = mergedPlaybackFolders;
+        savedPresets = remoteHasSavedPresets ? remoteSavedPresets : localSavedPresets;
         if (
           !remoteHasLibrary && (currentLocalSavedPlaybacks.length > 0 || currentLocalPlaybackFolders.length > 0)
         ) {
+          shouldResyncLibrary = true;
+        }
+        if (!remoteHasSavedPresets && localSavedPresets.length > 0) {
           shouldResyncLibrary = true;
         }
         if (mergedPlaybackFolders.length !== remotePlaybackFolders.length) {
@@ -4777,32 +4800,39 @@ function clampToDragLengths(person, jointKey, target){
         }
         writeSavedPlaybacksToLocalStorage();
         writePlaybackFoldersToLocalStorage();
+        writeSavedPresetsToLocalStorage();
       } else {
         savedPlaybacks = localSavedPlaybacks;
         playbackFolders = localPlaybackFolders;
-        shouldResyncLibrary = localSavedPlaybacks.length > 0 || localPlaybackFolders.length > 0;
+        savedPresets = localSavedPresets;
+        shouldResyncLibrary = localSavedPlaybacks.length > 0 || localPlaybackFolders.length > 0 || localSavedPresets.length > 0;
       }
     }catch(error){
       console.error('Failed to load Fightlab playbacks from Supabase.', error);
       savedPlaybacks = localSavedPlaybacks;
       playbackFolders = localPlaybackFolders;
+      savedPresets = localSavedPresets;
       shouldResyncLibrary = false;
     }finally{
       playbackSyncLoaded = true;
     }
     if (!Array.isArray(savedPlaybacks)) savedPlaybacks = [];
     if (!Array.isArray(playbackFolders)) playbackFolders = [];
+    if (!Array.isArray(savedPresets)) savedPresets = [];
     playbackGroups = groupPlaybacks(savedPlaybacks);
     syncOpenPlaybackFolders();
     if (
       !savedPlaybacks.length &&
       !playbackFolders.length &&
-      (localSavedPlaybacks.length || localPlaybackFolders.length)
+      !savedPresets.length &&
+      (localSavedPlaybacks.length || localPlaybackFolders.length || localSavedPresets.length)
     ){
       savedPlaybacks = localSavedPlaybacks;
       playbackFolders = localPlaybackFolders;
+      savedPresets = localSavedPresets;
       writeSavedPlaybacksToLocalStorage();
       writePlaybackFoldersToLocalStorage();
+      writeSavedPresetsToLocalStorage();
       playbackGroups = groupPlaybacks(savedPlaybacks);
       syncOpenPlaybackFolders();
       shouldResyncLibrary = true;
@@ -4947,7 +4977,8 @@ function clampToDragLengths(person, jointKey, target){
   }
   // ----- Save/Load custom presets -----
   function persistSavedPresets(){
-    try{ localStorage.setItem('savedPresets', JSON.stringify(savedPresets)); }catch(e){}
+    writeSavedPresetsToLocalStorage();
+    queuePlaybackSync();
   }
   function restoreSavedPresets(){
     try{

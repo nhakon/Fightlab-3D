@@ -2,9 +2,13 @@ create table if not exists public.fightlab_user_playback_data (
   user_id uuid primary key references auth.users(id) on delete cascade,
   saved_playbacks jsonb not null default '[]'::jsonb,
   playback_folders jsonb not null default '[]'::jsonb,
+  saved_presets jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.fightlab_user_playback_data
+  add column if not exists saved_presets jsonb not null default '[]'::jsonb;
 
 alter table public.fightlab_user_playback_data enable row level security;
 
