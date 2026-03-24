@@ -1323,6 +1323,7 @@ function isLocked(person, key){
   let playbackSyncQueued = false;
   // User-defined presets (persisted locally)
   let savedPresets = [];
+  let activeCustomPresetName = "";
   let editingPresetIdx = -1;
   let editingPresetName = "";
   let newPresetName = "";
@@ -4245,6 +4246,7 @@ function clampToDragLengths(person, jointKey, target){
     ]);
     const poseKey = map.get(key);
     if (!poseKey || !POSES[poseKey]) return;
+    activeCustomPresetName = "";
     startPosition = poseKey;
     persistSelectedPreset();
     resetTransientPoseInteractionState();
@@ -5056,6 +5058,7 @@ function clampToDragLengths(person, jointKey, target){
     } else {
       savedPresets = [...savedPresets, { name, data }];
     }
+    activeCustomPresetName = name;
     newPresetName = "";
     editingPresetIdx = -1; editingPresetName = "";
     persistSavedPresets();
@@ -5074,6 +5077,7 @@ function clampToDragLengths(person, jointKey, target){
     const name = (editingPresetName||"").trim() || savedPresets[editingPresetIdx].name || `Preset ${editingPresetIdx+1}`;
     const data = buildPoseSnapshot();
     savedPresets = savedPresets.map((p,i)=> i===editingPresetIdx ? { name, data } : p);
+    activeCustomPresetName = name;
     persistSavedPresets();
   }
   function cancelPresetEdit(){
@@ -5093,6 +5097,7 @@ function clampToDragLengths(person, jointKey, target){
   function loadSavedPreset(idx){
     const i = idx|0; if (i<0 || i>=savedPresets.length) return;
     const pr = savedPresets[i];
+    activeCustomPresetName = pr?.name || `Preset ${i + 1}`;
     showFrameComments = false;
     comment = '';
     commentText = '';
@@ -5101,6 +5106,9 @@ function clampToDragLengths(person, jointKey, target){
   }
   function deleteSavedPreset(idx){
     const i = idx|0; if (i<0 || i>=savedPresets.length) return;
+    if ((savedPresets[i]?.name || `Preset ${i + 1}`) === activeCustomPresetName){
+      activeCustomPresetName = "";
+    }
     savedPresets = [...savedPresets.slice(0,i), ...savedPresets.slice(i+1)];
     persistSavedPresets();
   }
@@ -6917,7 +6925,9 @@ function clampToDragLengths(person, jointKey, target){
                     on:click={()=>{ showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; }}
                     on:keydown={(e)=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; } }}>
                     <span class="preset-trigger__label">
-                      {#if BUILTIN_PRESETS.find(p=>p.key===startPosition)}
+                      {#if activeCustomPresetName}
+                        {activeCustomPresetName}
+                      {:else if BUILTIN_PRESETS.find(p=>p.key===startPosition)}
                         {BUILTIN_PRESETS.find(p=>p.key===startPosition).label}
                       {:else}
                         {startPosition}
