@@ -91,7 +91,7 @@
   }
 
   async function loadAuthState() {
-    if (!isSupabaseConfigured) return;
+    if (!isSupabaseConfigured()) return;
     try {
       const supabase = requireSupabase();
       const { data, error } = await supabase.auth.getSession();
@@ -112,7 +112,7 @@
   async function handleAuthSubmit() {
     authMessage = '';
     authDetail = '';
-    if (!isSupabaseConfigured) {
+    if (!isSupabaseConfigured()) {
       authMessage =
         'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
       return;
@@ -186,7 +186,7 @@
   async function handlePasswordReset() {
     authMessage = '';
     authDetail = '';
-    if (!isSupabaseConfigured) {
+    if (!isSupabaseConfigured()) {
       authMessage =
         'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
       return;

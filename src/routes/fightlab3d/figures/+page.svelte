@@ -3594,7 +3594,7 @@ function clampToDragLengths(person, jointKey, target){
   // ---------- Scene creation ----------
   onMount(async () => {
     try{
-      if (!isSupabaseConfigured){
+      if (!isSupabaseConfigured()){
         goto('/fightlab3d/login?mode=login');
         return;
       }
@@ -4562,7 +4562,7 @@ function clampToDragLengths(person, jointKey, target){
     return '';
   }
   async function loadAuthState(){
-    if (!isSupabaseConfigured) return;
+    if (!isSupabaseConfigured()) return;
     try{
       const supabase = requireSupabase();
       const { data, error } = await supabase.auth.getSession();
@@ -4591,7 +4591,7 @@ function clampToDragLengths(person, jointKey, target){
     }
   }
   async function waitForAuthSession(){
-    if (!isSupabaseConfigured) return null;
+    if (!isSupabaseConfigured()) return null;
     const supabase = requireSupabase();
     for (let i = 0; i < 20; i += 1){
       const { data, error } = await supabase.auth.getSession();
@@ -4612,7 +4612,7 @@ function clampToDragLengths(person, jointKey, target){
     try{ localStorage.setItem('playbackFolders', JSON.stringify(playbackFolders)); }catch(e){}
   }
   async function flushPlaybackSync(){
-    if (!playbackSyncUserId || !isSupabaseConfigured) return;
+    if (!playbackSyncUserId || !isSupabaseConfigured()) return;
     if (playbackSyncInFlight){
       playbackSyncQueued = true;
       return;
@@ -4645,7 +4645,7 @@ function clampToDragLengths(person, jointKey, target){
     }
   }
   function queuePlaybackSync(){
-    if (!playbackSyncUserId || !isSupabaseConfigured) return;
+    if (!playbackSyncUserId || !isSupabaseConfigured()) return;
     if (playbackSyncTimer){
       clearTimeout(playbackSyncTimer);
     }
@@ -4655,7 +4655,7 @@ function clampToDragLengths(person, jointKey, target){
     }, PLAYBACK_SYNC_DEBOUNCE_MS);
   }
   async function hydratePlaybackLibrary(session){
-    if (!isSupabaseConfigured) return;
+    if (!isSupabaseConfigured()) return;
     const user = session?.user ?? null;
     if (!user?.id) return;
     playbackSyncUserId = user.id;
@@ -4745,7 +4745,7 @@ function clampToDragLengths(person, jointKey, target){
     authAttempted = true;
     authMessage = '';
     authDetail = '';
-    if (!isSupabaseConfigured){
+    if (!isSupabaseConfigured()){
       authMessage = 'Supabase is not configured yet. Add PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.';
       return;
     }
@@ -4782,7 +4782,7 @@ function clampToDragLengths(person, jointKey, target){
     authAttempted = false;
     authMessage = '';
     authDetail = '';
-    if (!isSupabaseConfigured){
+    if (!isSupabaseConfigured()){
       isLoggedIn = false;
       loginName = '';
       loginEmail = '';

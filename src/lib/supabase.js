@@ -1,31 +1,42 @@
 import { createClient } from '@supabase/supabase-js';
 import { env } from '$env/dynamic/public';
 
-const supabaseUrl = (env.PUBLIC_SUPABASE_URL || '').trim();
-const supabaseClientKey = (
-	env.PUBLIC_SUPABASE_ANON_KEY ||
-	env.PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-	env.PUBLIC_SUPABASE_PUBLISHABLE ||
-	''
-).trim();
+function readSupabaseConfig() {
+	const supabaseUrl = (env.PUBLIC_SUPABASE_URL || '').trim();
+	const supabaseClientKey = (
+		env.PUBLIC_SUPABASE_ANON_KEY ||
+		env.PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+		env.PUBLIC_SUPABASE_PUBLISHABLE ||
+		''
+	).trim();
+	return { supabaseUrl, supabaseClientKey };
+}
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseClientKey);
+let supabase = null;
+let supabaseConfigSignature = '';
 
-export const supabase = isSupabaseConfigured
-	? createClient(supabaseUrl, supabaseClientKey, {
+export function isSupabaseConfigured() {
+	const { supabaseUrl, supabaseClientKey } = readSupabaseConfig();
+	return Boolean(supabaseUrl && supabaseClientKey);
+}
+
+export function requireSupabase() {
+	const { supabaseUrl, supabaseClientKey } = readSupabaseConfig();
+	if (!supabaseUrl || !supabaseClientKey) {
+		throw new Error(
+			'Missing Supabase environment variables. Set PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.'
+		);
+	}
+	const nextSignature = `${supabaseUrl}::${supabaseClientKey}`;
+	if (!supabase || supabaseConfigSignature !== nextSignature) {
+		supabase = createClient(supabaseUrl, supabaseClientKey, {
 			auth: {
 				persistSession: true,
 				autoRefreshToken: true,
 				detectSessionInUrl: true
 			}
-		})
-	: null;
-
-export function requireSupabase() {
-	if (!supabase) {
-		throw new Error(
-			'Missing Supabase environment variables. Set PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY or PUBLIC_SUPABASE_PUBLISHABLE_KEY.'
-		);
+		});
+		supabaseConfigSignature = nextSignature;
 	}
 
 	return supabase;
