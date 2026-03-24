@@ -377,6 +377,7 @@ let toeRotateDrag = { active:false, person:null, side:null, startOffset:new THRE
   let dragSnapshotTaken = false;
   let undoing = false; // when true, skip solvers so undo restore doesn't drift
   let playbackApplying = false; // skip solvers/grounding while applying playback frames
+  let presetSwitchCooldownFrames = 0; // skip live constraints briefly after preset changes
 
   function cloneJoints(j){
     const out = {};
@@ -2546,6 +2547,7 @@ function isLocked(person, key){
     upperDrag.active = false; upperDrag.person = null; upperDrag.wholeBody = false; upperDrag.mode = 'yawPitch'; upperDrag.baseDir.set(0,1,0);
     upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.baseRelOther.clear(); upperDrag.pivotOther.set(0,0,0);
     natLock = { active:false, person:null, spineBefore:null, headBefore:null, headDrag:false };
+    activeSnaps = [];
     touchOrbitDrag = { active: false, pointerId: null, lastX: 0, lastY: 0 };
     try{ controls.enableRotate = touchOrbitRotateRestore; }catch(e){}
     try{ const el = renderer?.domElement; if (el) el.style.cursor = (lockState==='select' ? 'crosshair' : 'default'); }catch(e){}
@@ -3880,6 +3882,8 @@ function clampToDragLengths(person, jointKey, target){
   function animate(){
     requestAnimationFrame(animate);
     controls.enabled = orbitEnabled;
+    const bypassPresetConstraints = presetSwitchCooldownFrames > 0;
+    if (bypassPresetConstraints) presetSwitchCooldownFrames -= 1;
     // delta time for smooth camera motion
     const nowMs = (typeof performance!=='undefined'? performance.now() : Date.now());
     const dtSec = Math.min(0.05, Math.max(0, (nowMs - lastAnimTimeMs) / 1000)); // clamp dt
@@ -3888,13 +3892,13 @@ function clampToDragLengths(person, jointKey, target){
     try{ updateCameraWASD(dtSec); } catch(e){}
     controls.update();
     // apply snap animations
-    let snapped = updateSnaps();
+    let snapped = bypassPresetConstraints ? false : updateSnaps();
     const wasdActive = (moveKeys.w || moveKeys.a || moveKeys.s || moveKeys.d);
     const ikChanged = false;
     // enforce torso freeze early (prevents torso translation/hip bending during drag/IK)
-    const freezeChanged = enforceTorsoFreeze();
+    const freezeChanged = bypassPresetConstraints ? false : enforceTorsoFreeze();
     // While dragging a joint, hold roots fixed to avoid creeping from collision correction elsewhere
-    const dragRootChanged = enforceDragRootFreeze();
+    const dragRootChanged = bypassPresetConstraints ? false : enforceDragRootFreeze();
     // While dragging, update drag target against current camera so WASD works concurrently,
     // but freeze the joint while WASD keys are held. On release, re-anchor to avoid jump.
     if (dragging && wasdActive) {
@@ -3915,14 +3919,14 @@ function clampToDragLengths(person, jointKey, target){
     let changedLimits = false;
     let changedCollide = false;
     let changedLock = false;
-    if (!(((singleJointMode && dragging && activeJointIdx != null)) || upperDrag.active || lowerHandleDrag.active || bridgeDrag.active || armTranslateDrag.active || elbowTranslateDrag.active || handTranslateDrag.active)){
+    if (!bypassPresetConstraints && !(((singleJointMode && dragging && activeJointIdx != null)) || upperDrag.active || lowerHandleDrag.active || bridgeDrag.active || armTranslateDrag.active || elbowTranslateDrag.active || handTranslateDrag.active)){
       try { changedLimits = enforceRotationLimits(); } catch(e){}
       try { changedCollide = enforceTorsoCollisions(); } catch(e){}
       // Enforce world-locked joints last
       try { changedLock = enforceLockedJoints(); } catch(e){}
     }
     // enforce freeze again after other constraints so it wins
-    const freezeChanged2 = enforceTorsoFreeze() || freezeChanged || dragRootChanged;
+    const freezeChanged2 = bypassPresetConstraints ? false : (enforceTorsoFreeze() || freezeChanged || dragRootChanged);
     if (snapped || ikChanged || changedLimits || changedCollide || changedLock || freezeChanged2) {
       try { updateMeshesFromJoints(); } catch(e){}
     }
@@ -4224,6 +4228,7 @@ function clampToDragLengths(person, jointKey, target){
     startPosition = poseKey;
     persistSelectedPreset();
     resetTransientPoseInteractionState();
+    presetSwitchCooldownFrames = 2;
     showFrameComments = false;
     comment = '';
     commentText = '';
