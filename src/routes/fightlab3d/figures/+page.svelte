@@ -7666,15 +7666,17 @@ function clampToDragLengths(person, jointKey, target){
     .preset-ui.bottom,
     .toolbar-layout,
     .toolbar-row { box-sizing: border-box; }
-    .expanded-grid { grid-template-columns: 1fr; }
-    .toolbar-row { display:flex; width:100%; flex-direction:column; gap:2px; align-items:stretch; padding-inline: 2px; box-sizing: border-box; }
-    .row-left, .row-center, .row-right { width:100%; justify-content: stretch; gap:4px; max-width: 100%; padding-inline: 2px; }
+    .expanded-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 6px; }
+    .toolbar-row { display:contents; }
+    .row-left, .row-center, .row-right { width:auto; min-width:0; justify-content: stretch; gap:4px; max-width: 100%; padding-inline: 2px; }
     .row-left > *, .row-center > *, .row-right > * { width:100%; min-width: 0; max-width: 100%; }
     .row-right > .playback-input-row { width: min(100%, 260px) !important; max-width: min(100%, 260px) !important; flex: 0 0 auto; }
-    .toolbar-actions { width:100%; }
-    .toolbar-actions.wrap-tight { flex-wrap: wrap; }
-    .controls-row { width:100%; justify-content: stretch; }
-    .controls-row--expanded { flex-wrap: wrap; }
+    .toolbar-actions { width:100%; overflow-x:auto; overflow-y:hidden; flex-wrap:nowrap; justify-content:flex-start; scrollbar-width:none; -ms-overflow-style:none; }
+    .toolbar-actions::-webkit-scrollbar { display:none; }
+    .toolbar-actions.wrap-tight { flex-wrap: nowrap; }
+    .controls-row { width:100%; justify-content: flex-start; overflow-x:auto; overflow-y:hidden; flex-wrap:nowrap; scrollbar-width:none; -ms-overflow-style:none; }
+    .controls-row::-webkit-scrollbar { display:none; }
+    .controls-row--expanded { flex-wrap: nowrap; }
     .controls-row, .controls-row--expanded { width: 100%; }
     .btn { padding: 7px 10px; font-size: 13px; min-height: 36px; }
     .icon-btn { width: 40px; height: 40px; }
