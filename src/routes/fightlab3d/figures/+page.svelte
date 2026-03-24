@@ -2554,6 +2554,26 @@ function isLocked(person, key){
     if (lockState === 'select') setLockPreview(null);
   }
 
+  function resetPoseVisualExtrasToDefaults(){
+    torsoGuiA = { rotX: 0, rotY: 0, rotZ: 0 };
+    torsoGuiB = { rotX: 0, rotY: 0, rotZ: 0 };
+    toeOffsets.A.L.set(0,0,0);
+    toeOffsets.A.R.set(0,0,0);
+    toeOffsets.B.L.set(0,0,0);
+    toeOffsets.B.R.set(0,0,0);
+  }
+
+  function refreshHeadPreferencesFromCurrentSkeletons(){
+    try{
+      computeFK(skeletonA);
+      headPreferredA = skeletonA?.angleRot?.[IDX.head]?.clone() || null;
+    }catch(e){ headPreferredA = null; }
+    try{
+      computeFK(skeletonB);
+      headPreferredB = skeletonB?.angleRot?.[IDX.head]?.clone() || null;
+    }catch(e){ headPreferredB = null; }
+  }
+
   // Apply current colorblind scheme to figure body materials
   function applyColorblindScheme(){
     const scheme = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
@@ -4228,6 +4248,7 @@ function clampToDragLengths(person, jointKey, target){
     startPosition = poseKey;
     persistSelectedPreset();
     resetTransientPoseInteractionState();
+    resetPoseVisualExtrasToDefaults();
     presetSwitchCooldownFrames = 2;
     showFrameComments = false;
     comment = '';
@@ -4259,6 +4280,7 @@ function clampToDragLengths(person, jointKey, target){
     }
     groundSkeleton(skeletonA);
     groundSkeleton(skeletonB);
+    refreshHeadPreferencesFromCurrentSkeletons();
     if (torsoFreeze) captureTorsoFreezeRefs();
     updateMeshesFromJoints();
     // refresh GUI state to reflect new pose
