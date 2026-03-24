@@ -7711,6 +7711,51 @@ function clampToDragLengths(person, jointKey, target){
       touch-action: pan-y;
     }
   }
+  @media (pointer: coarse) and (max-height: 760px){
+    .preset-ui.bottom {
+      bottom: 8px;
+      padding: 6px 8px;
+      width: min(calc(100vw - 12px), 1280px);
+      max-height: calc(100dvh - 16px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      gap: 6px;
+    }
+    .toolbar-layout { padding-inline: 2px; }
+    .expanded-grid { gap: 4px 8px; }
+    .row-left, .row-center, .row-right { gap: 6px; }
+    .toolbar-actions { gap: 6px; }
+    .controls-row { gap: 6px; }
+    .controls-row--expanded { column-gap: 8px; }
+    .btn { padding: 5px 8px; font-size: 12px; min-height: 32px; }
+    .icon-btn { width: 34px; height: 34px; }
+    .input { padding: 5px 7px; font-size: 12px; }
+    .preset-trigger { padding: 5px 38px 5px 8px; font-size: 12px; }
+  }
+  @media (pointer: coarse) and (max-height: 620px){
+    .preset-ui.bottom {
+      bottom: 6px;
+      padding: 5px 6px;
+      width: min(calc(100vw - 8px), 1200px);
+      max-height: calc(100dvh - 10px);
+      border-radius: 12px;
+      gap: 4px;
+    }
+    .expanded-grid { gap: 3px 6px; }
+    .row-left, .row-center, .row-right { gap: 4px; }
+    .toolbar-actions { gap: 5px; }
+    .controls-row { gap: 5px; }
+    .speed-track input { width: min(100%, 120px); }
+    .toolbar-frame,
+    .toolbar-field,
+    .toolbar-field--name,
+    .playback-input-row { max-width: min(100%, 220px); width: min(100%, 220px); }
+    .playback-dropdown,
+    .row-right > .playback-dropdown,
+    .row-right { width: min(100%, 220px); max-width: min(100%, 220px); }
+  }
   @media (max-width: 900px) and (orientation: portrait){
     .orientation-lock { display: flex; }
     .figures-wrapper,
