@@ -5272,36 +5272,33 @@ function clampToDragLengths(person, jointKey, target){
     if (!data) return;
     const applyOne = (skel, part, which)=>{
       if (part?.joints){
-        applyWorldPoseToSkeleton(skel, part.joints);
-      }
-      if (Array.isArray(part?.rootPos)){
-        skel.rootPos.set(part.rootPos[0]||0, part.rootPos[1]||0, part.rootPos[2]||0);
-      }
-      if (!playbackApplying){ groundSkeleton(skel); }
-      // Keep joints arrays in sync with snapshot; avoid solver drift when skipping grounding
-      if (part?.joints){
         const cloned = cloneJoints(part.joints);
+        try{ applyJointsToSkeletonExact(skel, cloned); }catch(e){}
         if (which === 'A') jointsA = cloned; else jointsB = cloned;
       } else {
+        if (Array.isArray(part?.rootPos)){
+          skel.rootPos.set(part.rootPos[0]||0, part.rootPos[1]||0, part.rootPos[2]||0);
+          try{ computeFK(skel); }catch(e){}
+        }
+        if (!playbackApplying){
+          try{ groundSkeleton(skel); }catch(e){}
+        }
         const derived = jointsFromSkeleton(skel);
         if (which === 'A') jointsA = derived; else jointsB = derived;
       }
     };
     applyOne(skeletonA, data.A, 'A');
     applyOne(skeletonB, data.B, 'B');
-    if (data.torsoExtras){
-      if (data.torsoExtras.A) torsoGuiA = { ...torsoGuiA, ...data.torsoExtras.A };
-      if (data.torsoExtras.B) torsoGuiB = { ...torsoGuiB, ...data.torsoExtras.B };
-    }
-    if (data.toeOffsets){
-      const setToe = (store, src)=>{
-        if (!src) return;
-        if (Array.isArray(src.L) && src.L.length>=3) store.L.set(src.L[0], src.L[1], src.L[2]);
-        if (Array.isArray(src.R) && src.R.length>=3) store.R.set(src.R[0], src.R[1], src.R[2]);
-      };
-      setToe(toeOffsets.A, data.toeOffsets.A);
-      setToe(toeOffsets.B, data.toeOffsets.B);
-    }
+    torsoGuiA = data.torsoExtras?.A ? { ...data.torsoExtras.A } : { rotX: 0, rotY: 0, rotZ: 0 };
+    torsoGuiB = data.torsoExtras?.B ? { ...data.torsoExtras.B } : { rotX: 0, rotY: 0, rotZ: 0 };
+    const setToe = (store, src)=>{
+      if (Array.isArray(src?.L) && src.L.length>=3) store.L.set(src.L[0], src.L[1], src.L[2]);
+      else store.L.set(0,0,0);
+      if (Array.isArray(src?.R) && src.R.length>=3) store.R.set(src.R[0], src.R[1], src.R[2]);
+      else store.R.set(0,0,0);
+    };
+    setToe(toeOffsets.A, data.toeOffsets?.A);
+    setToe(toeOffsets.B, data.toeOffsets?.B);
   }
 
   function applyImportedPose(poseKey){
