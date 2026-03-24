@@ -2503,6 +2503,55 @@ function isLocked(person, key){
     return changed;
   }
 
+  function resetTransientPoseInteractionState(){
+    hoverUpperHandlePerson = null;
+    dragTorsoAnchorA = null;
+    dragTorsoAnchorB = null;
+    dragTorsoForwardA = null;
+    dragTorsoForwardB = null;
+    dragRootAnchorA = null;
+    dragRootAnchorB = null;
+    dragSpineAnchorA = null;
+    dragSpineAnchorB = null;
+    dragHeadAnchorA = null;
+    dragHeadAnchorB = null;
+    dragHeadOffsetA = null;
+    dragHeadOffsetB = null;
+    shoulderAnchors.A.L = null; shoulderAnchors.A.R = null;
+    shoulderAnchors.B.L = null; shoulderAnchors.B.R = null;
+    headDragPerson = null;
+    dragging = null;
+    activeJointIdx = null;
+    shiftDragging = false;
+    ctrlDragging = false;
+    dragCamera = null;
+    dragView = 'persp';
+    dragState.A.plane = dragState.A.offset = dragState.A.camera = null; dragState.A.view = 'persp'; dragState.A.lastTarget = null; dragState.A.atLimit = false; dragState.A.justScrolled = false;
+    dragState.B.plane = dragState.B.offset = dragState.B.camera = null; dragState.B.view = 'persp'; dragState.B.lastTarget = null; dragState.B.atLimit = false; dragState.B.justScrolled = false;
+    dragSnapshotTaken = false;
+    dragRootFreezeActive = false;
+    dragFreezeWhich = 'none';
+    dragRootA = null;
+    dragRootB = null;
+    dragSpineRefA = null;
+    dragSpineRefB = null;
+    dragLengthConstraint = {active:false, person:null, jointKey:null, parentKey:null, childKey:null, lParent:0, lChild:0};
+    bridgeDrag.active = false;
+    armTranslateDrag.active = false; armTranslateDrag.person = null; armTranslateDrag.side = null;
+    elbowTranslateDrag.active = false; elbowTranslateDrag.person = null; elbowTranslateDrag.side = null;
+    handTranslateDrag.active = false; handTranslateDrag.person = null; handTranslateDrag.side = null;
+    footDrag.active = false;
+    toeRotateDrag.active = false; toeRotateDrag.person = null; toeRotateDrag.side = null; toeRotateDrag.startOffset.set(0,0,0); toeRotateDrag.startToeWorld.set(0,0,0); toeRotateDrag.startX = 0; toeRotateDrag.startY = 0; toeRotateDrag.camera = null;
+    lowerHandleDrag.active = false; lowerHandleDrag.person = null; lowerHandleDrag.accumQ.identity(); lowerHandleDrag.baseRel.clear();
+    upperDrag.active = false; upperDrag.person = null; upperDrag.wholeBody = false; upperDrag.mode = 'yawPitch'; upperDrag.baseDir.set(0,1,0);
+    upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.baseRelOther.clear(); upperDrag.pivotOther.set(0,0,0);
+    natLock = { active:false, person:null, spineBefore:null, headBefore:null, headDrag:false };
+    touchOrbitDrag = { active: false, pointerId: null, lastX: 0, lastY: 0 };
+    try{ controls.enableRotate = touchOrbitRotateRestore; }catch(e){}
+    try{ const el = renderer?.domElement; if (el) el.style.cursor = (lockState==='select' ? 'crosshair' : 'default'); }catch(e){}
+    if (lockState === 'select') setLockPreview(null);
+  }
+
   // Apply current colorblind scheme to figure body materials
   function applyColorblindScheme(){
     const scheme = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
@@ -4174,6 +4223,7 @@ function clampToDragLengths(person, jointKey, target){
     if (!poseKey || !POSES[poseKey]) return;
     startPosition = poseKey;
     persistSelectedPreset();
+    resetTransientPoseInteractionState();
     showFrameComments = false;
     comment = '';
     commentText = '';
@@ -4204,6 +4254,7 @@ function clampToDragLengths(person, jointKey, target){
     }
     groundSkeleton(skeletonA);
     groundSkeleton(skeletonB);
+    if (torsoFreeze) captureTorsoFreezeRefs();
     updateMeshesFromJoints();
     // refresh GUI state to reflect new pose
     refreshGuiFromSkeletons();
@@ -5314,6 +5365,7 @@ function clampToDragLengths(person, jointKey, target){
       headPreferredB = skeletonB?.angleRot?.[IDX.head]?.clone() || null;
     }catch(e){ headPreferredB = null; }
     syncMeshesNoSolve();
+    if (torsoFreeze) captureTorsoFreezeRefs();
     refreshGuiFromSkeletons();
   }
 
