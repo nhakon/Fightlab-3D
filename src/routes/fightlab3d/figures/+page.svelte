@@ -1306,12 +1306,14 @@ function isLocked(person, key){
   let showAccountAuth = false;
   let loginName = '';
   let loginEmail = '';
+  let profileName = '';
   let isLoggedIn = false;
   let authUserId = '';
   let authMessage = '';
   let authDetail = '';
   let authAttempted = false;
   let authBusy = false;
+  let profileBusy = false;
   let authUnsubscribe = null;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const FIGURES_BOOT_TIMEOUT_MS = 5000;
@@ -4612,6 +4614,8 @@ function clampToDragLengths(person, jointKey, target){
       playbackSyncUserId = '';
       loginName = '';
       loginEmail = '';
+      profileName = '';
+      profileBusy = false;
       return;
     }
     authUserId = user.id || '';
@@ -4622,6 +4626,39 @@ function clampToDragLengths(person, jointKey, target){
       user.user_metadata?.name ||
       user.email?.split('@')[0] ||
       'User';
+    profileName = loginName;
+  }
+  async function saveProfileName(){
+    authAttempted = true;
+    authMessage = '';
+    authDetail = '';
+    if (!isLoggedIn){
+      authMessage = 'You need to log in first.';
+      return;
+    }
+    const nextName = String(profileName || '').trim();
+    if (!nextName){
+      authMessage = 'Name required.';
+      return;
+    }
+    profileBusy = true;
+    try {
+      const supabase = requireSupabase();
+      const { data, error } = await supabase.auth.updateUser({
+        data: {
+          name: nextName,
+          display_name: nextName
+        }
+      });
+      if (error) throw error;
+      applyAuthSession({ user: data?.user ?? null });
+      authMessage = 'Name updated.';
+    } catch (error) {
+      authMessage = formatAuthError(error);
+      authDetail = formatAuthDetail(error);
+    } finally {
+      profileBusy = false;
+    }
   }
   function formatAuthError(error){
     const message = error?.message || '';
@@ -6828,6 +6865,27 @@ function clampToDragLengths(person, jointKey, target){
             {#if loginName}
               <span class="meta-label">Name: {loginName}</span>
             {/if}
+            <div style="display:flex; flex-direction:column; gap:6px; width:100%;">
+              <span class="meta-label">Rename account</span>
+              <div style="display:flex; gap:8px; flex-wrap:wrap; width:100%; align-items:center;">
+                <input
+                  type="text"
+                  bind:value={profileName}
+                  placeholder="Display name"
+                  maxlength="60"
+                  style="flex:1 1 180px; min-width:0; width:100%;"
+                  on:keydown={(event) => {
+                    if (event.key === 'Enter'){
+                      event.preventDefault();
+                      saveProfileName();
+                    }
+                  }}
+                />
+                <button class="btn" on:click={saveProfileName} disabled={authBusy || profileBusy}>
+                  {profileBusy ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </div>
           {:else}
             <span class="meta-label">You need to log in from the dedicated login page.</span>
           {/if}
