@@ -3625,9 +3625,6 @@ function clampToDragLengths(person, jointKey, target){
       applyWorldPoseToSkeleton(skeletonB, POSES[startPosition].B);
       groundSkeleton(skeletonA);
       groundSkeleton(skeletonB);
-      if (importedPoses[startPosition]){
-        applyImportedPoseState(importedPoses[startPosition]);
-      }
       try{
         computeFK(skeletonA);
         headPreferredA = skeletonA.angleRot[IDX.head]?.clone() || null;
@@ -3728,7 +3725,7 @@ function clampToDragLengths(person, jointKey, target){
       shoulderCenterToNeckLenA = baselineA?.neckCenterLen ?? computeShoulderCenterToNeckLen(POSES.neutral.A);
       shoulderCenterToNeckLenB = baselineB?.neckCenterLen ?? computeShoulderCenterToNeckLen(POSES.neutral.B);
 
-      updateMeshesFromJoints();
+      setPosition(startPosition);
       animate();
       try{
         attachPointerEvents();
@@ -3786,7 +3783,6 @@ function clampToDragLengths(person, jointKey, target){
       try{
         await hydratePlaybackLibraryForSession(session);
         restoreSavedPresets();
-        restoreSelectedPreset();
       }catch(e){}
       uiReady = true;
     } catch (error) {
