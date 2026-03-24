@@ -7689,7 +7689,7 @@ function clampToDragLengths(person, jointKey, target){
     .playback-comment { overflow: hidden; }
     .playback-dropdown,
     .playback-comment { overflow: hidden; }
-    .toolbar-actions .btn { flex: 1 1 auto; }
+    .toolbar-actions .btn { flex: 0 0 auto; width: auto; max-width: 100%; }
     .menu-popup { width: min(100vw - 16px, 420px); max-width: min(100vw - 16px, 420px); }
     :global(.preset-menu) { grid-template-columns: 1fr; min-width: 0; width: min(100vw - 16px, 760px); }
     :global(.playback-footer) { grid-template-columns: 1fr; }
@@ -7768,7 +7768,7 @@ function clampToDragLengths(person, jointKey, target){
     .meta-label { display: none; }
     .preset-ui { gap: 6px; }
     .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 12px); padding: 6px; }
-    .toolbar-actions .btn { width: 100%; justify-content: center; }
+    .toolbar-actions .btn { width: auto; justify-content: center; max-width: 100%; }
     .speed-track input { width: min(100%, 150px); }
     .preset-trigger { width: 100%; }
     .preset-select-wrap.with-actions { width: 100%; }
