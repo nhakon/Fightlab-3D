@@ -354,6 +354,8 @@ let toeRotateDrag = { active:false, person:null, side:null, startOffset:new THRE
   let activeJointIdx = null;     // index in hierarchical skeleton
   let shiftDragging = false;     // true if Shift+Ctrl held at pointerdown
   let ctrlDragging = false;      // true if Ctrl held at pointerdown (move one figure)
+  let touchCtrlDragging = false; // true when a second touch should behave like Ctrl
+  const activeTouchPointers = new Set();
   let touchOrbitDrag = { active: false, pointerId: null, lastX: 0, lastY: 0 };
   let touchOrbitRotateRestore = false;
   let tabToeRotate = false;      // true while Tab held (rotate toe joint instead of translate)
@@ -5539,7 +5541,11 @@ function clampToDragLengths(person, jointKey, target){
     activePointerView = view;
     touchOrbitDrag.active = false;
     const cam = cameraForView(view) || camera;
-    const isCtrlLike = !!(event.ctrlKey || event.metaKey);
+    const isTouchPointer = event.pointerType === 'touch';
+    const hadOtherTouch = isTouchPointer && activeTouchPointers.size > 0 && !activeTouchPointers.has(event.pointerId);
+    if (isTouchPointer) activeTouchPointers.add(event.pointerId);
+    touchCtrlDragging = hadOtherTouch;
+    const isCtrlLike = !!(event.ctrlKey || event.metaKey || touchCtrlDragging);
     const ctrlShift = !!(event.shiftKey && isCtrlLike);
     const ctrlOnly = !!(!event.shiftKey && isCtrlLike);
     const isTouchOrbit = !!(((event.pointerType === 'touch' || event.pointerType === 'mouse' || !event.pointerType) && !isCtrlLike && !event.shiftKey && event.isPrimary !== false && (event.button === 0 || event.button == null)));
@@ -6169,7 +6175,12 @@ function clampToDragLengths(person, jointKey, target){
     const el = renderer.domElement;
     const rect = el.getBoundingClientRect();
     const view = viewAtEvent(event);
-    ctrlDragging = !!(event.ctrlKey || event.metaKey);
+    if (event.pointerType === 'touch'){
+      touchCtrlDragging = activeTouchPointers.size > 1;
+    }
+    const keyboardCtrlLike = !!(event.ctrlKey || event.metaKey);
+    ctrlDragging = !!(keyboardCtrlLike || touchCtrlDragging);
+    shiftDragging = !!(event.shiftKey && keyboardCtrlLike);
     activePointerView = view;
     const ndc = ndcForEventInView(event, dragging ? dragView : view);
     mouse.x = ndc.x; mouse.y = ndc.y;
@@ -6515,6 +6526,10 @@ function clampToDragLengths(person, jointKey, target){
 
   function pointerUpHandler(event){
     try{ if (renderer?.domElement?.releasePointerCapture) renderer.domElement.releasePointerCapture(event.pointerId); }catch(e){}
+    if (event?.pointerType === 'touch' && event?.pointerId != null){
+      activeTouchPointers.delete(event.pointerId);
+      touchCtrlDragging = activeTouchPointers.size > 1;
+    }
     if (touchOrbitDrag.pointerId != null && event?.pointerId === touchOrbitDrag.pointerId){
       touchOrbitDrag = { active: false, pointerId: null, lastX: 0, lastY: 0 };
       try{ controls.enableRotate = touchOrbitRotateRestore; }catch(e){}
@@ -7176,7 +7191,7 @@ function clampToDragLengths(person, jointKey, target){
                 title="Toggle movement mode (E)">{singleJointMode ? 'Single Joint Mode' : 'Natural Mode'}</button>
               <button class="btn btn--fourview" on:click={()=> fourViewMode = !fourViewMode}>{fourViewMode ? 'Single View' : '4-View'}</button>
               <button class="btn" class:is-active={torsoFreeze} on:click={toggleTorsoFreeze} title="Torso Lock (Q)">Torso Lock</button>
-              <button class="btn" on:click={mirrorPoseYZPlane}>Mirror Pose</button>
+              <button class="btn mirror-pose-btn" on:click={mirrorPoseYZPlane}>Mirror Pose</button>
             </div>
           </div>
           <div class="row-center">
@@ -7632,7 +7647,7 @@ function clampToDragLengths(person, jointKey, target){
   .playback-dropdown,
   .row-right > .playback-dropdown,
   .row-right { width: min(100%, 240px); max-width: min(100%, 240px); }
-  .playback-dropdown .input-with-icon.two-actions .input { padding-right: 64px; }
+  .playback-dropdown .input-with-icon.two-actions .input { padding-right: 8px; }
   .playback-dropdown .input-with-icon {
     display: flex;
     align-items: center;
@@ -7662,7 +7677,7 @@ function clampToDragLengths(person, jointKey, target){
   .input { font-size: 12px; }
 }
   @media (max-width: 720px){
-    .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 16px); overflow: hidden; }
+    .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 16px); overflow: visible; }
     .preset-ui.bottom,
     .toolbar-layout,
     .toolbar-row { box-sizing: border-box; }
@@ -7689,7 +7704,7 @@ function clampToDragLengths(person, jointKey, target){
     .toolbar-field--name,
     .toolbar-frame { max-width: min(100%, 260px); width: min(100%, 260px); }
     .playback-comment { overflow: hidden; }
-    .playback-dropdown,
+    .playback-dropdown { overflow: visible; }
     .playback-comment { overflow: hidden; }
     .toolbar-actions .btn { flex: 0 0 auto; width: auto; max-width: 100%; }
     .menu-popup { width: min(100vw - 16px, 420px); max-width: min(100vw - 16px, 420px); }
@@ -7808,10 +7823,13 @@ function clampToDragLengths(person, jointKey, target){
       margin-left: 2px;
     }
     .playback-comment { overflow: hidden; }
-    .playback-dropdown .input-with-icon.two-actions .input { padding-right: 64px; }
+    .playback-dropdown .input-with-icon.two-actions .input { padding-right: 8px; }
     .toolbar-row { gap: 3px; }
     .input-with-icon .input { width: 100%; max-width: 100%; }
     .mobile-undo-control { width: 100%; border-radius: 12px; }
     .playback-comment .input { width: 100%; }
+  }
+  @media (max-width: 520px){
+    .mirror-pose-btn { display: none; }
   }
 </style>
