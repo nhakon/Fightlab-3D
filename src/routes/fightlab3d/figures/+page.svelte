@@ -6932,16 +6932,6 @@ function clampToDragLengths(person, jointKey, target){
                     <div class="menu-popup preset-menu" bind:this={presetsMenuEl} style="left:0; right:auto; bottom:calc(100% + 8px); top:auto; position:absolute;">
                       <div class="preset-menu-col">
                         <div class="menu-section-title">Built-in presets</div>
-                        {#if BUILTIN_PRESETS.find(p=>p.key===startPosition)}
-                          <div class="menu-item">
-                            <button type="button" class="menu-row-btn" on:click={() => { updateCurrentPresetFromScene(); showSavedPresetsMenu=false; }}>
-                              <span class="name">Save changes to current preset</span>
-                            </button>
-                          </div>
-                          <div class="menu-item" style="cursor:default;">
-                            <span class="name" style="white-space:normal; color:#555; font-size:12px;">Tip: Pose the figures, then save to update the preset in this browser.</span>
-                          </div>
-                        {/if}
                         {#each BUILTIN_PRESETS as preset (preset.key)}
                           <div class="menu-item">
                             <button type="button" class="menu-row-btn" on:click={() => { setPosition(preset.key); showSavedPresetsMenu=false; }}>
