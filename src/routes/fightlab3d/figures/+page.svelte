@@ -5308,7 +5308,15 @@ function clampToDragLengths(person, jointKey, target){
     const data = importedPoses[poseKey];
     if (!data) return;
     applyImportedPoseState(data);
-    updateMeshesFromJoints();
+    try{
+      computeFK(skeletonA);
+      headPreferredA = skeletonA?.angleRot?.[IDX.head]?.clone() || null;
+    }catch(e){ headPreferredA = null; }
+    try{
+      computeFK(skeletonB);
+      headPreferredB = skeletonB?.angleRot?.[IDX.head]?.clone() || null;
+    }catch(e){ headPreferredB = null; }
+    syncMeshesNoSolve();
     refreshGuiFromSkeletons();
   }
 
