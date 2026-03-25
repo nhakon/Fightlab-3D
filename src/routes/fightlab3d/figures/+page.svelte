@@ -7026,14 +7026,16 @@ function clampToDragLengths(person, jointKey, target){
           </div>
           <div class="row-right">
             <div class="playback-dropdown">
-            <div class="playback-input-shell playback-input-row">
+            <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
                 <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
-                <button class="playback-row-action save-action" on:click={saveCurrentPlayback} title="Save playback">
-                  <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-                </button>
-                <button class="playback-row-action" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
-                  <svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </button>
+                <div class="input-actions playback-input-actions">
+                  <button class="inline-action save-action" on:click={saveCurrentPlayback} title="Save playback">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                  </button>
+                  <button class="inline-action" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
               </div>
               {#if showSavedPlaybacksMenu}
                 {#key playbacksMenuVersion}
@@ -7395,6 +7397,8 @@ function clampToDragLengths(person, jointKey, target){
   .input-with-icon .input { padding-right: 34px; width: 100%; box-sizing: border-box; }
   /* When the input has two inline action buttons (save + dropdown), add extra padding */
   .input-with-icon.two-actions .input { padding-right: 70px; }
+  .input-actions { position:absolute; right:6px; top:50%; transform: translateY(-50%); display:flex; align-items:center; gap:2px; max-width: calc(100% - 12px); }
+  .input-actions .inline-action { position:static; right:auto; top:auto; transform:none; flex:0 0 24px; margin-left:0; }
   .playback-input-row { width: min(100%, 260px); max-width: min(100%, 260px); box-sizing: border-box; flex: 0 0 auto; }
   .playback-comment.playback-input-row { width: min(100%, 260px); max-width: min(100%, 260px); box-sizing: border-box; flex: 0 0 auto; }
   .toolbar-field { width: clamp(130px, 14vw, 170px); min-width: 0; max-width: 100%; }
@@ -7403,15 +7407,12 @@ function clampToDragLengths(person, jointKey, target){
   .playback-comment { min-width: 0; }
   .playback-comment .input { width: 100%; min-width: 0; box-sizing: border-box; }
   .playback-comment { overflow: hidden; }
-  .playback-input-shell { display:flex; align-items:center; gap:4px; width:min(100%, 260px); max-width:min(100%, 260px); box-sizing:border-box; min-width:0; overflow:hidden; }
-  .playback-input-shell .input { flex:1 1 auto; width:0; min-width:0; box-sizing:border-box; }
-  .playback-row-action { flex:0 0 24px; width:24px; height:24px; padding:0; border:0; background:transparent; cursor:pointer; color:#111; display:inline-flex; align-items:center; justify-content:center; border-radius:6px; }
   .inline-action { position:absolute; right:6px; top:50%; transform: translateY(-50%); width:24px; height:24px; padding:0; border:0; background:transparent; cursor:pointer; color:#111; display:inline-flex; align-items:center; justify-content:center; }
   .inline-action.small { width:22px; height:22px; }
   .inline-action.small .icon { width:16px; height:16px; }
   .playback-comment .inline-action { right:8px; }
   .playback-comment .input { padding-right: 52px; box-sizing: border-box; }
-  .playback-dropdown { width: min(100%, 100%); max-width: 100%; box-sizing: border-box; min-width: 0; position: relative; overflow: visible; }
+  .playback-dropdown { width: min(100%, 100%); max-width: 100%; box-sizing: border-box; min-width: 0; }
   .toolbar-frame,
   .toolbar-field,
   .toolbar-field--name,
@@ -7641,7 +7642,7 @@ function clampToDragLengths(person, jointKey, target){
 }
 @media (max-width: 900px){
   .preset-ui { bottom: 10px; left: 10px; right: 10px; gap: 6px; padding: 6px 8px; }
-  .preset-ui.bottom { left: 10px; right: 10px; transform: none; width: auto; overflow: visible; }
+  .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 20px); }
   .expanded-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 8px; }
   .toolbar-frame,
   .toolbar-field,
@@ -7650,88 +7651,15 @@ function clampToDragLengths(person, jointKey, target){
   .playback-dropdown,
   .row-right > .playback-dropdown,
   .row-right { width: min(100%, 240px); max-width: min(100%, 240px); }
-  .playback-dropdown .input-with-icon.two-actions .input { padding-right: 8px; }
-  .playback-dropdown .input-with-icon.playback-input-row {
-    display: flex !important;
-    flex-wrap: nowrap !important;
-    align-items: center;
-    gap: 4px;
-    overflow: hidden;
-  }
-  .playback-dropdown .input-with-icon.playback-input-row .input {
-    width: 0 !important;
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-  .playback-dropdown .input-with-icon.playback-input-row .inline-action {
-    position: static !important;
-    top: auto;
-    right: auto;
-    transform: none;
-    flex: 0 0 24px;
-    margin-left: 0;
-  }
-  .playback-dropdown .input-with-icon {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    width: 100%;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .playback-dropdown .input-with-icon .input {
-    width: 0;
-    min-width: 0;
-    flex: 1 1 auto;
-    padding-right: 8px;
-  }
-  .playback-dropdown .input-with-icon .inline-action {
-    position: static !important;
-    top: auto;
-    right: auto;
-    transform: none;
-    flex: 0 0 24px;
-    margin-left: 0;
-  }
-  .playback-dropdown .input-with-icon .inline-action + .inline-action {
-    margin-left: 2px;
-  }
-  .toolbar-layout,
-  .row-left,
-  .row-right,
-  .preset-select-wrap,
-  .playback-dropdown { overflow: visible; }
-  .playback-dropdown > .menu-popup,
-  .preset-trigger-wrap > .menu-popup {
-    position: fixed !important;
-    left: 50% !important;
-    right: auto !important;
-    top: auto !important;
-    bottom: max(84px, calc(env(safe-area-inset-bottom) + 84px)) !important;
-    transform: translateX(-50%);
-    width: min(calc(100vw - 20px), 420px);
-    max-width: calc(100vw - 20px);
-    max-height: min(60dvh, 420px);
-    z-index: 40;
-  }
-  .preset-trigger-wrap > .preset-menu {
-    width: min(calc(100vw - 20px), 760px);
-    max-width: calc(100vw - 20px);
-  }
-  .mirror-pose-btn { display: none; }
+  .playback-dropdown .playback-name-field.input-with-icon.two-actions .input { padding-right: 70px; }
   .btn { padding: 5px 8px; font-size: 12px; }
   .input { font-size: 12px; }
 }
   @media (max-width: 720px){
-    .preset-ui.bottom { left: 8px; right: 8px; transform: none; width: auto; overflow: visible; }
+    .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 16px); overflow: visible; }
     .preset-ui.bottom,
     .toolbar-layout,
     .toolbar-row { box-sizing: border-box; }
-    .toolbar-layout,
-    .row-left,
-    .row-right,
-    .preset-select-wrap,
-    .playback-dropdown { overflow: visible; }
     .expanded-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 6px; }
     .toolbar-row { display:contents; }
     .row-left, .row-center, .row-right { width:auto; min-width:0; justify-content: stretch; gap:4px; max-width: 100%; padding-inline: 2px; }
@@ -7759,23 +7687,6 @@ function clampToDragLengths(person, jointKey, target){
     .playback-comment { overflow: hidden; }
     .toolbar-actions .btn { flex: 0 0 auto; width: auto; max-width: 100%; }
     .menu-popup { width: min(100vw - 16px, 420px); max-width: min(100vw - 16px, 420px); }
-    .playback-dropdown > .menu-popup,
-    .preset-trigger-wrap > .menu-popup {
-      position: fixed !important;
-      left: 50% !important;
-      right: auto !important;
-      top: auto !important;
-      bottom: max(84px, calc(env(safe-area-inset-bottom) + 84px)) !important;
-      transform: translateX(-50%);
-      width: min(calc(100vw - 12px), 420px);
-      max-width: calc(100vw - 12px);
-      max-height: min(58dvh, 420px);
-      z-index: 40;
-    }
-    .preset-trigger-wrap > .preset-menu {
-      width: min(calc(100vw - 12px), 760px);
-      max-width: calc(100vw - 12px);
-    }
     :global(.preset-menu) { grid-template-columns: 1fr; min-width: 0; width: min(100vw - 16px, 760px); }
     :global(.playback-footer) { grid-template-columns: 1fr; }
     :global(.pf-controls) { flex-wrap: wrap; }
@@ -7801,8 +7712,11 @@ function clampToDragLengths(person, jointKey, target){
       bottom: 8px;
       padding: 6px 8px;
       width: min(calc(100vw - 12px), 1280px);
-      max-height: none;
-      overflow: visible;
+      max-height: calc(100dvh - 16px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
       gap: 6px;
     }
     .toolbar-layout { padding-inline: 2px; }
@@ -7821,8 +7735,7 @@ function clampToDragLengths(person, jointKey, target){
       bottom: 6px;
       padding: 5px 6px;
       width: min(calc(100vw - 8px), 1200px);
-      max-height: none;
-      overflow: visible;
+      max-height: calc(100dvh - 10px);
       border-radius: 12px;
       gap: 4px;
     }
@@ -7850,7 +7763,7 @@ function clampToDragLengths(person, jointKey, target){
   @media (max-width: 560px){
     .meta-label { display: none; }
     .preset-ui { gap: 6px; }
-    .preset-ui.bottom { left: 6px; right: 6px; transform: none; width: auto; padding: 6px; }
+    .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 12px); padding: 6px; }
     .toolbar-actions .btn { width: auto; justify-content: center; max-width: 100%; }
     .speed-track input { width: min(100%, 150px); }
     .preset-trigger { width: 100%; }
@@ -7863,58 +7776,8 @@ function clampToDragLengths(person, jointKey, target){
     .toolbar-field,
     .toolbar-field--name,
     .toolbar-frame { width: min(100%, 260px); max-width: min(100%, 260px); }
-    .input-with-icon.two-actions .input { padding-right: 82px; }
-    .toolbar-layout,
-    .row-left,
-    .row-right,
-    .preset-select-wrap,
-    .playback-dropdown { overflow: visible; }
-    .playback-dropdown .input-with-icon.playback-input-row {
-      display: flex !important;
-      flex-wrap: nowrap !important;
-      align-items: center;
-      gap: 4px;
-      overflow: hidden;
-    }
-    .playback-dropdown .input-with-icon.playback-input-row .input {
-      flex: 1 1 auto;
-      min-width: 0;
-      width: 0 !important;
-    }
-    .playback-dropdown .input-with-icon.playback-input-row .inline-action {
-      position: static !important;
-      right: auto;
-      top: auto;
-      transform: none;
-      margin-left: 0;
-      flex: 0 0 24px;
-    }
-    .playback-dropdown .input-with-icon {
-      width: 100%;
-      min-width: 0;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      overflow: hidden;
-    }
-    .playback-dropdown .input-with-icon .input {
-      flex: 1 1 auto;
-      min-width: 0;
-      width: 0;
-      padding-right: 8px;
-    }
-    .playback-dropdown .input-with-icon .inline-action {
-      position: static !important;
-      right: auto;
-      top: auto;
-      transform: none;
-      margin-left: 0;
-    }
-    .playback-dropdown .input-with-icon .inline-action + .inline-action {
-      margin-left: 2px;
-    }
+    .playback-dropdown .playback-name-field.input-with-icon.two-actions .input { padding-right: 70px; }
     .playback-comment { overflow: hidden; }
-    .playback-dropdown .input-with-icon.two-actions .input { padding-right: 8px; }
     .toolbar-row { gap: 3px; }
     .input-with-icon .input { width: 100%; max-width: 100%; }
     .mobile-undo-control { width: 100%; border-radius: 12px; }
