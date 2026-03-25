@@ -7718,6 +7718,7 @@ function clampToDragLengths(person, jointKey, target){
     width: min(calc(100vw - 20px), 760px);
     max-width: calc(100vw - 20px);
   }
+  .mirror-pose-btn { display: none; }
   .btn { padding: 5px 8px; font-size: 12px; }
   .input { font-size: 12px; }
 }
@@ -7800,11 +7801,8 @@ function clampToDragLengths(person, jointKey, target){
       bottom: 8px;
       padding: 6px 8px;
       width: min(calc(100vw - 12px), 1280px);
-      max-height: calc(100dvh - 16px);
-      overflow-y: auto;
-      overflow-x: hidden;
-      overscroll-behavior: contain;
-      -webkit-overflow-scrolling: touch;
+      max-height: none;
+      overflow: visible;
       gap: 6px;
     }
     .toolbar-layout { padding-inline: 2px; }
@@ -7823,7 +7821,8 @@ function clampToDragLengths(person, jointKey, target){
       bottom: 6px;
       padding: 5px 6px;
       width: min(calc(100vw - 8px), 1200px);
-      max-height: calc(100dvh - 10px);
+      max-height: none;
+      overflow: visible;
       border-radius: 12px;
       gap: 4px;
     }
