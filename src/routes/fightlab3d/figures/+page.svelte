@@ -7700,7 +7700,7 @@ function clampToDragLengths(person, jointKey, target){
   .input { font-size: 12px; }
 }
   @media (max-width: 720px){
-    .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 16px); overflow: visible; }
+    .preset-ui.bottom { left: 8px; right: 8px; transform: none; width: auto; overflow: visible; }
     .preset-ui.bottom,
     .toolbar-layout,
     .toolbar-row { box-sizing: border-box; }
@@ -7829,7 +7829,7 @@ function clampToDragLengths(person, jointKey, target){
   @media (max-width: 560px){
     .meta-label { display: none; }
     .preset-ui { gap: 6px; }
-    .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 12px); padding: 6px; }
+    .preset-ui.bottom { left: 6px; right: 6px; transform: none; width: auto; padding: 6px; }
     .toolbar-actions .btn { width: auto; justify-content: center; max-width: 100%; }
     .speed-track input { width: min(100%, 150px); }
     .preset-trigger { width: 100%; }
