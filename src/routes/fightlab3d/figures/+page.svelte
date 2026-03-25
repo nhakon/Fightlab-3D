@@ -7026,12 +7026,12 @@ function clampToDragLengths(person, jointKey, target){
           </div>
           <div class="row-right">
             <div class="playback-dropdown">
-            <div class="input-with-icon two-actions input-row playback-input-row">
+            <div class="playback-input-shell playback-input-row">
                 <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
-                <button class="inline-action save-action" on:click={saveCurrentPlayback} title="Save playback">
+                <button class="playback-row-action save-action" on:click={saveCurrentPlayback} title="Save playback">
                   <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
                 </button>
-                <button class="inline-action" style="right:36px;" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
+                <button class="playback-row-action" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
                   <svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
               </div>
@@ -7403,6 +7403,9 @@ function clampToDragLengths(person, jointKey, target){
   .playback-comment { min-width: 0; }
   .playback-comment .input { width: 100%; min-width: 0; box-sizing: border-box; }
   .playback-comment { overflow: hidden; }
+  .playback-input-shell { display:flex; align-items:center; gap:4px; width:min(100%, 260px); max-width:min(100%, 260px); box-sizing:border-box; min-width:0; overflow:hidden; }
+  .playback-input-shell .input { flex:1 1 auto; width:0; min-width:0; box-sizing:border-box; }
+  .playback-row-action { flex:0 0 24px; width:24px; height:24px; padding:0; border:0; background:transparent; cursor:pointer; color:#111; display:inline-flex; align-items:center; justify-content:center; border-radius:6px; }
   .inline-action { position:absolute; right:6px; top:50%; transform: translateY(-50%); width:24px; height:24px; padding:0; border:0; background:transparent; cursor:pointer; color:#111; display:inline-flex; align-items:center; justify-content:center; }
   .inline-action.small { width:22px; height:22px; }
   .inline-action.small .icon { width:16px; height:16px; }
@@ -7733,6 +7736,23 @@ function clampToDragLengths(person, jointKey, target){
     .playback-comment { overflow: hidden; }
     .toolbar-actions .btn { flex: 0 0 auto; width: auto; max-width: 100%; }
     .menu-popup { width: min(100vw - 16px, 420px); max-width: min(100vw - 16px, 420px); }
+    .playback-dropdown > .menu-popup,
+    .preset-trigger-wrap > .menu-popup {
+      position: fixed !important;
+      left: 50% !important;
+      right: auto !important;
+      top: auto !important;
+      bottom: max(84px, calc(env(safe-area-inset-bottom) + 84px)) !important;
+      transform: translateX(-50%);
+      width: min(calc(100vw - 12px), 420px);
+      max-width: calc(100vw - 12px);
+      max-height: min(58dvh, 420px);
+      z-index: 40;
+    }
+    .preset-trigger-wrap > .preset-menu {
+      width: min(calc(100vw - 12px), 760px);
+      max-width: calc(100vw - 12px);
+    }
     :global(.preset-menu) { grid-template-columns: 1fr; min-width: 0; width: min(100vw - 16px, 760px); }
     :global(.playback-footer) { grid-template-columns: 1fr; }
     :global(.pf-controls) { flex-wrap: wrap; }
