@@ -7641,7 +7641,7 @@ function clampToDragLengths(person, jointKey, target){
 }
 @media (max-width: 900px){
   .preset-ui { bottom: 10px; left: 10px; right: 10px; gap: 6px; padding: 6px 8px; }
-  .preset-ui.bottom { left: 50%; right: auto; transform: translateX(-50%); width: calc(100vw - 20px); }
+  .preset-ui.bottom { left: 10px; right: 10px; transform: none; width: auto; overflow: visible; }
   .expanded-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 8px; }
   .toolbar-frame,
   .toolbar-field,
@@ -7695,6 +7695,28 @@ function clampToDragLengths(person, jointKey, target){
   }
   .playback-dropdown .input-with-icon .inline-action + .inline-action {
     margin-left: 2px;
+  }
+  .toolbar-layout,
+  .row-left,
+  .row-right,
+  .preset-select-wrap,
+  .playback-dropdown { overflow: visible; }
+  .playback-dropdown > .menu-popup,
+  .preset-trigger-wrap > .menu-popup {
+    position: fixed !important;
+    left: 50% !important;
+    right: auto !important;
+    top: auto !important;
+    bottom: max(84px, calc(env(safe-area-inset-bottom) + 84px)) !important;
+    transform: translateX(-50%);
+    width: min(calc(100vw - 20px), 420px);
+    max-width: calc(100vw - 20px);
+    max-height: min(60dvh, 420px);
+    z-index: 40;
+  }
+  .preset-trigger-wrap > .preset-menu {
+    width: min(calc(100vw - 20px), 760px);
+    max-width: calc(100vw - 20px);
   }
   .btn { padding: 5px 8px; font-size: 12px; }
   .input { font-size: 12px; }
