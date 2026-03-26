@@ -6924,7 +6924,7 @@ function clampToDragLengths(person, jointKey, target){
     </div>
     {/if}
   </div>
-  <div class="preset-ui bottom" bind:this={toolbarEl}>
+  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu} bind:this={toolbarEl}>
       <div class="toolbar-layout expanded-grid">
         <div class="toolbar-row">
           <div class="row-left">
@@ -7346,6 +7346,12 @@ function clampToDragLengths(person, jointKey, target){
   /* Responsive toolbar */
   .preset-ui { backdrop-filter: saturate(180%) blur(10px); box-sizing: border-box; }
   .preset-ui.bottom { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); right: auto; z-index: 10; background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)); border:1px solid rgba(212,228,255,0.9); border-radius:14px; padding:10px 22px; box-shadow:0 10px 28px rgba(15, 23, 42, 0.12); display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; width: clamp(280px, calc(100vw - 80px), 1680px); justify-content: center; }
+  .preset-ui.bottom.toolbar-menu-open,
+  .preset-ui.bottom.toolbar-menu-open .toolbar-layout,
+  .preset-ui.bottom.toolbar-menu-open .row-left,
+  .preset-ui.bottom.toolbar-menu-open .row-right,
+  .preset-ui.bottom.toolbar-menu-open .preset-select-wrap,
+  .preset-ui.bottom.toolbar-menu-open .playback-dropdown { overflow: visible !important; }
   .toolbar-layout { width:100%; padding-inline: 4px; box-sizing: border-box; }
   .expanded-grid { display:grid; grid-template-columns: repeat(3, minmax(280px, 1fr)); grid-template-rows: repeat(2, auto); gap:4px 10px; align-items:start; justify-items:stretch; }
   .toolbar-row { display:contents; }
@@ -7656,23 +7662,6 @@ function clampToDragLengths(person, jointKey, target){
   .row-right,
   .preset-select-wrap,
   .playback-dropdown { overflow: visible; }
-  .playback-dropdown > .menu-popup,
-  .preset-trigger-wrap > .menu-popup {
-    position: fixed !important;
-    left: 50% !important;
-    right: auto !important;
-    top: auto !important;
-    bottom: max(84px, calc(env(safe-area-inset-bottom) + 84px)) !important;
-    transform: translateX(-50%);
-    width: min(calc(100vw - 20px), 420px);
-    max-width: calc(100vw - 20px);
-    max-height: min(60dvh, 420px);
-    z-index: 40;
-  }
-  .preset-trigger-wrap > .preset-menu {
-    width: min(calc(100vw - 20px), 760px);
-    max-width: calc(100vw - 20px);
-  }
   .playback-dropdown .playback-name-field.input-with-icon.two-actions .input { padding-right: 70px; }
   .btn { padding: 5px 8px; font-size: 12px; }
   .input { font-size: 12px; }
@@ -7714,23 +7703,6 @@ function clampToDragLengths(person, jointKey, target){
     .playback-comment { overflow: hidden; }
     .toolbar-actions .btn { flex: 0 0 auto; width: auto; max-width: 100%; }
     .menu-popup { width: min(100vw - 16px, 420px); max-width: min(100vw - 16px, 420px); }
-    .playback-dropdown > .menu-popup,
-    .preset-trigger-wrap > .menu-popup {
-      position: fixed !important;
-      left: 50% !important;
-      right: auto !important;
-      top: auto !important;
-      bottom: max(84px, calc(env(safe-area-inset-bottom) + 84px)) !important;
-      transform: translateX(-50%);
-      width: min(calc(100vw - 12px), 420px);
-      max-width: calc(100vw - 12px);
-      max-height: min(58dvh, 420px);
-      z-index: 40;
-    }
-    .preset-trigger-wrap > .preset-menu {
-      width: min(calc(100vw - 12px), 760px);
-      max-width: calc(100vw - 12px);
-    }
     :global(.preset-menu) { grid-template-columns: 1fr; min-width: 0; width: min(100vw - 16px, 760px); }
     :global(.playback-footer) { grid-template-columns: 1fr; }
     :global(.pf-controls) { flex-wrap: wrap; }
@@ -7766,6 +7738,10 @@ function clampToDragLengths(person, jointKey, target){
       -webkit-overflow-scrolling: touch;
       gap: 6px;
     }
+    .preset-ui.bottom.toolbar-menu-open {
+      overflow: visible !important;
+      max-height: calc(100dvh - 16px);
+    }
     .toolbar-layout { padding-inline: 2px; }
     .expanded-grid { gap: 4px 8px; }
     .row-left, .row-center, .row-right { gap: 6px; }
@@ -7788,6 +7764,10 @@ function clampToDragLengths(person, jointKey, target){
       max-height: calc(100dvh - 10px);
       border-radius: 12px;
       gap: 4px;
+    }
+    .preset-ui.bottom.toolbar-menu-open {
+      overflow: visible !important;
+      max-height: calc(100dvh - 10px);
     }
     .expanded-grid { gap: 3px 6px; }
     .row-left, .row-center, .row-right { gap: 4px; }
