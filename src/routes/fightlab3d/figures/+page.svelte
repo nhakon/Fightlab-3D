@@ -7803,12 +7803,7 @@ function clampToDragLengths(person, jointKey, target){
     .row-right { width: min(100%, 220px); max-width: min(100%, 220px); }
   }
   @media (max-width: 900px) and (orientation: portrait){
-    .orientation-lock { display: flex; }
-    .figures-wrapper,
-    .preset-ui,
-    .account-anchor,
-    .editing-bar { display: none !important; }
-    :global(.menu-popup) { display: none !important; }
+    .orientation-lock { display: none; }
   }
   @media (max-width: 560px){
     .meta-label { display: none; }
