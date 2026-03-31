@@ -24,6 +24,8 @@
   let camFront = null, camSide = null, camTop = null; // orthographic cameras
   let dragCamera = null; // camera used when a drag starts (per-view)
   let dragView = 'persp';
+  let mobileViewportBottomInset = 0;
+  let toolbarResizeObserver = null;
   // Ortho view state (pan centers and zoom)
   let frontCenter = new THREE.Vector3(0, 0.9, 0);
   let sideCenter = new THREE.Vector3(0, 0.9, 0);
@@ -685,6 +687,26 @@ function isLocked(person, key){
       side:  { dom: { x: 0,  y: hh, w: hw, h: hAvail - hh },   gl: { x: 0,  y: gap,     w: hw,   h: hAvail - hh } },  // bottom-left
       top:   { dom: { x: hw, y: hh, w: w-hw, h: hAvail - hh }, gl: { x: hw, y: gap,     w: w-hw, h: hAvail - hh } }   // bottom-right
     };
+  }
+  function isPortraitMobileViewport(){
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(max-width: 900px) and (orientation: portrait)').matches
+      && window.matchMedia('(pointer: coarse)').matches;
+  }
+  function getRenderViewportSize(){
+    const width = (typeof window !== 'undefined') ? Math.max(1, window.innerWidth) : 1;
+    const height = (typeof window !== 'undefined') ? Math.max(1, window.innerHeight - mobileViewportBottomInset) : 1;
+    return { width, height };
+  }
+  function updateMobileViewportInset(){
+    if (typeof window === 'undefined'){
+      mobileViewportBottomInset = 0;
+      return;
+    }
+    const toolbarHeight = toolbarEl?.offsetHeight || 0;
+    mobileViewportBottomInset = isPortraitMobileViewport()
+      ? Math.max(0, toolbarHeight + 8)
+      : 0;
   }
   function viewAtEvent(event){
     if (!fourViewMode) return 'persp';
@@ -3716,7 +3738,9 @@ function clampToDragLengths(person, jointKey, target){
       camera.position.set(2, 1.6, 3);
       renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
       renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      updateMobileViewportInset();
+      const viewportSize = getRenderViewportSize();
+      renderer.setSize(viewportSize.width, viewportSize.height, false);
       try{
         if (renderer.outputColorSpace !== undefined && THREE.SRGBColorSpace) {
           renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -3807,6 +3831,13 @@ function clampToDragLengths(person, jointKey, target){
         console.error('Fightlab 3D pointer setup failed.', error);
       }
       window.addEventListener('resize', onResize);
+      try{ window.visualViewport?.addEventListener('resize', onResize); }catch(e){}
+      try{
+        if (typeof ResizeObserver !== 'undefined'){
+          toolbarResizeObserver = new ResizeObserver(() => onResize());
+          if (toolbarEl) toolbarResizeObserver.observe(toolbarEl);
+        }
+      }catch(e){}
       // Intercept wheel for ortho zoom when in 4-view
       renderer.domElement.addEventListener('wheel', wheelHandler, { passive: false });
       // Key listeners
@@ -3846,7 +3877,15 @@ function clampToDragLengths(person, jointKey, target){
       };
       window.addEventListener('pointerdown', handleGlobalPointer, true);
       // Pointer lock disabled to keep OS cursor visible while dragging
-      onDestroy(()=>{ window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); window.removeEventListener('pointerdown', handleGlobalPointer, true); });
+      onDestroy(()=>{
+        window.removeEventListener('resize', onResize);
+        window.removeEventListener('keydown', kd);
+        window.removeEventListener('keyup', ku);
+        window.removeEventListener('pointerdown', handleGlobalPointer, true);
+        try{ window.visualViewport?.removeEventListener('resize', onResize); }catch(e){}
+        try{ toolbarResizeObserver?.disconnect(); }catch(e){}
+        toolbarResizeObserver = null;
+      });
 
       // Build live GUI pose editor
       if (ENABLE_LIL_GUI){
@@ -3886,9 +3925,11 @@ function clampToDragLengths(person, jointKey, target){
 
   function onResize(){
     if (!renderer) return;
-    camera.aspect = window.innerWidth / window.innerHeight;
+    updateMobileViewportInset();
+    const viewportSize = getRenderViewportSize();
+    camera.aspect = viewportSize.width / viewportSize.height;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(viewportSize.width, viewportSize.height, false);
     setOrthoFrustums();
   }
 
@@ -7305,9 +7346,12 @@ function clampToDragLengths(person, jointKey, target){
       <button class="btn" on:click={cancelPresetEdit}>Cancel</button>
     </div>
   {/if}
-<div class="figures-wrapper" style={`display:${showFigures ? 'block' : 'none'}`}>
+<div
+  class="figures-wrapper"
+  style={`display:${showFigures ? 'block' : 'none'}; --mobile-toolbar-inset:${mobileViewportBottomInset}px;`}
+>
   <div id="figures"></div>
-  <canvas bind:this={canvas} style="width:100vw; height:100dvh; min-height:100svh; display:block; position:relative; z-index:1; background:transparent;"></canvas>
+  <canvas bind:this={canvas} class="figures-canvas"></canvas>
 
   {#if commentVisible && !showSavedPlaybacksMenu}
     <div class="comment-box" bind:this={commentEl} role="note" aria-live="polite" style="left: {commentPos.left}px; top: {commentPos.top}px;">
@@ -7351,6 +7395,21 @@ function clampToDragLengths(person, jointKey, target){
     padding: 0;
     background: radial-gradient(circle at 50% 30%, #e0e7ff 0%, #f8fafc 60%, #ffffff 100%);
     overscroll-behavior: none;
+  }
+  .figures-wrapper {
+    position: relative;
+    width: 100vw;
+    height: 100dvh;
+    min-height: 100svh;
+  }
+  .figures-canvas {
+    width: 100vw;
+    height: 100dvh;
+    min-height: 100svh;
+    display: block;
+    position: relative;
+    z-index: 1;
+    background: transparent;
   }
   :global(.lil-gui) {
     position: absolute;
@@ -7846,6 +7905,15 @@ function clampToDragLengths(person, jointKey, target){
   }
   @media (max-width: 900px) and (orientation: portrait){
     .orientation-lock { display: none; }
+    .figures-wrapper {
+      height: calc(100dvh - var(--mobile-toolbar-inset, 0px));
+      min-height: calc(100svh - var(--mobile-toolbar-inset, 0px));
+      overflow: hidden;
+    }
+    .figures-canvas {
+      height: calc(100dvh - var(--mobile-toolbar-inset, 0px));
+      min-height: calc(100svh - var(--mobile-toolbar-inset, 0px));
+    }
     .preset-ui.bottom {
       left: 6px;
       right: 6px;
@@ -7915,7 +7983,7 @@ function clampToDragLengths(person, jointKey, target){
     .playback-comment { overflow: hidden; }
     .toolbar-row { gap: 3px; }
     .input-with-icon .input { width: 100%; max-width: 100%; }
-    .mobile-undo-control { width: 100%; border-radius: 12px; }
+    .mobile-undo-control { width: 34px; min-width: 34px; padding: 0; border-radius: 9999px; }
     .playback-comment .input { width: 100%; }
   }
   @media (max-width: 520px){
