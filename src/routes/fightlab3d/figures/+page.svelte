@@ -5544,6 +5544,15 @@ function clampToDragLengths(person, jointKey, target){
     const isTouchPointer = event.pointerType === 'touch';
     const hadOtherTouch = isTouchPointer && activeTouchPointers.size > 0 && !activeTouchPointers.has(event.pointerId);
     if (isTouchPointer) activeTouchPointers.add(event.pointerId);
+    if (isTouchPointer && activeTouchPointers.size > 1 && !dragging && !upperDrag.active && !lowerHandleDrag.active){
+      touchCtrlDragging = false;
+      ctrlDragging = false;
+      shiftDragging = false;
+      touchOrbitDrag.active = false;
+      orbitEnabled = true;
+      controls.enabled = true;
+      return;
+    }
     touchCtrlDragging = hadOtherTouch;
     const isCtrlLike = !!(event.ctrlKey || event.metaKey || touchCtrlDragging);
     const ctrlShift = !!(event.shiftKey && isCtrlLike);
@@ -6176,7 +6185,7 @@ function clampToDragLengths(person, jointKey, target){
     const rect = el.getBoundingClientRect();
     const view = viewAtEvent(event);
     if (event.pointerType === 'touch'){
-      touchCtrlDragging = activeTouchPointers.size > 1;
+      touchCtrlDragging = activeTouchPointers.size > 1 && !!(dragging || upperDrag.active || lowerHandleDrag.active);
     }
     const keyboardCtrlLike = !!(event.ctrlKey || event.metaKey);
     ctrlDragging = !!(keyboardCtrlLike || touchCtrlDragging);
@@ -6528,7 +6537,7 @@ function clampToDragLengths(person, jointKey, target){
     try{ if (renderer?.domElement?.releasePointerCapture) renderer.domElement.releasePointerCapture(event.pointerId); }catch(e){}
     if (event?.pointerType === 'touch' && event?.pointerId != null){
       activeTouchPointers.delete(event.pointerId);
-      touchCtrlDragging = activeTouchPointers.size > 1;
+      touchCtrlDragging = activeTouchPointers.size > 1 && !!(dragging || upperDrag.active || lowerHandleDrag.active);
     }
     if (touchOrbitDrag.pointerId != null && event?.pointerId === touchOrbitDrag.pointerId){
       touchOrbitDrag = { active: false, pointerId: null, lastX: 0, lastY: 0 };
@@ -7499,7 +7508,7 @@ function clampToDragLengths(person, jointKey, target){
   .mobile-only-control { display: none; }
   .mobile-undo-control { color:#1f2937; background: transparent; border-color: #cbd5e1; }
   .mobile-undo-control:hover { background: #f3f4f6; color:#1f2937; }
-  .mobile-undo-symbol { font-size: 18px; line-height: 1; font-family: "Segoe UI Symbol", Arial, sans-serif; transform: translateX(-2px); }
+  .mobile-undo-symbol { display:flex; align-items:center; justify-content:center; width:100%; height:100%; font-size: 18px; line-height: 1; font-family: "Segoe UI Symbol", Arial, sans-serif; transform: none; }
   .input-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .shortcut-toggle {
     width: 100%;
@@ -7837,6 +7846,54 @@ function clampToDragLengths(person, jointKey, target){
   }
   @media (max-width: 900px) and (orientation: portrait){
     .orientation-lock { display: none; }
+    .preset-ui.bottom {
+      left: 6px;
+      right: 6px;
+      transform: none;
+      width: auto;
+      max-height: calc(100dvh - 12px);
+      padding: 6px;
+      gap: 6px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .expanded-grid { grid-template-columns: 1fr; gap: 6px; }
+    .row-left, .row-center, .row-right {
+      width: 100%;
+      justify-content: stretch;
+      gap: 6px;
+      padding-inline: 0;
+    }
+    .row-left > *, .row-center > *, .row-right > * {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .controls-row,
+    .controls-row--expanded,
+    .toolbar-actions {
+      width: 100%;
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      overflow: visible;
+    }
+    .playback-dropdown,
+    .row-right > .playback-dropdown,
+    .row-right,
+    .preset-select-wrap.with-actions,
+    .playback-input-row,
+    .playback-comment.playback-input-row,
+    .toolbar-field,
+    .toolbar-field--name,
+    .toolbar-frame {
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+    .mobile-undo-control {
+      width: 36px;
+      min-width: 36px;
+      border-radius: 9999px;
+    }
   }
   @media (max-width: 560px){
     .meta-label { display: none; }
