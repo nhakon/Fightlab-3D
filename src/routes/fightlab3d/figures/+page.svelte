@@ -7298,7 +7298,7 @@ function clampToDragLengths(person, jointKey, target){
   {/if}
 <div class="figures-wrapper" style={`display:${showFigures ? 'block' : 'none'}`}>
   <div id="figures"></div>
-  <canvas bind:this={canvas} style="width:100vw; height:100vh; display:block; position:relative; z-index:1; background:transparent;"></canvas>
+  <canvas bind:this={canvas} style="width:100vw; height:100dvh; min-height:100svh; display:block; position:relative; z-index:1; background:transparent;"></canvas>
 
   {#if commentVisible && !showSavedPlaybacksMenu}
     <div class="comment-box" bind:this={commentEl} role="note" aria-live="polite" style="left: {commentPos.left}px; top: {commentPos.top}px;">
@@ -7332,10 +7332,16 @@ function clampToDragLengths(person, jointKey, target){
 </div>
 
 <style>
+  :global(html) {
+    height: 100%;
+    background: radial-gradient(circle at 50% 30%, #e0e7ff 0%, #f8fafc 60%, #ffffff 100%);
+  }
   :global(body) {
+    min-height: 100dvh;
     margin: 0;
     padding: 0;
     background: radial-gradient(circle at 50% 30%, #e0e7ff 0%, #f8fafc 60%, #ffffff 100%);
+    overscroll-behavior: none;
   }
   :global(.lil-gui) {
     position: absolute;
@@ -7752,6 +7758,53 @@ function clampToDragLengths(person, jointKey, target){
     .icon-btn { width: 34px; height: 34px; }
     .input { padding: 5px 7px; font-size: 12px; }
     .preset-trigger { padding: 5px 38px 5px 8px; font-size: 12px; }
+  }
+  @media (pointer: coarse) and (orientation: landscape){
+    .account-anchor { top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); }
+    .account-btn { padding: 4px 8px; min-height: 32px; }
+    .account-label { display: none; }
+    .preset-ui.bottom {
+      bottom: max(6px, env(safe-area-inset-bottom));
+      left: max(6px, env(safe-area-inset-left));
+      right: max(6px, env(safe-area-inset-right));
+      width: auto;
+      max-width: none;
+      padding: 5px 8px;
+      gap: 6px;
+      border-radius: 12px;
+    }
+    .expanded-grid { gap: 3px 6px; }
+    .row-left, .row-center, .row-right { gap: 4px; }
+    .toolbar-actions { gap: 4px; }
+    .controls-row { gap: 4px; }
+    .btn { padding: 5px 8px; font-size: 12px; min-height: 32px; }
+    .icon-btn { width: 34px; height: 34px; }
+    .input { padding: 5px 7px; font-size: 12px; }
+    .preset-trigger { padding: 5px 38px 5px 8px; font-size: 12px; }
+  }
+  @media (pointer: coarse) and (orientation: landscape) and (max-height: 500px){
+    .preset-ui.bottom {
+      bottom: max(4px, env(safe-area-inset-bottom));
+      left: max(4px, env(safe-area-inset-left));
+      right: max(4px, env(safe-area-inset-right));
+      padding: 4px 6px;
+      gap: 4px;
+      max-height: calc(100dvh - 8px);
+    }
+    .expanded-grid { gap: 2px 5px; }
+    .row-left, .row-center, .row-right { gap: 3px; }
+    .toolbar-actions { gap: 3px; }
+    .controls-row { gap: 3px; }
+    .btn { padding: 4px 7px; font-size: 11px; min-height: 28px; }
+    .icon-btn { width: 30px; height: 30px; }
+    .input { padding: 4px 6px; font-size: 11px; }
+    .toolbar-frame,
+    .toolbar-field,
+    .toolbar-field--name,
+    .playback-input-row { max-width: min(100%, 200px); width: min(100%, 200px); }
+    .playback-dropdown,
+    .row-right > .playback-dropdown,
+    .row-right { width: min(100%, 200px); max-width: min(100%, 200px); }
   }
   @media (pointer: coarse) and (max-height: 620px){
     .preset-ui.bottom {
