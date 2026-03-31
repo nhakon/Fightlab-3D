@@ -25,6 +25,7 @@
   let dragCamera = null; // camera used when a drag starts (per-view)
   let dragView = 'persp';
   let mobileViewportBottomInset = 0;
+  let mobileViewportLeftInset = 0;
   let toolbarResizeObserver = null;
   // Ortho view state (pan centers and zoom)
   let frontCenter = new THREE.Vector3(0, 0.9, 0);
@@ -697,19 +698,25 @@ function isLocked(person, key){
     return window.matchMedia('(pointer: coarse) and (orientation: landscape) and (max-width: 960px)').matches;
   }
   function getRenderViewportSize(){
-    const width = (typeof window !== 'undefined') ? Math.max(1, window.innerWidth) : 1;
+    const width = (typeof window !== 'undefined') ? Math.max(1, window.innerWidth - mobileViewportLeftInset) : 1;
     const height = (typeof window !== 'undefined') ? Math.max(1, window.innerHeight - mobileViewportBottomInset) : 1;
     return { width, height };
   }
   function updateMobileViewportInset(){
     if (typeof window === 'undefined'){
       mobileViewportBottomInset = 0;
+      mobileViewportLeftInset = 0;
       return;
     }
     if (isLandscapeSideRailViewport()){
+      const toolbarRight = toolbarEl?.getBoundingClientRect?.().right;
+      mobileViewportLeftInset = Number.isFinite(toolbarRight)
+        ? Math.max(0, toolbarRight + 8)
+        : 0;
       mobileViewportBottomInset = 0;
       return;
     }
+    mobileViewportLeftInset = 0;
     const toolbarTop = toolbarEl?.getBoundingClientRect?.().top;
     mobileViewportBottomInset = (isMobileViewport() && Number.isFinite(toolbarTop))
       ? Math.max(0, window.innerHeight - toolbarTop)
@@ -7355,7 +7362,7 @@ function clampToDragLengths(person, jointKey, target){
   {/if}
 <div
   class="figures-wrapper"
-  style={`display:${showFigures ? 'block' : 'none'}; --mobile-toolbar-inset:${mobileViewportBottomInset}px;`}
+  style={`display:${showFigures ? 'block' : 'none'}; --mobile-toolbar-inset:${mobileViewportBottomInset}px; --mobile-toolbar-left-inset:${mobileViewportLeftInset}px;`}
 >
   <div id="figures"></div>
   <canvas bind:this={canvas} class="figures-canvas"></canvas>
@@ -7858,13 +7865,20 @@ function clampToDragLengths(person, jointKey, target){
     .preset-trigger { padding: 5px 38px 5px 8px; font-size: 12px; }
   }
   @media (pointer: coarse) and (orientation: landscape) and (max-width: 960px){
+    .figures-wrapper {
+      margin-left: var(--mobile-toolbar-left-inset, 0px);
+      width: calc(100vw - var(--mobile-toolbar-left-inset, 0px));
+    }
+    .figures-canvas {
+      width: calc(100vw - var(--mobile-toolbar-left-inset, 0px));
+    }
     .preset-ui.bottom {
       top: max(46px, calc(env(safe-area-inset-top) + 40px)) !important;
       bottom: auto !important;
       left: max(6px, env(safe-area-inset-left)) !important;
       right: auto !important;
-      width: min(190px, calc(100vw - 18px)) !important;
-      max-width: min(190px, calc(100vw - 18px)) !important;
+      width: min(206px, calc(100vw - 18px)) !important;
+      max-width: min(206px, calc(100vw - 18px)) !important;
       max-height: calc(100dvh - 12px) !important;
       padding: 6px !important;
       background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)) !important;
