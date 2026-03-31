@@ -7859,12 +7859,12 @@ function clampToDragLengths(person, jointKey, target){
   }
   @media (pointer: coarse) and (orientation: landscape) and (max-width: 960px){
     .preset-ui.bottom {
-      top: max(6px, env(safe-area-inset-top)) !important;
+      top: max(46px, calc(env(safe-area-inset-top) + 40px)) !important;
       bottom: auto !important;
       left: max(6px, env(safe-area-inset-left)) !important;
       right: auto !important;
-      width: min(170px, calc(100vw - 18px)) !important;
-      max-width: min(170px, calc(100vw - 18px)) !important;
+      width: min(190px, calc(100vw - 18px)) !important;
+      max-width: min(190px, calc(100vw - 18px)) !important;
       max-height: calc(100dvh - 12px) !important;
       padding: 6px !important;
       background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)) !important;
@@ -7895,9 +7895,8 @@ function clampToDragLengths(person, jointKey, target){
       pointer-events: auto !important;
     }
     .toolbar-row {
-      display: flex !important;
-      flex-direction: column !important;
-      gap: 6px;
+      display: contents !important;
+      gap: 0;
     }
     .row-left,
     .row-center,
@@ -7917,6 +7916,12 @@ function clampToDragLengths(person, jointKey, target){
       justify-content: flex-start;
       gap: 6px;
     }
+    .toolbar-row:nth-of-type(1) .row-left { order: 1; }
+    .toolbar-row:nth-of-type(1) .row-center { order: 2; }
+    .toolbar-row:nth-of-type(2) .row-left { order: 3; }
+    .toolbar-row:nth-of-type(2) .row-center { order: 4; }
+    .toolbar-row:nth-of-type(1) .row-right { order: 5; }
+    .toolbar-row:nth-of-type(2) .row-right { order: 6; }
     .row-left > *,
     .row-center > *,
     .row-right > * {
@@ -7961,6 +7966,7 @@ function clampToDragLengths(person, jointKey, target){
       min-height: 30px;
       padding: 5px 7px;
       font-size: 11px;
+      white-space: normal;
     }
     .icon-btn {
       width: 30px;
