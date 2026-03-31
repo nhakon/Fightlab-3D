@@ -692,6 +692,10 @@ function isLocked(person, key){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
     return window.matchMedia('(pointer: coarse)').matches;
   }
+  function isLandscapeSideRailViewport(){
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(pointer: coarse) and (orientation: landscape) and (max-width: 960px)').matches;
+  }
   function getRenderViewportSize(){
     const width = (typeof window !== 'undefined') ? Math.max(1, window.innerWidth) : 1;
     const height = (typeof window !== 'undefined') ? Math.max(1, window.innerHeight - mobileViewportBottomInset) : 1;
@@ -699,6 +703,10 @@ function isLocked(person, key){
   }
   function updateMobileViewportInset(){
     if (typeof window === 'undefined'){
+      mobileViewportBottomInset = 0;
+      return;
+    }
+    if (isLandscapeSideRailViewport()){
       mobileViewportBottomInset = 0;
       return;
     }
@@ -7848,6 +7856,169 @@ function clampToDragLengths(person, jointKey, target){
     .icon-btn { width: 34px; height: 34px; }
     .input { padding: 5px 7px; font-size: 12px; }
     .preset-trigger { padding: 5px 38px 5px 8px; font-size: 12px; }
+  }
+  @media (pointer: coarse) and (orientation: landscape) and (max-width: 960px){
+    .preset-ui.bottom {
+      top: max(6px, env(safe-area-inset-top)) !important;
+      bottom: max(6px, env(safe-area-inset-bottom)) !important;
+      left: max(6px, env(safe-area-inset-left)) !important;
+      right: max(6px, env(safe-area-inset-right)) !important;
+      width: auto !important;
+      max-width: none !important;
+      max-height: none !important;
+      padding: 0 !important;
+      background: transparent !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      pointer-events: none !important;
+      display: block !important;
+      overflow: visible !important;
+    }
+    .preset-ui.bottom.toolbar-menu-open,
+    .preset-ui.bottom.toolbar-menu-open .toolbar-layout,
+    .preset-ui.bottom.toolbar-menu-open .row-left,
+    .preset-ui.bottom.toolbar-menu-open .row-center,
+    .preset-ui.bottom.toolbar-menu-open .row-right,
+    .preset-ui.bottom.toolbar-menu-open .preset-select-wrap,
+    .preset-ui.bottom.toolbar-menu-open .playback-dropdown {
+      overflow: visible !important;
+    }
+    .toolbar-layout.expanded-grid {
+      height: 100% !important;
+      padding: 0 !important;
+      display: grid !important;
+      grid-template-columns: minmax(148px, 22vw) minmax(180px, auto) minmax(148px, 22vw) !important;
+      grid-template-rows: auto auto 1fr !important;
+      grid-template-areas:
+        "left-top center-top right-top"
+        "left-bottom center-bottom right-bottom"
+        ". . ." !important;
+      align-items: start !important;
+      justify-items: stretch !important;
+      column-gap: 8px !important;
+      row-gap: 8px !important;
+      pointer-events: none !important;
+    }
+    .toolbar-row { display: contents; }
+    .toolbar-row:nth-of-type(1) .row-left { grid-area: left-top; }
+    .toolbar-row:nth-of-type(2) .row-left { grid-area: left-bottom; }
+    .toolbar-row:nth-of-type(1) .row-center { grid-area: center-top; }
+    .toolbar-row:nth-of-type(2) .row-center { grid-area: center-bottom; }
+    .toolbar-row:nth-of-type(1) .row-right { grid-area: right-top; }
+    .toolbar-row:nth-of-type(2) .row-right { grid-area: right-bottom; }
+    .row-left,
+    .row-center,
+    .row-right {
+      width: 100% !important;
+      max-width: 100% !important;
+      min-width: 0;
+      pointer-events: auto !important;
+      align-self: start !important;
+    }
+    .row-left,
+    .row-right {
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      gap: 8px;
+    }
+    .row-left > *,
+    .row-right > * {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+    }
+    .row-center {
+      justify-content: center;
+      gap: 6px;
+      flex-direction: column;
+      align-items: center;
+    }
+    .row-center > * {
+      width: auto;
+      max-width: 100%;
+    }
+    .toolbar-actions,
+    .controls-row,
+    .controls-row--expanded {
+      width: 100%;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .row-left .toolbar-actions {
+      align-items: stretch;
+    }
+    .row-left .toolbar-actions .btn {
+      width: 100%;
+      justify-content: center;
+    }
+    .row-center .controls-row,
+    .row-center .controls-row--expanded {
+      width: fit-content;
+      max-width: 100%;
+      padding: 5px 8px;
+      border-radius: 14px;
+      background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88));
+      border: 1px solid rgba(212,228,255,0.9);
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+      backdrop-filter: saturate(180%) blur(10px);
+    }
+    .playback-dropdown,
+    .row-right > .playback-dropdown,
+    .row-right {
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+    .playback-input-row,
+    .playback-comment.playback-input-row,
+    .toolbar-field,
+    .toolbar-field--name {
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+    .preset-select-wrap.with-actions,
+    .preset-trigger-wrap,
+    .preset-trigger {
+      width: 100%;
+      max-width: 100%;
+    }
+    .menu-popup {
+      max-height: min(78dvh, 320px);
+    }
+    .preset-menu {
+      left: calc(100% + 8px) !important;
+      right: auto !important;
+      top: 0 !important;
+      bottom: auto !important;
+      min-width: min(420px, calc(100vw - 180px));
+      width: min(520px, calc(100vw - 180px));
+      max-width: calc(100vw - 180px);
+    }
+    .playback-dropdown .menu-popup {
+      right: calc(100% + 8px);
+      left: auto;
+      top: 0;
+      bottom: auto;
+      width: min(420px, calc(100vw - 180px));
+      max-width: calc(100vw - 180px);
+    }
+    .playback-comment-row {
+      justify-content: stretch;
+    }
+    .playback-comment-row .playback-comment {
+      width: 100%;
+    }
+    .counter {
+      margin-left: 0;
+    }
+    :global(body.dark-mode) .row-center .controls-row,
+    :global(body.dark-mode) .row-center .controls-row--expanded {
+      background: linear-gradient(150deg, rgba(15,23,42,0.94), rgba(9,12,23,0.9));
+      border-color: rgba(59,73,102,0.8);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.4);
+    }
   }
   @media (pointer: coarse) and (orientation: landscape) and (max-height: 500px){
     .preset-ui.bottom {
