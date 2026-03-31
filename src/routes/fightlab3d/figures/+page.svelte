@@ -688,10 +688,9 @@ function isLocked(person, key){
       top:   { dom: { x: hw, y: hh, w: w-hw, h: hAvail - hh }, gl: { x: hw, y: gap,     w: w-hw, h: hAvail - hh } }   // bottom-right
     };
   }
-  function isPortraitMobileViewport(){
+  function isMobileViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
-    return window.matchMedia('(max-width: 900px) and (orientation: portrait)').matches
-      && window.matchMedia('(pointer: coarse)').matches;
+    return window.matchMedia('(pointer: coarse)').matches;
   }
   function getRenderViewportSize(){
     const width = (typeof window !== 'undefined') ? Math.max(1, window.innerWidth) : 1;
@@ -703,9 +702,9 @@ function isLocked(person, key){
       mobileViewportBottomInset = 0;
       return;
     }
-    const toolbarHeight = toolbarEl?.offsetHeight || 0;
-    mobileViewportBottomInset = isPortraitMobileViewport()
-      ? Math.max(0, toolbarHeight + 8)
+    const toolbarTop = toolbarEl?.getBoundingClientRect?.().top;
+    mobileViewportBottomInset = (isMobileViewport() && Number.isFinite(toolbarTop))
+      ? Math.max(0, window.innerHeight - toolbarTop)
       : 0;
   }
   function viewAtEvent(event){
@@ -7903,8 +7902,7 @@ function clampToDragLengths(person, jointKey, target){
     .row-right > .playback-dropdown,
     .row-right { width: min(100%, 220px); max-width: min(100%, 220px); }
   }
-  @media (max-width: 900px) and (orientation: portrait){
-    .orientation-lock { display: none; }
+  @media (pointer: coarse){
     .figures-wrapper {
       height: calc(100dvh - var(--mobile-toolbar-inset, 0px));
       min-height: calc(100svh - var(--mobile-toolbar-inset, 0px));
@@ -7914,6 +7912,9 @@ function clampToDragLengths(person, jointKey, target){
       height: calc(100dvh - var(--mobile-toolbar-inset, 0px));
       min-height: calc(100svh - var(--mobile-toolbar-inset, 0px));
     }
+  }
+  @media (max-width: 900px) and (orientation: portrait){
+    .orientation-lock { display: none; }
     .preset-ui.bottom {
       left: 6px;
       right: 6px;
