@@ -7860,18 +7860,18 @@ function clampToDragLengths(person, jointKey, target){
   @media (pointer: coarse) and (orientation: landscape) and (max-width: 960px){
     .preset-ui.bottom {
       top: max(6px, env(safe-area-inset-top)) !important;
-      bottom: max(6px, env(safe-area-inset-bottom)) !important;
+      bottom: auto !important;
       left: max(6px, env(safe-area-inset-left)) !important;
-      right: max(6px, env(safe-area-inset-right)) !important;
-      width: auto !important;
-      max-width: none !important;
-      max-height: none !important;
-      padding: 0 !important;
-      background: transparent !important;
-      border: 0 !important;
-      border-radius: 0 !important;
-      box-shadow: none !important;
-      pointer-events: none !important;
+      right: auto !important;
+      width: min(170px, calc(100vw - 18px)) !important;
+      max-width: min(170px, calc(100vw - 18px)) !important;
+      max-height: calc(100dvh - 12px) !important;
+      padding: 6px !important;
+      background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)) !important;
+      border: 1px solid rgba(212,228,255,0.9) !important;
+      border-radius: 12px !important;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12) !important;
+      pointer-events: auto !important;
       display: block !important;
       overflow: visible !important;
     }
@@ -7885,28 +7885,20 @@ function clampToDragLengths(person, jointKey, target){
       overflow: visible !important;
     }
     .toolbar-layout.expanded-grid {
-      height: 100% !important;
+      height: auto !important;
       padding: 0 !important;
-      display: grid !important;
-      grid-template-columns: minmax(148px, 22vw) minmax(180px, auto) minmax(148px, 22vw) !important;
-      grid-template-rows: auto auto 1fr !important;
-      grid-template-areas:
-        "left-top center-top right-top"
-        "left-bottom center-bottom right-bottom"
-        ". . ." !important;
-      align-items: start !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 6px !important;
+      align-items: stretch !important;
       justify-items: stretch !important;
-      column-gap: 8px !important;
-      row-gap: 8px !important;
-      pointer-events: none !important;
+      pointer-events: auto !important;
     }
-    .toolbar-row { display: contents; }
-    .toolbar-row:nth-of-type(1) .row-left { grid-area: left-top; }
-    .toolbar-row:nth-of-type(2) .row-left { grid-area: left-bottom; }
-    .toolbar-row:nth-of-type(1) .row-center { grid-area: center-top; }
-    .toolbar-row:nth-of-type(2) .row-center { grid-area: center-bottom; }
-    .toolbar-row:nth-of-type(1) .row-right { grid-area: right-top; }
-    .toolbar-row:nth-of-type(2) .row-right { grid-area: right-bottom; }
+    .toolbar-row {
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 6px;
+    }
     .row-left,
     .row-center,
     .row-right {
@@ -7915,55 +7907,36 @@ function clampToDragLengths(person, jointKey, target){
       min-width: 0;
       pointer-events: auto !important;
       align-self: start !important;
+      justify-content: stretch !important;
     }
     .row-left,
+    .row-center,
     .row-right {
       flex-direction: column;
       align-items: stretch;
       justify-content: flex-start;
-      gap: 8px;
+      gap: 6px;
     }
     .row-left > *,
+    .row-center > *,
     .row-right > * {
       width: 100%;
       max-width: 100%;
       min-width: 0;
     }
-    .row-center {
-      justify-content: center;
-      gap: 6px;
-      flex-direction: column;
-      align-items: center;
-    }
-    .row-center > * {
-      width: auto;
-      max-width: 100%;
-    }
     .toolbar-actions,
     .controls-row,
     .controls-row--expanded {
       width: 100%;
-      justify-content: center;
+      justify-content: flex-start;
       flex-wrap: wrap;
       gap: 6px;
     }
-    .row-left .toolbar-actions {
-      align-items: stretch;
-    }
-    .row-left .toolbar-actions .btn {
+    .toolbar-actions .btn,
+    .row-left .toolbar-actions .btn,
+    .row-right .toolbar-actions .btn {
       width: 100%;
       justify-content: center;
-    }
-    .row-center .controls-row,
-    .row-center .controls-row--expanded {
-      width: fit-content;
-      max-width: 100%;
-      padding: 5px 8px;
-      border-radius: 14px;
-      background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88));
-      border: 1px solid rgba(212,228,255,0.9);
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
-      backdrop-filter: saturate(180%) blur(10px);
     }
     .playback-dropdown,
     .row-right > .playback-dropdown,
@@ -7984,6 +7957,31 @@ function clampToDragLengths(person, jointKey, target){
       width: 100%;
       max-width: 100%;
     }
+    .btn {
+      min-height: 30px;
+      padding: 5px 7px;
+      font-size: 11px;
+    }
+    .icon-btn {
+      width: 30px;
+      height: 30px;
+    }
+    .input {
+      padding: 5px 7px;
+      font-size: 11px;
+    }
+    .speed-inline {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4px;
+    }
+    .speed-track input {
+      width: 100%;
+    }
+    .counter {
+      margin-left: 0;
+      text-align: center;
+    }
     .menu-popup {
       max-height: min(78dvh, 320px);
     }
@@ -7992,17 +7990,17 @@ function clampToDragLengths(person, jointKey, target){
       right: auto !important;
       top: 0 !important;
       bottom: auto !important;
-      min-width: min(420px, calc(100vw - 180px));
-      width: min(520px, calc(100vw - 180px));
-      max-width: calc(100vw - 180px);
+      min-width: min(360px, calc(100vw - 190px));
+      width: min(460px, calc(100vw - 190px));
+      max-width: calc(100vw - 190px);
     }
     .playback-dropdown .menu-popup {
-      right: calc(100% + 8px);
-      left: auto;
+      left: calc(100% + 8px);
+      right: auto;
       top: 0;
       bottom: auto;
-      width: min(420px, calc(100vw - 180px));
-      max-width: calc(100vw - 180px);
+      width: min(360px, calc(100vw - 190px));
+      max-width: calc(100vw - 190px);
     }
     .playback-comment-row {
       justify-content: stretch;
@@ -8010,14 +8008,10 @@ function clampToDragLengths(person, jointKey, target){
     .playback-comment-row .playback-comment {
       width: 100%;
     }
-    .counter {
-      margin-left: 0;
-    }
-    :global(body.dark-mode) .row-center .controls-row,
-    :global(body.dark-mode) .row-center .controls-row--expanded {
-      background: linear-gradient(150deg, rgba(15,23,42,0.94), rgba(9,12,23,0.9));
-      border-color: rgba(59,73,102,0.8);
-      box-shadow: 0 10px 24px rgba(0,0,0,0.4);
+    :global(body.dark-mode) .preset-ui.bottom {
+      background: linear-gradient(150deg, rgba(15,23,42,0.94), rgba(9,12,23,0.9)) !important;
+      border-color: rgba(59,73,102,0.8) !important;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.4) !important;
     }
   }
   @media (pointer: coarse) and (orientation: landscape) and (max-height: 500px){
