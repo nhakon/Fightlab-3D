@@ -232,8 +232,9 @@
     return false;
   }
 
-  function pickUpperHandle(event){
+  function pickUpperHandle(event, opts = {}){
     try{
+      const allowScreenFallback = opts.allowScreenFallback !== false;
       const el = renderer.domElement; const rect = el.getBoundingClientRect();
       const view = viewAtEvent(event);
       const cam = cameraForView(view) || camera;
@@ -251,6 +252,7 @@
           if (!isUpperHandleOccluded(world, cam, ndc, hit.object)) return person;
         }
       }
+      if (!allowScreenFallback) return null;
       const vps = getViewports();
       const r = (!fourViewMode || !vps) ? { x: 0, y: 0, w: rect.width, h: rect.height } : (vps[view]?.dom || { x: 0, y: 0, w: rect.width, h: rect.height });
       const screenDistForWorld = (world)=>{
@@ -1399,6 +1401,7 @@ function isLocked(person, key){
   let playbackContextEl;
   let playbackContextMenu = { visible:false, x:0, y:0, folder:'' };
   let playbacksMenuVersion = 0;
+  let compactToolbar = false;
   let presetsMenuEl;
   let presetsToggleEl;
   let accountMenuEl;
@@ -6339,7 +6342,7 @@ function clampToDragLengths(person, jointKey, target){
     // Handle hover highlight for upper handles when not dragging
     if (!dragging && !upperDrag.active && !lowerHandleDrag.active){
       try{
-        hoverUpperHandlePerson = pickUpperHandle(event);
+        hoverUpperHandlePerson = pickUpperHandle(event, { allowScreenFallback: false });
         const hoverA = hoverUpperHandlePerson === 'A';
         const hoverB = hoverUpperHandlePerson === 'B';
         if (hoverUpperHandlePerson){
@@ -7024,8 +7027,48 @@ function clampToDragLengths(person, jointKey, target){
     </div>
     {/if}
   </div>
-  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu} bind:this={toolbarEl}>
-      <div class="toolbar-layout expanded-grid">
+  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu} class:toolbar-compact={compactToolbar} bind:this={toolbarEl}>
+      <button
+        type="button"
+        class="toolbar-collapse-toggle"
+        class:is-active={compactToolbar}
+        aria-pressed={compactToolbar}
+        title={compactToolbar ? 'Expand toolbar' : 'Collapse toolbar'}
+        on:click={() => {
+          compactToolbar = !compactToolbar;
+          if (compactToolbar) {
+            showSavedPresetsMenu = false;
+            showSavedPlaybacksMenu = false;
+          }
+        }}>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          {#if compactToolbar}
+            <path d="M7 14l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          {:else}
+            <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          {/if}
+        </svg>
+      </button>
+      <div class="toolbar-layout expanded-grid" class:is-compact={compactToolbar}>
+        <div class="toolbar-row toolbar-row--compact">
+          <div class="row-center row-center--compact">
+            <div class="controls-row controls-row--expanded controls-row--compact">
+              <button class="icon-btn" on:click={prevFrame} title="Previous frame">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause playback">
+                {#if playing}
+                  <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
+                {:else}
+                  <svg class="icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+                {/if}
+              </button>
+              <button class="icon-btn" on:click={nextFrame} title="Next frame">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
         <div class="toolbar-row">
           <div class="row-left">
             {#if !hidePresetControls}
@@ -7470,23 +7513,33 @@ function clampToDragLengths(person, jointKey, target){
   /* Responsive toolbar */
   .preset-ui { backdrop-filter: saturate(180%) blur(10px); box-sizing: border-box; }
   .preset-ui.bottom { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); right: auto; z-index: 10; background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)); border:1px solid rgba(212,228,255,0.9); border-radius:14px; padding:10px 22px; box-shadow:0 10px 28px rgba(15, 23, 42, 0.12); display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; width: clamp(280px, calc(100vw - 80px), 1680px); justify-content: center; }
+  .preset-ui.bottom.toolbar-compact { width: auto; min-width: 0; padding: 12px 14px 10px; }
   .preset-ui.bottom.toolbar-menu-open,
   .preset-ui.bottom.toolbar-menu-open .toolbar-layout,
   .preset-ui.bottom.toolbar-menu-open .row-left,
   .preset-ui.bottom.toolbar-menu-open .row-right,
   .preset-ui.bottom.toolbar-menu-open .preset-select-wrap,
   .preset-ui.bottom.toolbar-menu-open .playback-dropdown { overflow: visible !important; }
+  .toolbar-collapse-toggle { position:absolute; top:8px; right:8px; width:28px; height:28px; padding:0; border:1px solid #d0d7de; border-radius:9999px; background:#fff; color:#111; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; z-index:2; }
+  .toolbar-collapse-toggle:hover { background:#f7f8fa; border-color:#c4cbd3; }
+  .toolbar-collapse-toggle.is-active { background:#eef5ff; border-color:#3b82f6; color:#0b5bd3; }
   .toolbar-layout { width:100%; padding-inline: 4px; box-sizing: border-box; }
+  .toolbar-layout.is-compact { display:block; width:auto; padding:8px 24px 0 0; }
+  .toolbar-layout.is-compact > .toolbar-row:not(.toolbar-row--compact) { display:none; }
+  .toolbar-row--compact { display:none; }
+  .toolbar-layout.is-compact .toolbar-row--compact { display:flex; }
   .expanded-grid { display:grid; grid-template-columns: repeat(3, minmax(280px, 1fr)); grid-template-rows: repeat(2, auto); gap:4px 10px; align-items:start; justify-items:stretch; }
   .toolbar-row { display:contents; }
   .row-left, .row-center, .row-right { display:flex; align-items:center; justify-content:flex-start; gap:10px; flex-wrap:wrap; min-width:0; max-width:100%; }
   .row-center { justify-content:center; }
+  .row-center--compact { width:100%; justify-content:center; }
   .row-right { justify-content:flex-end; }
   .playback-comment-row { justify-content:flex-start; }
   .toolbar-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .toolbar-actions.wrap-tight { flex-wrap:nowrap; }
   .controls-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; }
   .controls-row--expanded { flex-wrap:nowrap; column-gap:10px; }
+  .controls-row--compact { justify-content:center; }
   .speed-inline { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; }
   .speed-inline label { font-size:12px; color:#444; white-space:nowrap; }
   .speed-label { font-size:12px; color:#444; white-space:nowrap; }
