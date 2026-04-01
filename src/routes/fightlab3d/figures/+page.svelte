@@ -702,18 +702,16 @@ function isLocked(person, key){
     const height = (typeof window !== 'undefined') ? Math.max(1, window.innerHeight - mobileViewportBottomInset) : 1;
     return { width, height };
   }
-  function updatePerspectiveViewportOffset(){
-    if (!camera || typeof window === 'undefined') return;
-    const fullWidth = Math.max(1, window.innerWidth);
-    const fullHeight = Math.max(1, window.innerHeight - mobileViewportBottomInset);
+  function getSingleViewViewportRect(width, height){
     if (isLandscapeSideRailViewport() && !fourViewMode && mobileViewportLeftInset > 0){
-      const visibleWidth = Math.max(1, fullWidth - mobileViewportLeftInset);
-      try{
-        camera.setViewOffset(fullWidth, fullHeight, mobileViewportLeftInset, 0, visibleWidth, fullHeight);
-      }catch(_){}
-    } else {
-      try{ camera.clearViewOffset(); }catch(_){}
+      const x = Math.min(width - 1, Math.max(0, Math.round(mobileViewportLeftInset)));
+      return { x, y: 0, w: Math.max(1, width - x), h: Math.max(1, height) };
     }
+    return { x: 0, y: 0, w: Math.max(1, width), h: Math.max(1, height) };
+  }
+  function updatePerspectiveViewportOffset(){
+    if (!camera) return;
+    try{ camera.clearViewOffset(); }catch(_){}
     camera.updateProjectionMatrix();
   }
   function updateMobileViewportInset(){
@@ -3959,7 +3957,8 @@ function clampToDragLengths(person, jointKey, target){
     if (!renderer) return;
     updateMobileViewportInset();
     const viewportSize = getRenderViewportSize();
-    camera.aspect = viewportSize.width / viewportSize.height;
+    const singleViewRect = getSingleViewViewportRect(viewportSize.width, viewportSize.height);
+    camera.aspect = singleViewRect.w / singleViewRect.h;
     updatePerspectiveViewportOffset();
     renderer.setSize(viewportSize.width, viewportSize.height, false);
     setOrthoFrustums();
@@ -4034,9 +4033,10 @@ function clampToDragLengths(person, jointKey, target){
     const el = renderer.domElement;
     const w = el.clientWidth|0, h = el.clientHeight|0;
     if (!fourViewMode){
-      renderer.setScissorTest(false);
-      renderer.setViewport(0,0,w,h);
-      renderer.setScissor(0,0,w,h);
+      const r = getSingleViewViewportRect(w, h);
+      renderer.setScissorTest(true);
+      renderer.setViewport(r.x, r.y, r.w, r.h);
+      renderer.setScissor(r.x, r.y, r.w, r.h);
       renderer.render(scene, camera);
     } else {
       const vps = getViewports();
