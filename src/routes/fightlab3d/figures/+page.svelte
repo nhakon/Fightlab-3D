@@ -4906,23 +4906,17 @@ function clampToDragLengths(person, jointKey, target){
         const remoteSavedPresets = Array.isArray(data.saved_presets)
           ? data.saved_presets
           : [];
-        const mergedPlaybackFolders = Array.from(
-          new Set([...remotePlaybackFolders, ...currentLocalPlaybackFolders].filter(Boolean))
-        );
-        const remoteHasLibrary = remoteSavedPlaybacks.length > 0 || remotePlaybackFolders.length > 0;
+        const remoteLibraryRecordExists = !!data;
         const remoteHasSavedPresets = remoteSavedPresets.length > 0;
-        savedPlaybacks = remoteHasLibrary ? remoteSavedPlaybacks : currentLocalSavedPlaybacks;
-        playbackFolders = mergedPlaybackFolders;
+        savedPlaybacks = remoteLibraryRecordExists ? remoteSavedPlaybacks : currentLocalSavedPlaybacks;
+        playbackFolders = remoteLibraryRecordExists ? remotePlaybackFolders : currentLocalPlaybackFolders;
         savedPresets = remoteHasSavedPresets ? remoteSavedPresets : localSavedPresets;
         if (
-          !remoteHasLibrary && (currentLocalSavedPlaybacks.length > 0 || currentLocalPlaybackFolders.length > 0)
+          !remoteLibraryRecordExists && (currentLocalSavedPlaybacks.length > 0 || currentLocalPlaybackFolders.length > 0)
         ) {
           shouldResyncLibrary = true;
         }
         if (!remoteHasSavedPresets && localSavedPresets.length > 0) {
-          shouldResyncLibrary = true;
-        }
-        if (mergedPlaybackFolders.length !== remotePlaybackFolders.length) {
           shouldResyncLibrary = true;
         }
         writeSavedPlaybacksToLocalStorage();
