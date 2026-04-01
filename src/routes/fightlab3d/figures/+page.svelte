@@ -5686,7 +5686,7 @@ function clampToDragLengths(person, jointKey, target){
     let edgeHipHit = null;
     if (nearEdge) {
       edgeJointHit = pickJoint(event, { allowFallback: false });
-      if (!edgeJointHit) edgeHandlePerson = hoverUpperHandlePerson || pickUpperHandle(event);
+      if (!edgeJointHit) edgeHandlePerson = pickUpperHandle(event);
       if (!edgeJointHit && !edgeHandlePerson) edgeHipHit = pickHipBody(event);
       if (!edgeJointHit && !edgeHandlePerson && !edgeHipHit) {
         orbitEnabled = true;
@@ -5718,7 +5718,7 @@ function clampToDragLengths(person, jointKey, target){
     mouseLockedToJoint = false;
     // Prefer starting a handle drag before any other hit logic.
     if (!dragging){
-      const preHandlePerson = hoverUpperHandlePerson || pickUpperHandle(event);
+      const preHandlePerson = pickUpperHandle(event);
       if (preHandlePerson && startUpperHandleDrag(event, preHandlePerson, view, cam, ctrlOnly, ctrlShift)) return;
     }
     // Prefer joint-dragging when Ctrl is held (move whole figure), but allow handle drags when the handle is hit
@@ -5731,7 +5731,7 @@ function clampToDragLengths(person, jointKey, target){
     }
     // Block if already joint-dragging
     if (!dragging){
-      const handlePerson = hoverUpperHandlePerson || ((edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event));
+      const handlePerson = (edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event);
       // Start handle drag when the handle is hit, even if Ctrl is held
       if (handlePerson && startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, ctrlShift)) return;
     }
