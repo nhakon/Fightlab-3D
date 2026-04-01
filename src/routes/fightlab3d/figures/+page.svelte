@@ -5686,8 +5686,8 @@ function clampToDragLengths(person, jointKey, target){
     let edgeHipHit = null;
     if (nearEdge) {
       edgeJointHit = pickJoint(event, { allowFallback: false });
-      if (!edgeJointHit) edgeHandlePerson = pickUpperHandle(event);
-      if (!edgeJointHit && !edgeHandlePerson) edgeHipHit = pickHipBody(event);
+      if (!edgeJointHit) edgeHipHit = pickHipBody(event);
+      if (!edgeJointHit && !edgeHipHit) edgeHandlePerson = pickUpperHandle(event);
       if (!edgeJointHit && !edgeHandlePerson && !edgeHipHit) {
         orbitEnabled = true;
         controls.enabled = true;
@@ -5716,12 +5716,7 @@ function clampToDragLengths(person, jointKey, target){
     mouse.x = ndc.x; mouse.y = ndc.y;
     virtCursorX = event.clientX; virtCursorY = event.clientY;
     mouseLockedToJoint = false;
-    // Prefer starting a handle drag before any other hit logic.
-    if (!dragging){
-      const preHandlePerson = pickUpperHandle(event);
-      if (preHandlePerson && startUpperHandleDrag(event, preHandlePerson, view, cam, ctrlOnly, ctrlShift)) return;
-    }
-    // Prefer joint-dragging when Ctrl is held (move whole figure), but allow handle drags when the handle is hit
+    // Prefer joints and body hits before the rotation handle so hidden handles cannot steal the click.
     let hit = edgeJointHit || pickJoint(event, { allowFallback: false });
     const hitBody = !hit ? (edgeHipHit || pickHipBody(event)) : null;
     if (!hit && !hitBody) {
@@ -5729,10 +5724,8 @@ function clampToDragLengths(person, jointKey, target){
         hit = pickJoint(event, { allowFallback: true });
       }
     }
-    // Block if already joint-dragging
-    if (!dragging){
+    if (!dragging && !hit && !hitBody){
       const handlePerson = (edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event);
-      // Start handle drag when the handle is hit, even if Ctrl is held
       if (handlePerson && startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, ctrlShift)) return;
     }
     // Lock selection mode: clicking toggles lock state and exits without starting a drag
