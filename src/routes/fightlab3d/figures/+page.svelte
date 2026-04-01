@@ -1021,8 +1021,11 @@ function isLocked(person, key){
     computeFK(skel);
     let minY = Infinity;
     for (const i of TOP_ORDER) minY = Math.min(minY, skel.worldPos[i].y);
-    const dy = (FLOOR_Y + 0.02) - minY;
-    if (Math.abs(dy) > 1e-6) { skel.rootPos.y += dy; computeFK(skel); }
+    const floorLimit = FLOOR_Y + 0.02;
+    if (minY < floorLimit - 1e-6) {
+      skel.rootPos.y += (floorLimit - minY);
+      computeFK(skel);
+    }
   }
 
   function clampTorsoDriftDuringDrag(person){
@@ -7877,8 +7880,8 @@ function clampToDragLengths(person, jointKey, target){
       bottom: auto !important;
       left: max(6px, env(safe-area-inset-left)) !important;
       right: auto !important;
-      width: min(206px, calc(100vw - 18px)) !important;
-      max-width: min(206px, calc(100vw - 18px)) !important;
+      width: min(220px, calc(100vw - 18px)) !important;
+      max-width: min(220px, calc(100vw - 18px)) !important;
       max-height: calc(100dvh - 12px) !important;
       padding: 6px !important;
       background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)) !important;
@@ -7952,10 +7955,13 @@ function clampToDragLengths(person, jointKey, target){
       gap: 6px;
     }
     .toolbar-actions .btn,
-    .row-left .toolbar-actions .btn,
-    .row-right .toolbar-actions .btn {
+    .row-left .toolbar-actions .btn {
       width: 100%;
       justify-content: center;
+      line-height: 1.12;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      text-wrap: balance;
     }
     .playback-dropdown,
     .row-right > .playback-dropdown,
