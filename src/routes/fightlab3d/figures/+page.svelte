@@ -190,6 +190,48 @@
     return true;
   }
 
+  function upperHandleRootForObject(obj){
+    let root = obj;
+    if (root?.userData?.handleRoot) root = root.userData.handleRoot;
+    while (root && !root.userData?.person && !root.userData?.isUpperHandle) root = root.parent;
+    return root || null;
+  }
+
+  function upperHandlePersonForObject(obj){
+    const root = upperHandleRootForObject(obj);
+    if (!root) return null;
+    if (root?.userData?.person) return root.userData.person;
+    if (root === upperHandleA) return 'A';
+    if (root === upperHandleB) return 'B';
+    return null;
+  }
+
+  function upperHandleOccluderTargets(ignoreHandle = null){
+    const ignoreRoot = ignoreHandle ? upperHandleRootForObject(ignoreHandle) : null;
+    return [
+      ...jointMeshesA,
+      ...jointMeshesB,
+      ...boneMeshesA,
+      ...boneMeshesB,
+      pelvisA, pelvisB, chestA, chestB, torsoA, torsoB, spineA, spineB, shoulderBarA, shoulderBarB
+    ].filter((obj) => obj && obj !== ignoreRoot && !ignoreRoot?.children?.includes(obj));
+  }
+
+  function isUpperHandleOccluded(world, cam, ndc, ignoreHandle = null){
+    try{
+      raycaster.setFromCamera(ndc, cam);
+      const toHandle = world.clone().sub(raycaster.ray.origin);
+      const handleDistance = toHandle.dot(raycaster.ray.direction);
+      if (handleDistance <= 0) return true;
+      const occluders = upperHandleOccluderTargets(ignoreHandle);
+      if (!occluders.length) return false;
+      const hits = raycaster.intersectObjects(occluders, true);
+      if (!hits?.length) return false;
+      return hits[0].distance < handleDistance - UPPER_HANDLE_OCCLUSION_EPS;
+    }catch(e){}
+    return false;
+  }
+
   function pickUpperHandle(event){
     try{
       const el = renderer.domElement; const rect = el.getBoundingClientRect();
@@ -200,13 +242,14 @@
       const objs = [upperHandleA, upperHandleB].filter(Boolean);
       const hits = raycaster.intersectObjects(objs, true);
       if (hits && hits.length){
-        let o = hits[0].object;
-        if (o?.userData?.handleRoot) o = o.userData.handleRoot;
-        let root = o;
-        while (root && !root.userData?.person && !root.userData?.isUpperHandle) root = root.parent;
-        if (root?.userData?.person) return root.userData.person;
-        if (root === upperHandleA) return 'A';
-        if (root === upperHandleB) return 'B';
+        for (const hit of hits){
+          const person = upperHandlePersonForObject(hit.object);
+          if (!person) continue;
+          const root = upperHandleRootForObject(hit.object);
+          const world = new THREE.Vector3();
+          (root || hit.object).getWorldPosition(world);
+          if (!isUpperHandleOccluded(world, cam, ndc, hit.object)) return person;
+        }
       }
       const vps = getViewports();
       const r = (!fourViewMode || !vps) ? { x: 0, y: 0, w: rect.width, h: rect.height } : (vps[view]?.dom || { x: 0, y: 0, w: rect.width, h: rect.height });
@@ -218,14 +261,14 @@
         const dy = event.clientY - sy;
         return Math.hypot(dx, dy);
       };
-      const pickRadius = 42;
+      const pickRadius = UPPER_HANDLE_PICK_RADIUS_PX;
       // Fallback: screen-space hit around the handle center
       const hitByScreen = (handle, person)=>{
         if (!handle) return null;
         const world = new THREE.Vector3();
         handle.getWorldPosition(world);
         const dist = screenDistForWorld(world);
-        if (dist <= pickRadius) return person;
+        if (dist <= pickRadius && !isUpperHandleOccluded(world, cam, ndc, handle)) return person;
         return null;
       };
       const screenHitA = hitByScreen(upperHandleA, 'A');
@@ -237,7 +280,8 @@
         if (!joints?.head) return null;
         const world = new THREE.Vector3(joints.head[0], joints.head[1] + HEAD_HANDLE_OFFSET, joints.head[2]);
         const dist = screenDistForWorld(world);
-        if (dist <= pickRadius) return person;
+        const ignoreHandle = person === 'A' ? upperHandleA : upperHandleB;
+        if (dist <= pickRadius && !isUpperHandleOccluded(world, cam, ndc, ignoreHandle)) return person;
         return null;
       };
       const jointHitA = hitByJoints(jointsA, 'A');
@@ -477,6 +521,9 @@ let toeRotateDrag = { active:false, person:null, side:null, startOffset:new THRE
   const HANDLE_COLOR_B = 0x2fb6a7;
   const HANDLE_COLOR_HOVER = 0x5cd47a;
   const HEAD_HANDLE_OFFSET = 0.30; // height above head joint (0.25?0.35m)
+  const UPPER_HANDLE_PICK_RADIUS_PX = 26;
+  const UPPER_HANDLE_HIT_RADIUS_SCALE = 0.72;
+  const UPPER_HANDLE_OCCLUSION_EPS = 0.025;
   const UPPER_HANDLE_ROT_SENS_YAW = 0.005;  // radians per pixel (horizontal move)
   const UPPER_HANDLE_ROT_SENS_PITCH = 0.004; // radians per pixel (vertical move)
   const TOE_ROTATE_SENS = 0.01; // radians per pixel for Ctrl-drag toe rotation
@@ -2443,7 +2490,7 @@ function isLocked(person, key){
     handleGroup.add(iconMesh);
     // Invisible hit proxy to allow clicking inside the icon area
     try {
-      const hitRadius = iconSize * 1.1;
+      const hitRadius = iconSize * UPPER_HANDLE_HIT_RADIUS_SCALE;
       const hitGeom = new THREE.SphereGeometry(hitRadius, 16, 12);
       const hitMat = new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0, transparent: true, depthWrite: false, depthTest: false });
       const hitMesh = new THREE.Mesh(hitGeom, hitMat);
@@ -5671,13 +5718,7 @@ function clampToDragLengths(person, jointKey, target){
     mouseLockedToJoint = false;
     // Prefer starting a handle drag before any other hit logic.
     if (!dragging){
-      let preHandlePerson = hoverUpperHandlePerson || pickUpperHandle(event);
-      if (!preHandlePerson && lastHandleHover.person){
-        const now = timeNowMs();
-        if ((now - lastHandleHover.time) <= 450){
-          preHandlePerson = lastHandleHover.person;
-        }
-      }
+      const preHandlePerson = hoverUpperHandlePerson || pickUpperHandle(event);
       if (preHandlePerson && startUpperHandleDrag(event, preHandlePerson, view, cam, ctrlOnly, ctrlShift)) return;
     }
     // Prefer joint-dragging when Ctrl is held (move whole figure), but allow handle drags when the handle is hit
@@ -5690,13 +5731,7 @@ function clampToDragLengths(person, jointKey, target){
     }
     // Block if already joint-dragging
     if (!dragging){
-      let handlePerson = hoverUpperHandlePerson || ((edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event));
-      if (!handlePerson && lastHandleHover.person){
-        const now = timeNowMs();
-        if ((now - lastHandleHover.time) <= 450){
-          handlePerson = lastHandleHover.person;
-        }
-      }
+      const handlePerson = hoverUpperHandlePerson || ((edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event));
       // Start handle drag when the handle is hit, even if Ctrl is held
       if (handlePerson && startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, ctrlShift)) return;
     }
@@ -6311,19 +6346,9 @@ function clampToDragLengths(person, jointKey, target){
     // Handle hover highlight for upper handles when not dragging
     if (!dragging && !upperDrag.active && !lowerHandleDrag.active){
       try{
-        const viewH = viewAtEvent(event);
-        const camH = cameraForView(viewH) || camera;
-        const ndcH = ndcForEventInView(event, viewH);
-        raycaster.setFromCamera(ndcH, camH);
-        const objs = [upperHandleA, upperHandleB].filter(Boolean);
-        const hits = raycaster.intersectObjects(objs, true);
-        let hoverA = false, hoverB = false;
-        if (hits && hits.length){
-          let o = hits[0].object;
-          while (o && !o.userData?.isUpperHandle) o = o.parent;
-          if (o){ if (o===upperHandleA) hoverA=true; if (o===upperHandleB) hoverB=true; }
-        }
-        hoverUpperHandlePerson = hoverA ? 'A' : (hoverB ? 'B' : null);
+        hoverUpperHandlePerson = pickUpperHandle(event);
+        const hoverA = hoverUpperHandlePerson === 'A';
+        const hoverB = hoverUpperHandlePerson === 'B';
         if (hoverUpperHandlePerson){
           lastHandleHover.person = hoverUpperHandlePerson;
           lastHandleHover.time = timeNowMs();
