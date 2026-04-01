@@ -14,6 +14,9 @@
   let cardWidth = 75;
   let cardGapOpen = false;
   let cardFlipped = false;
+  let mobilePortraitCards = false;
+  let cardFlipStates = [];
+  let cardEls = [];
   let ticking = false;
   let mediaShellEl;
   const showCarousel = false;
@@ -31,6 +34,7 @@
     { id: 'card-2', label: '( 02 )', title: 'Pose and mark grips', position: '50% 40%', image: '/animation-2.png' },
     { id: 'card-3', label: '( 03 )', title: 'Replay before class', position: '50% 40%', image: '/animation-3.png' }
   ];
+  cardFlipStates = cardSlices.map(() => false);
   const pricingPlans = [
     {
       id: 'solo',
@@ -126,15 +130,38 @@
     return clamp01(seen / total);
   }
 
+  function updateCardViewportMode() {
+    if (typeof window === 'undefined' || !window.matchMedia) {
+      mobilePortraitCards = false;
+      return;
+    }
+    mobilePortraitCards = window.matchMedia('(pointer: coarse) and (orientation: portrait) and (max-width: 800px)').matches;
+  }
+
   function updateCardsFromScroll() {
+    updateCardViewportMode();
     const p = sectionProgress(cardRangeEl);
     const headerProgress = clamp01((p - 0.1) / 0.15);
     cardHeaderOffset = mapRange(0, 1, 40, 0, headerProgress);
     cardHeaderOpacity = headerProgress;
+    if (mobilePortraitCards) {
+      cardWidth = 100;
+      cardGapOpen = true;
+      cardFlipped = false;
+      const vh = window.innerHeight || 1;
+      cardFlipStates = cardSlices.map((_, idx) => {
+        const el = cardEls[idx];
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.top <= vh * 0.68;
+      });
+      return;
+    }
     const widthProgress = clamp01(p / 0.2);
     cardWidth = mapRange(0, 1, 75, 60, widthProgress);
     cardGapOpen = p >= 0.2;
     cardFlipped = p >= 0.35;
+    cardFlipStates = cardSlices.map(() => cardFlipped);
   }
 
   function mediaCapture(node, idx) {
@@ -243,7 +270,11 @@
         </div>
         <div class={`card-container ${cardGapOpen ? 'is-open' : ''}`} style={`--card-width:${cardWidth}%;`}>
           {#each cardSlices as card, idx}
-            <article class={`card ${idx === 0 ? 'card-left' : idx === 2 ? 'card-right' : 'card-center'} ${cardFlipped ? 'is-flipped' : ''} ${cardGapOpen && (idx === 0 || idx === 2) ? 'is-offset' : ''}`} id={card.id}>
+            <article
+              class={`card ${idx === 0 ? 'card-left' : idx === 2 ? 'card-right' : 'card-center'} ${cardFlipStates[idx] ? 'is-flipped' : ''} ${!mobilePortraitCards && cardGapOpen && (idx === 0 || idx === 2) ? 'is-offset' : ''}`}
+              id={card.id}
+              bind:this={cardEls[idx]}
+            >
               <div class="card-inner">
                 <div class="card-face card-front">
                   <img src={card.image || cardImage} alt={card.title} style={`object-position:${card.position};`} loading="lazy" />
@@ -496,13 +527,19 @@
   .card-center { border-radius:0; }
   .card-right { border-radius:0 18px 18px 0; }
   .card-container.is-open .card { border-radius:18px; }
-  .card-inner { position:absolute; inset:0; border-radius:inherit; }
+  .card-inner {
+    position:absolute;
+    inset:0;
+    border-radius:inherit;
+    transform-style: preserve-3d;
+    transition: transform 0.75s ease;
+    will-change: transform;
+  }
   .card.is-offset.card-left { transform: translateY(26px) rotateZ(-12deg); }
   .card.is-offset.card-right { transform: translateY(26px) rotateZ(12deg); }
-  .card-face { position:absolute; inset:0; border-radius:inherit; overflow:hidden; transition: opacity 0.5s ease; }
-  .card-back { opacity:0; }
-  .card.is-flipped .card-front { opacity:0; }
-  .card.is-flipped .card-back { opacity:1; }
+  .card-face { position:absolute; inset:0; border-radius:inherit; overflow:hidden; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+  .card-back { transform: rotateY(180deg); }
+  .card.is-flipped .card-inner { transform: rotateY(180deg); }
   .card-front img { width:100%; height:100%; object-fit:cover; border-radius:inherit; filter: saturate(1.05); }
   .card-back { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:10px; padding:24px; background: linear-gradient(150deg, #111827, #0f172a); color:#f8fafc; text-align:center; }
   .card-back span { font: 12px/1.2 'Sora', 'Inter', system-ui, sans-serif; letter-spacing:0.14em; text-transform:uppercase; color:#94a3b8; }
@@ -531,9 +568,40 @@
       aspect-ratio: 4 / 5;
       max-height: clamp(280px, 70vw, 420px);
     }
-    .card-inner { transform:none !important; }
     .card-back { padding:18px; }
     .card-sticky-header { opacity:1 !important; transform:none !important; }
+  }
+  @media (pointer: coarse) and (orientation: portrait) and (max-width: 800px){
+    .card-range { min-height: auto; }
+    .card-sticky {
+      position: relative;
+      top: auto;
+      transform: none;
+      align-items: stretch;
+      gap: 20px;
+    }
+    .card-sticky-header {
+      max-width: 100%;
+      text-align: left;
+      opacity: 1 !important;
+      transform: none !important;
+    }
+    .card-container {
+      width: min(100%, 420px) !important;
+      max-width: 100%;
+      margin: 0 auto;
+      flex-direction: column;
+      gap: 16px;
+      overflow: visible;
+    }
+    .card {
+      flex: none;
+      width: 100%;
+      max-width: none;
+      max-height: none;
+      border-radius: 18px !important;
+      aspect-ratio: 4 / 5;
+    }
   }
 
   @media (max-width: 800px){
