@@ -698,9 +698,23 @@ function isLocked(person, key){
     return window.matchMedia('(pointer: coarse) and (orientation: landscape) and (max-width: 960px)').matches;
   }
   function getRenderViewportSize(){
-    const width = (typeof window !== 'undefined') ? Math.max(1, window.innerWidth - mobileViewportLeftInset) : 1;
+    const width = (typeof window !== 'undefined') ? Math.max(1, window.innerWidth) : 1;
     const height = (typeof window !== 'undefined') ? Math.max(1, window.innerHeight - mobileViewportBottomInset) : 1;
     return { width, height };
+  }
+  function updatePerspectiveViewportOffset(){
+    if (!camera || typeof window === 'undefined') return;
+    const fullWidth = Math.max(1, window.innerWidth);
+    const fullHeight = Math.max(1, window.innerHeight - mobileViewportBottomInset);
+    if (isLandscapeSideRailViewport() && !fourViewMode && mobileViewportLeftInset > 0){
+      const visibleWidth = Math.max(1, fullWidth - mobileViewportLeftInset);
+      try{
+        camera.setViewOffset(fullWidth, fullHeight, mobileViewportLeftInset, 0, visibleWidth, fullHeight);
+      }catch(_){}
+    } else {
+      try{ camera.clearViewOffset(); }catch(_){}
+    }
+    camera.updateProjectionMatrix();
   }
   function updateMobileViewportInset(){
     if (typeof window === 'undefined'){
@@ -3765,6 +3779,7 @@ function clampToDragLengths(person, jointKey, target){
           renderer.outputEncoding = THREE.sRGBEncoding;
         }
       }catch(e){}
+      updatePerspectiveViewportOffset();
       controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = 0.2;
@@ -3945,7 +3960,7 @@ function clampToDragLengths(person, jointKey, target){
     updateMobileViewportInset();
     const viewportSize = getRenderViewportSize();
     camera.aspect = viewportSize.width / viewportSize.height;
-    camera.updateProjectionMatrix();
+    updatePerspectiveViewportOffset();
     renderer.setSize(viewportSize.width, viewportSize.height, false);
     setOrthoFrustums();
   }
@@ -7868,13 +7883,6 @@ function clampToDragLengths(person, jointKey, target){
     .preset-trigger { padding: 5px 38px 5px 8px; font-size: 12px; }
   }
   @media (pointer: coarse) and (orientation: landscape) and (max-width: 960px){
-    .figures-wrapper {
-      margin-left: var(--mobile-toolbar-left-inset, 0px);
-      width: calc(100vw - var(--mobile-toolbar-left-inset, 0px));
-    }
-    .figures-canvas {
-      width: calc(100vw - var(--mobile-toolbar-left-inset, 0px));
-    }
     .preset-ui.bottom {
       top: max(46px, calc(env(safe-area-inset-top) + 40px)) !important;
       bottom: auto !important;
