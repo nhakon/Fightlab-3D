@@ -5347,6 +5347,17 @@ function clampToDragLengths(person, jointKey, target){
     commentVisible = false;
     applyLoadedPose(pr.data);
   }
+  function reloadCurrentPreset(){
+    const activeName = String(activeCustomPresetName || '').trim().toLowerCase();
+    if (activeName){
+      const idx = savedPresets.findIndex((preset, i) => String(preset?.name || `Preset ${i + 1}`).trim().toLowerCase() === activeName);
+      if (idx >= 0){
+        loadSavedPreset(idx);
+        return;
+      }
+    }
+    setPosition(startPosition);
+  }
   function deleteSavedPreset(idx){
     const i = idx|0; if (i<0 || i>=savedPresets.length) return;
     if ((savedPresets[i]?.name || `Preset ${i + 1}`) === activeCustomPresetName){
@@ -7236,7 +7247,7 @@ function clampToDragLengths(person, jointKey, target){
                     </span>
                     <svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   </button>
-                  <button class="inline-action small preset-inline-action" title="Reload preset" on:click={() => setPosition(startPosition)}>
+                  <button class="inline-action small preset-inline-action" title="Reload preset" on:click={reloadCurrentPreset}>
                     <svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21 4v6h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                   </button>
                   {#if showSavedPresetsMenu}
@@ -7310,7 +7321,7 @@ function clampToDragLengths(person, jointKey, target){
               </button>
             </div>
           </div>
-          <div class="row-right">
+          <div class="row-right playback-save-row">
             <div class="playback-dropdown">
             <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
                 <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
@@ -7677,7 +7688,9 @@ function clampToDragLengths(person, jointKey, target){
   .row-center { justify-content:center; }
   .row-center--compact { width:100%; justify-content:center; }
   .row-right { justify-content:flex-end; }
+  .playback-save-row { margin-bottom: -6px; }
   .playback-comment-row { justify-content:flex-start; }
+  .playback-comment-row { margin-top: -6px; }
   .toolbar-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .toolbar-actions.wrap-tight { flex-wrap:nowrap; }
   .controls-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; }
@@ -8466,6 +8479,17 @@ function clampToDragLengths(person, jointKey, target){
     .figures-intro-card { padding: 16px; border-radius: 18px; }
     .figures-intro-actions { flex-direction: column; align-items: stretch; }
     .figures-intro-nav { width: 100%; justify-content: flex-end; }
+  }
+  @media (pointer: coarse) and (orientation: landscape){
+    .figures-intro-layer {
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: max(18px, calc(env(safe-area-inset-top) + 18px));
+      padding-bottom: 12px;
+    }
+    .figures-intro-card--centered {
+      width: min(100%, 420px);
+    }
   }
   @media (max-width: 520px){
     .mirror-pose-btn { display: none; }
