@@ -791,12 +791,14 @@ function isLocked(person, key){
       {
         title: 'Build a playback',
         body: 'Save important poses as frames, then use previous, play, and next to preview the sequence and check the transition between frames.',
-        tip: 'Frame comments help explain what should happen at each step.'
+        tip: 'Frame comments help explain what should happen at each step.',
+        target: 'saveFrame'
       },
       {
         title: 'Save and reopen work',
         body: 'When the sequence looks right, save it as a playback and organize it in folders. Use presets, shortcuts, and account settings from the menu.',
-        tip: 'The shortcuts panel shows touch instructions on mobile and keyboard instructions on desktop.'
+        tip: 'The shortcuts panel shows touch instructions on mobile and keyboard instructions on desktop.',
+        target: 'savePlayback'
       }
     ];
   }
@@ -1504,6 +1506,8 @@ function isLocked(person, key){
   let showMobileShortcutList = false;
   let showFiguresIntro = false;
   let figuresIntroStepIndex = 0;
+  let figuresIntroTargetRect = null;
+  let figuresIntroCalloutStyle = '';
   let darkMode = false;
   let uiReady = false;
   let navOpen = false;
@@ -1512,6 +1516,8 @@ function isLocked(person, key){
   let featuresRow;
   let figuresIntroSteps = [];
   let activeFiguresIntroStep = null;
+  let saveFrameButtonEl;
+  let savePlaybackButtonEl;
   async function openFigures(){
     showFigures = true;
     navOpen = false;
@@ -1545,12 +1551,15 @@ function isLocked(person, key){
   function maybeShowFiguresIntro(userId){
     if (!userId || hasSeenFiguresIntro(userId)) return;
     figuresIntroStepIndex = 0;
+    compactToolbar = false;
     closeAllMenus();
     showFiguresIntro = true;
   }
   function closeFiguresIntro(){
     markFiguresIntroSeen(authUserId);
     showFiguresIntro = false;
+    figuresIntroTargetRect = null;
+    figuresIntroCalloutStyle = '';
   }
   function nextFiguresIntroStep(){
     if (figuresIntroStepIndex >= figuresIntroSteps.length - 1){
@@ -1562,11 +1571,63 @@ function isLocked(person, key){
   function previousFiguresIntroStep(){
     figuresIntroStepIndex = Math.max(0, figuresIntroStepIndex - 1);
   }
+  function getFiguresIntroTargetEl(){
+    switch (activeFiguresIntroStep?.target){
+      case 'saveFrame': return saveFrameButtonEl;
+      case 'savePlayback': return savePlaybackButtonEl;
+      default: return null;
+    }
+  }
+  function computeFiguresIntroCalloutStyle(rect){
+    if (!rect || typeof window === 'undefined') return '';
+    const width = Math.min(360, Math.max(260, window.innerWidth - 24));
+    const gap = 14;
+    const preferBelow = rect.bottom + gap + 220 <= window.innerHeight;
+    const top = preferBelow
+      ? Math.min(window.innerHeight - 24, rect.bottom + gap)
+      : Math.max(16, rect.top - gap - 220);
+    const centeredLeft = rect.left + (rect.width / 2) - (width / 2);
+    const left = Math.min(Math.max(12, centeredLeft), Math.max(12, window.innerWidth - width - 12));
+    return `top:${Math.round(top)}px; left:${Math.round(left)}px; width:min(calc(100vw - 24px), ${width}px);`;
+  }
+  async function updateFiguresIntroSpotlight(){
+    if (!showFiguresIntro){
+      figuresIntroTargetRect = null;
+      figuresIntroCalloutStyle = '';
+      return;
+    }
+    await tick();
+    const targetEl = getFiguresIntroTargetEl();
+    if (!targetEl){
+      figuresIntroTargetRect = null;
+      figuresIntroCalloutStyle = '';
+      return;
+    }
+    const rect = targetEl.getBoundingClientRect?.();
+    if (!rect || !Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0){
+      figuresIntroTargetRect = null;
+      figuresIntroCalloutStyle = '';
+      return;
+    }
+    figuresIntroTargetRect = {
+      top: rect.top,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height
+    };
+    figuresIntroCalloutStyle = computeFiguresIntroCalloutStyle(figuresIntroTargetRect);
+  }
   $: figuresIntroSteps = buildFiguresIntroSteps(showMobileShortcutList);
   $: if (figuresIntroStepIndex >= figuresIntroSteps.length){
     figuresIntroStepIndex = Math.max(0, figuresIntroSteps.length - 1);
   }
   $: activeFiguresIntroStep = figuresIntroSteps[figuresIntroStepIndex] ?? null;
+  $: if (showFiguresIntro){
+    void updateFiguresIntroSpotlight();
+  } else {
+    figuresIntroTargetRect = null;
+    figuresIntroCalloutStyle = '';
+  }
   // Pinned controls (custom toolbar). Persisted to localStorage
   let pinnedControls = [];
   const SHOW_SAVE_PRESET_BUTTON = false;
@@ -4124,6 +4185,7 @@ function clampToDragLengths(person, jointKey, target){
     if (!renderer) return;
     updateShortcutViewportMode();
     updateMobileViewportInset();
+    void updateFiguresIntroSpotlight();
     const viewportSize = getRenderViewportSize();
     const singleViewRect = getSingleViewViewportRect(viewportSize.width, viewportSize.height);
     camera.aspect = singleViewRect.w / singleViewRect.h;
@@ -7032,7 +7094,14 @@ function clampToDragLengths(person, jointKey, target){
 
   {#if showFiguresIntro && activeFiguresIntroStep}
     <div class="figures-intro-backdrop" role="presentation" on:click={(event) => { if (event.target === event.currentTarget) closeFiguresIntro(); }}>
-      <div class="figures-intro-card" role="dialog" aria-modal="true" aria-labelledby="figures-intro-title">
+      {#if figuresIntroTargetRect}
+        <div
+          class="figures-intro-spotlight"
+          aria-hidden="true"
+          style={`top:${Math.round(figuresIntroTargetRect.top - 6)}px; left:${Math.round(figuresIntroTargetRect.left - 6)}px; width:${Math.round(figuresIntroTargetRect.width + 12)}px; height:${Math.round(figuresIntroTargetRect.height + 12)}px;`}
+        ></div>
+      {/if}
+      <div class="figures-intro-card" class:is-anchored={!!figuresIntroTargetRect} style={figuresIntroCalloutStyle} role="dialog" aria-modal="true" aria-labelledby="figures-intro-title">
         <div class="figures-intro-header">
           <div>
             <span class="figures-intro-kicker">Getting Started</span>
@@ -7310,7 +7379,7 @@ function clampToDragLengths(person, jointKey, target){
             <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
                 <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
                 <div class="input-actions playback-input-actions">
-                  <button class="inline-action save-action" on:click={saveCurrentPlayback} title="Save playback">
+                  <button class="inline-action save-action" bind:this={savePlaybackButtonEl} on:click={saveCurrentPlayback} title="Save playback">
                     <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
                   </button>
                   <button class="inline-action" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
@@ -7494,7 +7563,7 @@ function clampToDragLengths(person, jointKey, target){
           <div class="row-right playback-comment-row">
             <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
               <input class="input" type="text" bind:value={comment} placeholder="Frame comment" />
-              <button class="inline-action save-action" on:click={saveCurrentFrame} title="Save frame">
+              <button class="inline-action save-action" bind:this={saveFrameButtonEl} on:click={saveCurrentFrame} title="Save frame">
                 <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               </button>
             </div>
@@ -7696,6 +7765,8 @@ function clampToDragLengths(person, jointKey, target){
   .btn--toggle.is-active { border-color: #16a34a; color: #166534; background: #ecfdf5; }
   .figures-intro-backdrop { position: fixed; inset: 0; z-index: 1900; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(15,23,42,0.52); backdrop-filter: blur(10px); }
   .figures-intro-card { width: min(100%, 520px); border-radius: 20px; border: 1px solid rgba(148,163,184,0.35); background: linear-gradient(160deg, rgba(255,255,255,0.97), rgba(239,246,255,0.94)); box-shadow: 0 26px 70px rgba(15,23,42,0.28); padding: 20px; color: #0f172a; }
+  .figures-intro-card.is-anchored { position: fixed; margin: 0; z-index: 1902; }
+  .figures-intro-spotlight { position: fixed; z-index: 1901; border-radius: 14px; border: 2px solid rgba(96,165,250,0.95); box-shadow: 0 0 0 9999px rgba(15,23,42,0.28), 0 0 0 8px rgba(96,165,250,0.2), 0 18px 36px rgba(15,23,42,0.35); pointer-events: none; }
   .figures-intro-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .figures-intro-kicker { display: inline-block; font: 700 11px/1.1 system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: #2563eb; }
   .figures-intro-progress { margin-top: 6px; font: 12px/1.3 system-ui, sans-serif; color: #475569; }
@@ -7906,6 +7977,7 @@ function clampToDragLengths(person, jointKey, target){
   :global(body.dark-mode) .btn--primary { background:#1d4ed8; border-color:#2563eb; color:#e5e7eb; }
   :global(body.dark-mode) .btn--primary:hover { background:#1e40af; border-color:#1d4ed8; }
   :global(body.dark-mode) .figures-intro-card { background: linear-gradient(160deg, rgba(15,23,42,0.98), rgba(15,23,42,0.92)); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
+  :global(body.dark-mode) .figures-intro-spotlight { border-color: rgba(96,165,250,0.98); box-shadow: 0 0 0 9999px rgba(2,6,23,0.42), 0 0 0 8px rgba(59,130,246,0.22), 0 18px 36px rgba(2,6,23,0.55); }
   :global(body.dark-mode) .figures-intro-progress,
   :global(body.dark-mode) .figures-intro-body { color: #cbd5e1; }
   :global(body.dark-mode) .figures-intro-close { background: rgba(15,23,42,0.92); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
