@@ -766,6 +766,40 @@ function isLocked(person, key){
     { keys: 'Save frame button', desc: 'Store the current frame in the playback' },
     { keys: 'Menu and toolbar buttons', desc: 'Open presets, playbacks, comments, and settings' }
   ];
+  const FIGURES_INTRO_STORAGE_PREFIX = 'fightlab3dFiguresIntroSeenV1:';
+  function buildFiguresIntroSteps(isMobile){
+    return [
+      {
+        title: 'Welcome to Fightlab 3D',
+        body: 'Start from a preset or the neutral pose, then adjust both figures step by step to build the position you want.',
+        tip: 'This intro shows once per account on this device. You can close it any time.'
+      },
+      {
+        title: 'Move the camera',
+        body: isMobile
+          ? 'Use two fingers to orbit, pan, and zoom so you can inspect the figures from the angle you need.'
+          : 'Use your mouse or trackpad to orbit and zoom the scene so you can inspect the figures from the angle you need.',
+        tip: 'Reposition the view before making detailed joint adjustments.'
+      },
+      {
+        title: 'Pose the figures',
+        body: isMobile
+          ? 'Tap a joint or body part to target it, then drag to move it. Tap the head rotation handle when you want to rotate the torso.'
+          : 'Select a joint or body part, then drag it to move. Use the head rotation handle when you want to rotate the torso.',
+        tip: 'Undo is always available if a move is not right.'
+      },
+      {
+        title: 'Build a playback',
+        body: 'Save important poses as frames, then use previous, play, and next to preview the sequence and check the transition between frames.',
+        tip: 'Frame comments help explain what should happen at each step.'
+      },
+      {
+        title: 'Save and reopen work',
+        body: 'When the sequence looks right, save it as a playback and organize it in folders. Use presets, shortcuts, and account settings from the menu.',
+        tip: 'The shortcuts panel shows touch instructions on mobile and keyboard instructions on desktop.'
+      }
+    ];
+  }
   function isLandscapeSideRailViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
     return window.matchMedia('(pointer: coarse) and (orientation: landscape) and (max-width: 960px)').matches;
@@ -1468,12 +1502,16 @@ function isLocked(person, key){
   let showAccountShortcuts = false;
   let showAccountSettings = false;
   let showMobileShortcutList = false;
+  let showFiguresIntro = false;
+  let figuresIntroStepIndex = 0;
   let darkMode = false;
   let uiReady = false;
   let navOpen = false;
   const showLanding = false;
   let showFigures = true;
   let featuresRow;
+  let figuresIntroSteps = [];
+  let activeFiguresIntroStep = null;
   async function openFigures(){
     showFigures = true;
     navOpen = false;
@@ -1489,6 +1527,46 @@ function isLocked(person, key){
   function updateShortcutViewportMode(){
     showMobileShortcutList = isMobileViewport();
   }
+  function getFiguresIntroStorageKey(userId){
+    return `${FIGURES_INTRO_STORAGE_PREFIX}${userId || 'anonymous'}`;
+  }
+  function hasSeenFiguresIntro(userId){
+    if (!userId || typeof window === 'undefined') return true;
+    try{
+      return localStorage.getItem(getFiguresIntroStorageKey(userId)) === 'true';
+    }catch(_){
+      return false;
+    }
+  }
+  function markFiguresIntroSeen(userId){
+    if (!userId || typeof window === 'undefined') return;
+    try{ localStorage.setItem(getFiguresIntroStorageKey(userId), 'true'); }catch(_){}
+  }
+  function maybeShowFiguresIntro(userId){
+    if (!userId || hasSeenFiguresIntro(userId)) return;
+    figuresIntroStepIndex = 0;
+    closeAllMenus();
+    showFiguresIntro = true;
+  }
+  function closeFiguresIntro(){
+    markFiguresIntroSeen(authUserId);
+    showFiguresIntro = false;
+  }
+  function nextFiguresIntroStep(){
+    if (figuresIntroStepIndex >= figuresIntroSteps.length - 1){
+      closeFiguresIntro();
+      return;
+    }
+    figuresIntroStepIndex += 1;
+  }
+  function previousFiguresIntroStep(){
+    figuresIntroStepIndex = Math.max(0, figuresIntroStepIndex - 1);
+  }
+  $: figuresIntroSteps = buildFiguresIntroSteps(showMobileShortcutList);
+  $: if (figuresIntroStepIndex >= figuresIntroSteps.length){
+    figuresIntroStepIndex = Math.max(0, figuresIntroSteps.length - 1);
+  }
+  $: activeFiguresIntroStep = figuresIntroSteps[figuresIntroStepIndex] ?? null;
   // Pinned controls (custom toolbar). Persisted to localStorage
   let pinnedControls = [];
   const SHOW_SAVE_PRESET_BUTTON = false;
@@ -3958,7 +4036,14 @@ function clampToDragLengths(person, jointKey, target){
         if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
         if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undoLastFigureMove(); return; }
         if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); try{ saveCurrentFrame(); }catch(_){} return; }
-        if (e.key === 'Escape') { closeAllMenus(); return; }
+        if (e.key === 'Escape') {
+          if (showFiguresIntro){
+            closeFiguresIntro();
+            return;
+          }
+          closeAllMenus();
+          return;
+        }
         if (e.key === 'ArrowRight') { e.preventDefault(); nextFrame(); return; }
         if (e.key === 'ArrowLeft') { e.preventDefault(); prevFrame(); return; }
         if (e.key === 'Control') { armRotateSyncOnCtrlTap(e); return; }
@@ -4770,6 +4855,7 @@ function clampToDragLengths(person, jointKey, target){
       playbackSyncUserId = '';
       loginName = '';
       loginEmail = '';
+      showFiguresIntro = false;
       return;
     }
     authUserId = user.id || '';
@@ -4780,6 +4866,7 @@ function clampToDragLengths(person, jointKey, target){
       user.user_metadata?.name ||
       user.email?.split('@')[0] ||
       'User';
+    maybeShowFiguresIntro(authUserId);
   }
   function formatAuthError(error){
     const message = error?.message || '';
@@ -6943,6 +7030,38 @@ function clampToDragLengths(person, jointKey, target){
     </div>
   </div>
 
+  {#if showFiguresIntro && activeFiguresIntroStep}
+    <div class="figures-intro-backdrop" role="presentation" on:click={(event) => { if (event.target === event.currentTarget) closeFiguresIntro(); }}>
+      <div class="figures-intro-card" role="dialog" aria-modal="true" aria-labelledby="figures-intro-title">
+        <div class="figures-intro-header">
+          <div>
+            <span class="figures-intro-kicker">Getting Started</span>
+            <div class="figures-intro-progress">Step {figuresIntroStepIndex + 1} of {figuresIntroSteps.length}</div>
+          </div>
+          <button type="button" class="figures-intro-close" on:click={closeFiguresIntro} aria-label="Close intro">×</button>
+        </div>
+        <h2 id="figures-intro-title" class="figures-intro-title">{activeFiguresIntroStep.title}</h2>
+        <p class="figures-intro-body">{activeFiguresIntroStep.body}</p>
+        {#if activeFiguresIntroStep.tip}
+          <p class="figures-intro-tip">{activeFiguresIntroStep.tip}</p>
+        {/if}
+        <div class="figures-intro-dots" aria-hidden="true">
+          {#each figuresIntroSteps as _step, idx}
+            <span class:active={idx === figuresIntroStepIndex}></span>
+          {/each}
+        </div>
+        <div class="figures-intro-actions">
+          <button type="button" class="btn" on:click={closeFiguresIntro}>Skip</button>
+          <div class="figures-intro-nav">
+            <button type="button" class="btn" on:click={previousFiguresIntroStep} disabled={figuresIntroStepIndex === 0}>Back</button>
+            <button type="button" class="btn btn--primary" on:click={nextFiguresIntroStep}>
+              {figuresIntroStepIndex === figuresIntroSteps.length - 1 ? 'Finish' : 'Next'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <div class="scene-gradient" aria-hidden="true"></div>
   <div class="account-anchor">
@@ -7575,6 +7694,20 @@ function clampToDragLengths(person, jointKey, target){
   .btn--primary:hover { background: #e5f0ff; }
   /* .btn--ghost removed (unused) */
   .btn--toggle.is-active { border-color: #16a34a; color: #166534; background: #ecfdf5; }
+  .figures-intro-backdrop { position: fixed; inset: 0; z-index: 1900; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(15,23,42,0.52); backdrop-filter: blur(10px); }
+  .figures-intro-card { width: min(100%, 520px); border-radius: 20px; border: 1px solid rgba(148,163,184,0.35); background: linear-gradient(160deg, rgba(255,255,255,0.97), rgba(239,246,255,0.94)); box-shadow: 0 26px 70px rgba(15,23,42,0.28); padding: 20px; color: #0f172a; }
+  .figures-intro-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .figures-intro-kicker { display: inline-block; font: 700 11px/1.1 system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: #2563eb; }
+  .figures-intro-progress { margin-top: 6px; font: 12px/1.3 system-ui, sans-serif; color: #475569; }
+  .figures-intro-close { width: 34px; height: 34px; border: 1px solid rgba(148,163,184,0.38); border-radius: 999px; background: rgba(255,255,255,0.8); color: #0f172a; font: 400 24px/1 system-ui, sans-serif; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .figures-intro-title { margin: 14px 0 10px; font: 700 clamp(24px, 4vw, 30px)/1.08 system-ui, sans-serif; letter-spacing: -0.03em; }
+  .figures-intro-body { margin: 0; font: 15px/1.6 system-ui, sans-serif; color: #1e293b; }
+  .figures-intro-tip { margin: 14px 0 0; padding: 10px 12px; border-radius: 12px; background: rgba(37,99,235,0.08); font: 13px/1.5 system-ui, sans-serif; color: #1d4ed8; }
+  .figures-intro-dots { display: flex; gap: 8px; margin: 18px 0 0; }
+  .figures-intro-dots span { width: 9px; height: 9px; border-radius: 999px; background: rgba(148,163,184,0.45); }
+  .figures-intro-dots span.active { width: 24px; background: #2563eb; }
+  .figures-intro-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
+  .figures-intro-nav { display: flex; align-items: center; gap: 8px; }
   .account-anchor { position: fixed; top: 12px; left: 12px; z-index: 12; }
   .account-btn { display:inline-flex; align-items:center; gap:6px; background: #ffffff; border:1px solid #d6dbe4; color: #0f172a; padding: 5px 10px; border-radius: 10px; font: 13px/1.2 system-ui, -apple-system, Segoe UI, sans-serif; transition: background .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
   .account-btn:hover, .account-btn:focus-visible { background: #f8fafc; border-color: #c5ccda; color: #0f172a; box-shadow: 0 8px 18px rgba(0,0,0,0.10); }
@@ -7772,6 +7905,13 @@ function clampToDragLengths(person, jointKey, target){
   :global(body.dark-mode) .btn:hover { background:#111827; border-color:#475569; }
   :global(body.dark-mode) .btn--primary { background:#1d4ed8; border-color:#2563eb; color:#e5e7eb; }
   :global(body.dark-mode) .btn--primary:hover { background:#1e40af; border-color:#1d4ed8; }
+  :global(body.dark-mode) .figures-intro-card { background: linear-gradient(160deg, rgba(15,23,42,0.98), rgba(15,23,42,0.92)); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
+  :global(body.dark-mode) .figures-intro-progress,
+  :global(body.dark-mode) .figures-intro-body { color: #cbd5e1; }
+  :global(body.dark-mode) .figures-intro-close { background: rgba(15,23,42,0.92); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
+  :global(body.dark-mode) .figures-intro-tip { background: rgba(37,99,235,0.18); color: #bfdbfe; }
+  :global(body.dark-mode) .figures-intro-dots span { background: rgba(100,116,139,0.7); }
+  :global(body.dark-mode) .figures-intro-dots span.active { background: #60a5fa; }
   :global(body.dark-mode) .input { background:#0b1220; color:#e5e7eb; border-color:#334155; }
   :global(body.dark-mode) .preset-trigger,
   :global(body.dark-mode) select,
@@ -8313,6 +8453,11 @@ function clampToDragLengths(person, jointKey, target){
     .input-with-icon .input { width: 100%; max-width: 100%; }
     .mobile-undo-control { width: 34px; min-width: 34px; padding: 0; border-radius: 9999px; }
     .playback-comment .input { width: 100%; }
+  }
+  @media (max-width: 640px){
+    .figures-intro-card { padding: 16px; border-radius: 18px; }
+    .figures-intro-actions { flex-direction: column; align-items: stretch; }
+    .figures-intro-nav { width: 100%; justify-content: flex-end; }
   }
   @media (max-width: 520px){
     .mirror-pose-btn { display: none; }
