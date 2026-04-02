@@ -1549,7 +1549,7 @@ function isLocked(person, key){
     try{ localStorage.setItem(getFiguresIntroStorageKey(userId), 'true'); }catch(_){}
   }
   function maybeShowFiguresIntro(userId){
-    if (!userId || hasSeenFiguresIntro(userId)) return;
+    if (!userId) return;
     figuresIntroStepIndex = 0;
     compactToolbar = false;
     closeAllMenus();
