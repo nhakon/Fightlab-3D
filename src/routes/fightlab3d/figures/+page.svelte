@@ -742,6 +742,30 @@ function isLocked(person, key){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
     return window.matchMedia('(pointer: coarse)').matches;
   }
+  const desktopShortcuts = [
+    { keys: 'Ctrl + Z', desc: 'Undo last move' },
+    { keys: 'Ctrl + S', desc: 'Save current frame' },
+    { keys: 'Q', desc: 'Toggle torso lock' },
+    { keys: 'E', desc: 'Toggle Natural / Single-Joint' },
+    { keys: 'Click head rotation handle', desc: 'Rotate upper body only' },
+    { keys: 'Ctrl + click head rotation handle', desc: 'Rotate lower body only' },
+    { keys: 'Ctrl + Shift + click head rotation handle', desc: 'Rotate whole figure' },
+    { keys: 'Ctrl + drag joint', desc: 'Move selected figure' },
+    { keys: 'Ctrl + Shift + drag joint', desc: 'Move both figures together' },
+    { keys: 'Tab', desc: 'Toe rotate mode (while dragging)' },
+    { keys: 'Space', desc: 'Play/pause animation (idle) or nudge joint closer (dragging)' },
+    { keys: 'F', desc: 'Nudge joint farther (while dragging)' }
+  ];
+  const mobileShortcuts = [
+    { keys: 'One finger drag', desc: 'Move the selected joint' },
+    { keys: 'Tap a joint or body part', desc: 'Select the figure or joint you want to adjust' },
+    { keys: 'Tap head rotation handle', desc: 'Rotate the upper body' },
+    { keys: 'Two-finger gesture', desc: 'Orbit, pan, and zoom the camera view' },
+    { keys: 'Undo button', desc: 'Undo the last move' },
+    { keys: 'Previous / Play / Next', desc: 'Control playback frame by frame' },
+    { keys: 'Save frame button', desc: 'Store the current frame in the playback' },
+    { keys: 'Menu and toolbar buttons', desc: 'Open presets, playbacks, comments, and settings' }
+  ];
   function isLandscapeSideRailViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
     return window.matchMedia('(pointer: coarse) and (orientation: landscape) and (max-width: 960px)').matches;
@@ -1443,6 +1467,7 @@ function isLocked(person, key){
   let showAccountMenu = false;
   let showAccountShortcuts = false;
   let showAccountSettings = false;
+  let showMobileShortcutList = false;
   let darkMode = false;
   let uiReady = false;
   let navOpen = false;
@@ -1460,6 +1485,9 @@ function isLocked(person, key){
         catch(_){ el.scrollIntoView(); }
       }
     }
+  }
+  function updateShortcutViewportMode(){
+    showMobileShortcutList = isMobileViewport();
   }
   // Pinned controls (custom toolbar). Persisted to localStorage
   let pinnedControls = [];
@@ -1567,6 +1595,7 @@ function isLocked(person, key){
   onMount(async ()=>{
     loadPinnedControls();
     await loadAuthState();
+    updateShortcutViewportMode();
     try{
       const saved = localStorage.getItem('darkMode');
       if (saved === 'true') darkMode = true;
@@ -4008,6 +4037,7 @@ function clampToDragLengths(person, jointKey, target){
 
   function onResize(){
     if (!renderer) return;
+    updateShortcutViewportMode();
     updateMobileViewportInset();
     const viewportSize = getRenderViewportSize();
     const singleViewRect = getSingleViewViewportRect(viewportSize.width, viewportSize.height);
@@ -7007,18 +7037,9 @@ function clampToDragLengths(person, jointKey, target){
         </button>
         {#if showAccountShortcuts}
         <div id="account-shortcuts" class="shortcut-list" style="background:rgba(255,255,255,0.04); border-color:rgba(255,255,255,0.08);">
-          <div class="shortcut-row"><span class="keys">Ctrl + Z</span><span class="desc">Undo last move</span></div>
-          <div class="shortcut-row"><span class="keys">Ctrl + S</span><span class="desc">Save current frame</span></div>
-          <div class="shortcut-row"><span class="keys">Q</span><span class="desc">Toggle torso lock</span></div>
-          <div class="shortcut-row"><span class="keys">E</span><span class="desc">Toggle Natural / Single-Joint</span></div>
-          <div class="shortcut-row"><span class="keys">Click head rotation handle</span><span class="desc">Rotate upper body only</span></div>
-          <div class="shortcut-row"><span class="keys">Ctrl + click head rotation handle</span><span class="desc">Rotate lower body only</span></div>
-          <div class="shortcut-row"><span class="keys">Ctrl + Shift + click head rotation handle</span><span class="desc">Rotate whole figure</span></div>
-          <div class="shortcut-row"><span class="keys">Ctrl + drag joint</span><span class="desc">Move selected figure</span></div>
-          <div class="shortcut-row"><span class="keys">Ctrl + Shift + drag joint</span><span class="desc">Move both figures together</span></div>
-          <div class="shortcut-row"><span class="keys">Tab</span><span class="desc">Toe rotate mode (while dragging)</span></div>
-          <div class="shortcut-row"><span class="keys">Space</span><span class="desc">Play/pause animation (idle) / Nudge joint closer (dragging)</span></div>
-          <div class="shortcut-row"><span class="keys">F</span><span class="desc">Nudge joint farther (while dragging)</span></div>
+          {#each (showMobileShortcutList ? mobileShortcuts : desktopShortcuts) as shortcut}
+            <div class="shortcut-row"><span class="keys">{shortcut.keys}</span><span class="desc">{shortcut.desc}</span></div>
+          {/each}
         </div>
         {/if}
     </div>
