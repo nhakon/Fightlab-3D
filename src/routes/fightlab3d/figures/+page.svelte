@@ -1463,7 +1463,6 @@ function isLocked(person, key){
     { key: 'mirror_pose', label: 'Mirror Pose', action: () => { try{ mirrorPoseYZPlane(); }catch(_){} } },
     { key: 'torso_lock', label: 'Torso Lock (Q)', action: () => { try{ toggleTorsoFreeze(); }catch(_){} } },
     { key: 'movement_mode', label: 'Natural/Single-Joint Mode', action: () => { try{ toggleSingleJointMode(); }catch(_){} } },
-    { key: 'four_view', label: 'Toggle 4-View', action: () => { fourViewMode = !fourViewMode; } },
     { key: 'control_settings', label: 'Control Settings', action: () => { showControlSettings = !showControlSettings; } }
   ];
   const CONTROL_MAP = new Map(AVAILABLE_CONTROLS.map(c=> [c.key, c]));
@@ -1496,7 +1495,6 @@ function isLocked(person, key){
     switch(key){
       case 'torso_lock': return !!torsoFreeze;
       case 'movement_mode': return !!singleJointMode; // highlight when Single-Joint mode is active
-      case 'four_view': return !!fourViewMode;
       case 'control_settings': return !!showControlSettings;
       default: return false;
     }
@@ -7329,7 +7327,6 @@ function clampToDragLengths(person, jointKey, target){
               <button class="btn btn--toggle" class:is-active={!singleJointMode}
                 on:click={toggleSingleJointMode}
                 title="Toggle movement mode (E)">{singleJointMode ? 'Single Joint Mode' : 'Natural Mode'}</button>
-              <button class="btn btn--fourview" on:click={()=> fourViewMode = !fourViewMode}>{fourViewMode ? 'Single View' : '4-View'}</button>
               <button class="btn" class:is-active={torsoFreeze} on:click={toggleTorsoFreeze} title="Torso Lock (Q)">Torso Lock</button>
               <button class="btn mirror-pose-btn" on:click={mirrorPoseYZPlane}>Mirror Pose</button>
             </div>
@@ -7967,6 +7964,18 @@ function clampToDragLengths(person, jointKey, target){
       pointer-events: auto !important;
       display: block !important;
       overflow: visible !important;
+    }
+    .toolbar-collapse-toggle {
+      position: static !important;
+      display: inline-flex !important;
+      align-self: flex-end;
+      margin: 0 0 6px auto;
+      z-index: 4;
+    }
+    .toolbar-layout,
+    .toolbar-layout.is-compact {
+      width: 100% !important;
+      padding: 0 !important;
     }
     .preset-ui.bottom.toolbar-menu-open,
     .preset-ui.bottom.toolbar-menu-open .toolbar-layout,
