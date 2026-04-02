@@ -1505,10 +1505,6 @@ function isLocked(person, key){
   let showMobileShortcutList = false;
   let showFiguresIntro = false;
   let figuresIntroStepIndex = 0;
-  let figuresIntroTargetRect = null;
-  let figuresIntroCalloutStyle = '';
-  let figuresIntroCalloutPlacement = 'below';
-  let figuresIntroPointerOffset = 48;
   let darkMode = false;
   let uiReady = false;
   let navOpen = false;
@@ -1517,9 +1513,7 @@ function isLocked(person, key){
   let featuresRow;
   let figuresIntroSteps = [];
   let activeFiguresIntroStep = null;
-  let toolbarPlayButtonEl;
-  let saveFrameButtonEl;
-  let savePlaybackButtonEl;
+  let currentFiguresIntroTarget = '';
   async function openFigures(){
     showFigures = true;
     navOpen = false;
@@ -1560,8 +1554,6 @@ function isLocked(person, key){
   function closeFiguresIntro(){
     markFiguresIntroSeen(authUserId);
     showFiguresIntro = false;
-    figuresIntroTargetRect = null;
-    figuresIntroCalloutStyle = '';
   }
   function nextFiguresIntroStep(){
     if (figuresIntroStepIndex >= figuresIntroSteps.length - 1){
@@ -1573,72 +1565,12 @@ function isLocked(person, key){
   function previousFiguresIntroStep(){
     figuresIntroStepIndex = Math.max(0, figuresIntroStepIndex - 1);
   }
-  function getFiguresIntroTargetEl(){
-    switch (activeFiguresIntroStep?.target){
-      case 'menu': return accountToggleEl;
-      case 'presets': return presetsToggleEl;
-      case 'playbackControls': return toolbarPlayButtonEl;
-      case 'saveFrame': return saveFrameButtonEl;
-      case 'savePlayback': return savePlaybackButtonEl;
-      default: return null;
-    }
-  }
-  function computeFiguresIntroCalloutStyle(rect){
-    if (!rect || typeof window === 'undefined') return '';
-    const width = Math.min(360, Math.max(260, window.innerWidth - 24));
-    const gap = 14;
-    const preferBelow = rect.bottom + gap + 220 <= window.innerHeight;
-    figuresIntroCalloutPlacement = preferBelow ? 'below' : 'above';
-    const top = preferBelow
-      ? Math.min(window.innerHeight - 24, rect.bottom + gap)
-      : Math.max(16, rect.top - gap - 220);
-    const centeredLeft = rect.left + (rect.width / 2) - (width / 2);
-    const left = Math.min(Math.max(12, centeredLeft), Math.max(12, window.innerWidth - width - 12));
-    figuresIntroPointerOffset = Math.round(Math.min(width - 24, Math.max(24, (rect.left + (rect.width / 2)) - left)));
-    return `top:${Math.round(top)}px; left:${Math.round(left)}px; width:min(calc(100vw - 24px), ${width}px);`;
-  }
-  async function updateFiguresIntroSpotlight(){
-    if (!showFiguresIntro){
-      figuresIntroTargetRect = null;
-      figuresIntroCalloutStyle = '';
-      figuresIntroCalloutPlacement = 'below';
-      return;
-    }
-    await tick();
-    const targetEl = getFiguresIntroTargetEl();
-    if (!targetEl){
-      figuresIntroTargetRect = null;
-      figuresIntroCalloutStyle = '';
-      figuresIntroCalloutPlacement = 'below';
-      return;
-    }
-    const rect = targetEl.getBoundingClientRect?.();
-    if (!rect || !Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0){
-      figuresIntroTargetRect = null;
-      figuresIntroCalloutStyle = '';
-      figuresIntroCalloutPlacement = 'below';
-      return;
-    }
-    figuresIntroTargetRect = {
-      top: rect.top,
-      left: rect.left,
-      width: rect.width,
-      height: rect.height
-    };
-    figuresIntroCalloutStyle = computeFiguresIntroCalloutStyle(figuresIntroTargetRect);
-  }
   $: figuresIntroSteps = buildFiguresIntroSteps(showMobileShortcutList);
   $: if (figuresIntroStepIndex >= figuresIntroSteps.length){
     figuresIntroStepIndex = Math.max(0, figuresIntroSteps.length - 1);
   }
   $: activeFiguresIntroStep = figuresIntroSteps[figuresIntroStepIndex] ?? null;
-  $: if (showFiguresIntro){
-    void updateFiguresIntroSpotlight();
-  } else {
-    figuresIntroTargetRect = null;
-    figuresIntroCalloutStyle = '';
-    figuresIntroCalloutPlacement = 'below';
-  }
+  $: currentFiguresIntroTarget = activeFiguresIntroStep?.target || '';
   // Pinned controls (custom toolbar). Persisted to localStorage
   let pinnedControls = [];
   const SHOW_SAVE_PRESET_BUTTON = false;
@@ -4196,7 +4128,6 @@ function clampToDragLengths(person, jointKey, target){
     if (!renderer) return;
     updateShortcutViewportMode();
     updateMobileViewportInset();
-    void updateFiguresIntroSpotlight();
     const viewportSize = getRenderViewportSize();
     const singleViewRect = getSingleViewViewportRect(viewportSize.width, viewportSize.height);
     camera.aspect = singleViewRect.w / singleViewRect.h;
@@ -7105,28 +7036,7 @@ function clampToDragLengths(person, jointKey, target){
 
   {#if showFiguresIntro && activeFiguresIntroStep}
     <div class="figures-intro-layer" role="presentation">
-      {#if figuresIntroTargetRect}
-        <div
-          class="figures-intro-spotlight"
-          aria-hidden="true"
-          style={`top:${Math.round(figuresIntroTargetRect.top - 6)}px; left:${Math.round(figuresIntroTargetRect.left - 6)}px; width:${Math.round(figuresIntroTargetRect.width + 12)}px; height:${Math.round(figuresIntroTargetRect.height + 12)}px;`}
-        ></div>
-      {/if}
-      <div
-        class="figures-intro-card figures-intro-card--callout"
-        class:is-above={figuresIntroCalloutPlacement === 'above'}
-        class:is-below={figuresIntroCalloutPlacement !== 'above'}
-        style={figuresIntroCalloutStyle}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="figures-intro-title">
-        {#if figuresIntroTargetRect}
-          <div
-            class="figures-intro-pointer"
-            aria-hidden="true"
-            style={`left:${figuresIntroPointerOffset}px;`}
-          ></div>
-        {/if}
+      <div class="figures-intro-card figures-intro-card--centered" role="dialog" aria-modal="true" aria-labelledby="figures-intro-title">
         <div class="figures-intro-header">
           <div>
             <span class="figures-intro-kicker">Getting Started</span>
@@ -7159,7 +7069,7 @@ function clampToDragLengths(person, jointKey, target){
 
   <div class="scene-gradient" aria-hidden="true"></div>
   <div class="account-anchor">
-    <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
+    <button class="btn account-btn" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'menu'} bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
       <svg class="icon account-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span class="account-label">Menu</span>
     </button>
@@ -7287,7 +7197,7 @@ function clampToDragLengths(person, jointKey, target){
               <button class="icon-btn" on:click={prevFrame} title="Previous frame">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="icon-btn icon-btn--primary" class:is-active={playing} bind:this={toolbarPlayButtonEl} on:click={togglePlayback} title="Play / Pause playback">
+              <button class="icon-btn icon-btn--primary" class:is-active={playing} class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'playbackControls'} on:click={togglePlayback} title="Play / Pause playback">
                 {#if playing}
                   <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
                 {:else}
@@ -7309,6 +7219,7 @@ function clampToDragLengths(person, jointKey, target){
                   <button
                     type="button"
                     class="preset-trigger"
+                    class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'presets'}
                     aria-haspopup="true"
                     aria-expanded={showSavedPresetsMenu}
                     bind:this={presetsToggleEl}
@@ -7404,7 +7315,7 @@ function clampToDragLengths(person, jointKey, target){
             <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
                 <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
                 <div class="input-actions playback-input-actions">
-                  <button class="inline-action save-action" bind:this={savePlaybackButtonEl} on:click={saveCurrentPlayback} title="Save playback">
+                  <button class="inline-action save-action" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'savePlayback'} on:click={saveCurrentPlayback} title="Save playback">
                     <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
                   </button>
                   <button class="inline-action" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
@@ -7588,7 +7499,7 @@ function clampToDragLengths(person, jointKey, target){
           <div class="row-right playback-comment-row">
             <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
               <input class="input" type="text" bind:value={comment} placeholder="Frame comment" />
-              <button class="inline-action save-action" bind:this={saveFrameButtonEl} on:click={saveCurrentFrame} title="Save frame">
+              <button class="inline-action save-action" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'saveFrame'} on:click={saveCurrentFrame} title="Save frame">
                 <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               </button>
             </div>
@@ -7788,13 +7699,10 @@ function clampToDragLengths(person, jointKey, target){
   .btn--primary:hover { background: #e5f0ff; }
   /* .btn--ghost removed (unused) */
   .btn--toggle.is-active { border-color: #16a34a; color: #166534; background: #ecfdf5; }
-  .figures-intro-layer { position: fixed; inset: 0; z-index: 1900; pointer-events: none; }
+  .figures-intro-layer { position: fixed; inset: 0; z-index: 1900; display: flex; align-items: center; justify-content: center; padding: 16px; pointer-events: none; }
   .figures-intro-card { width: min(100%, 520px); border-radius: 18px; border: 1px solid rgba(148,163,184,0.35); background: linear-gradient(160deg, rgba(255,255,255,0.98), rgba(239,246,255,0.96)); box-shadow: 0 18px 40px rgba(15,23,42,0.18); padding: 16px 18px; color: #0f172a; }
-  .figures-intro-card--callout { position: fixed; z-index: 1902; pointer-events: auto; }
-  .figures-intro-pointer { position: absolute; left: 48px; width: 16px; height: 16px; transform: translateX(-50%) rotate(45deg); background: inherit; border-left: 1px solid rgba(148,163,184,0.35); border-top: 1px solid rgba(148,163,184,0.35); }
-  .figures-intro-card.is-below .figures-intro-pointer { top: -9px; }
-  .figures-intro-card.is-above .figures-intro-pointer { bottom: -9px; transform: translateX(-50%) rotate(225deg); }
-  .figures-intro-spotlight { position: fixed; z-index: 1901; border-radius: 14px; border: 2px solid rgba(96,165,250,0.98); box-shadow: 0 0 0 6px rgba(96,165,250,0.22), 0 14px 26px rgba(15,23,42,0.18); pointer-events: none; background: transparent; }
+  .figures-intro-card--centered { position: relative; z-index: 1902; pointer-events: auto; }
+  .intro-highlight { border-color: #2563eb !important; box-shadow: 0 0 0 3px rgba(37,99,235,0.24), 0 10px 24px rgba(37,99,235,0.18) !important; background: #eef5ff !important; color: #0b5bd3 !important; }
   .figures-intro-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .figures-intro-kicker { display: inline-block; font: 700 11px/1.1 system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: #2563eb; }
   .figures-intro-progress { margin-top: 6px; font: 12px/1.3 system-ui, sans-serif; color: #475569; }
@@ -8005,8 +7913,7 @@ function clampToDragLengths(person, jointKey, target){
   :global(body.dark-mode) .btn--primary { background:#1d4ed8; border-color:#2563eb; color:#e5e7eb; }
   :global(body.dark-mode) .btn--primary:hover { background:#1e40af; border-color:#1d4ed8; }
   :global(body.dark-mode) .figures-intro-card { background: linear-gradient(160deg, rgba(15,23,42,0.98), rgba(15,23,42,0.94)); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
-  :global(body.dark-mode) .figures-intro-pointer { border-left-color: rgba(59,73,102,0.82); border-top-color: rgba(59,73,102,0.82); }
-  :global(body.dark-mode) .figures-intro-spotlight { border-color: rgba(96,165,250,0.98); box-shadow: 0 0 0 6px rgba(59,130,246,0.2), 0 14px 26px rgba(2,6,23,0.34); }
+  :global(body.dark-mode) .intro-highlight { border-color: #60a5fa !important; box-shadow: 0 0 0 3px rgba(96,165,250,0.26), 0 10px 24px rgba(2,6,23,0.45) !important; background: rgba(29,78,216,0.26) !important; color: #dbeafe !important; }
   :global(body.dark-mode) .figures-intro-progress,
   :global(body.dark-mode) .figures-intro-body { color: #cbd5e1; }
   :global(body.dark-mode) .figures-intro-close { background: rgba(15,23,42,0.92); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
