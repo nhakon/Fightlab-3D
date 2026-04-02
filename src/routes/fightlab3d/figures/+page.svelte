@@ -770,35 +770,34 @@ function isLocked(person, key){
   function buildFiguresIntroSteps(isMobile){
     return [
       {
-        title: 'Welcome to Fightlab 3D',
-        body: 'Start from a preset or the neutral pose, then adjust both figures step by step to build the position you want.',
-        tip: 'This intro shows once per account on this device. You can close it any time.'
+        title: 'Start from presets',
+        body: 'Use this button to load a starting position before you begin adjusting the figures.',
+        tip: 'Pick a built-in preset or reload the current preset here.',
+        target: 'presets'
       },
       {
-        title: 'Move the camera',
-        body: isMobile
-          ? 'Use two fingers to orbit, pan, and zoom so you can inspect the figures from the angle you need.'
-          : 'Use your mouse or trackpad to orbit and zoom the scene so you can inspect the figures from the angle you need.',
-        tip: 'Reposition the view before making detailed joint adjustments.'
+        title: 'Preview the sequence',
+        body: 'Use these playback controls to move between frames and play the sequence back.',
+        tip: isMobile ? 'You can still orbit and zoom the scene with touch gestures while editing.' : 'You can still orbit and zoom the scene with mouse or trackpad while editing.',
+        target: 'playbackControls'
       },
       {
-        title: 'Pose the figures',
-        body: isMobile
-          ? 'Tap a joint or body part to target it, then drag to move it. Tap the head rotation handle when you want to rotate the torso.'
-          : 'Select a joint or body part, then drag it to move. Use the head rotation handle when you want to rotate the torso.',
-        tip: 'Undo is always available if a move is not right.'
-      },
-      {
-        title: 'Build a playback',
-        body: 'Save important poses as frames, then use previous, play, and next to preview the sequence and check the transition between frames.',
-        tip: 'Frame comments help explain what should happen at each step.',
+        title: 'Save a frame',
+        body: 'When a pose looks right, save it as a frame here. The comment field helps explain what should happen in that frame.',
+        tip: 'Build the playback step by step by saving each key position.',
         target: 'saveFrame'
       },
       {
-        title: 'Save and reopen work',
-        body: 'When the sequence looks right, save it as a playback and organize it in folders. Use presets, shortcuts, and account settings from the menu.',
-        tip: 'The shortcuts panel shows touch instructions on mobile and keyboard instructions on desktop.',
+        title: 'Save the playback',
+        body: 'After you have named the sequence, use this save button to store the whole playback.',
+        tip: 'You can organize saved playbacks into folders from the dropdown beside it.',
         target: 'savePlayback'
+      },
+      {
+        title: 'Open the menu',
+        body: 'Use the menu to access account options, settings, and the device-specific shortcuts list.',
+        tip: 'This is also where new users can quickly review the controls again.',
+        target: 'menu'
       }
     ];
   }
@@ -1508,6 +1507,8 @@ function isLocked(person, key){
   let figuresIntroStepIndex = 0;
   let figuresIntroTargetRect = null;
   let figuresIntroCalloutStyle = '';
+  let figuresIntroCalloutPlacement = 'below';
+  let figuresIntroPointerOffset = 48;
   let darkMode = false;
   let uiReady = false;
   let navOpen = false;
@@ -1516,6 +1517,7 @@ function isLocked(person, key){
   let featuresRow;
   let figuresIntroSteps = [];
   let activeFiguresIntroStep = null;
+  let toolbarPlayButtonEl;
   let saveFrameButtonEl;
   let savePlaybackButtonEl;
   async function openFigures(){
@@ -1573,6 +1575,9 @@ function isLocked(person, key){
   }
   function getFiguresIntroTargetEl(){
     switch (activeFiguresIntroStep?.target){
+      case 'menu': return accountToggleEl;
+      case 'presets': return presetsToggleEl;
+      case 'playbackControls': return toolbarPlayButtonEl;
       case 'saveFrame': return saveFrameButtonEl;
       case 'savePlayback': return savePlaybackButtonEl;
       default: return null;
@@ -1583,17 +1588,20 @@ function isLocked(person, key){
     const width = Math.min(360, Math.max(260, window.innerWidth - 24));
     const gap = 14;
     const preferBelow = rect.bottom + gap + 220 <= window.innerHeight;
+    figuresIntroCalloutPlacement = preferBelow ? 'below' : 'above';
     const top = preferBelow
       ? Math.min(window.innerHeight - 24, rect.bottom + gap)
       : Math.max(16, rect.top - gap - 220);
     const centeredLeft = rect.left + (rect.width / 2) - (width / 2);
     const left = Math.min(Math.max(12, centeredLeft), Math.max(12, window.innerWidth - width - 12));
+    figuresIntroPointerOffset = Math.round(Math.min(width - 24, Math.max(24, (rect.left + (rect.width / 2)) - left)));
     return `top:${Math.round(top)}px; left:${Math.round(left)}px; width:min(calc(100vw - 24px), ${width}px);`;
   }
   async function updateFiguresIntroSpotlight(){
     if (!showFiguresIntro){
       figuresIntroTargetRect = null;
       figuresIntroCalloutStyle = '';
+      figuresIntroCalloutPlacement = 'below';
       return;
     }
     await tick();
@@ -1601,12 +1609,14 @@ function isLocked(person, key){
     if (!targetEl){
       figuresIntroTargetRect = null;
       figuresIntroCalloutStyle = '';
+      figuresIntroCalloutPlacement = 'below';
       return;
     }
     const rect = targetEl.getBoundingClientRect?.();
     if (!rect || !Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0){
       figuresIntroTargetRect = null;
       figuresIntroCalloutStyle = '';
+      figuresIntroCalloutPlacement = 'below';
       return;
     }
     figuresIntroTargetRect = {
@@ -1627,6 +1637,7 @@ function isLocked(person, key){
   } else {
     figuresIntroTargetRect = null;
     figuresIntroCalloutStyle = '';
+    figuresIntroCalloutPlacement = 'below';
   }
   // Pinned controls (custom toolbar). Persisted to localStorage
   let pinnedControls = [];
@@ -7093,7 +7104,7 @@ function clampToDragLengths(person, jointKey, target){
   </div>
 
   {#if showFiguresIntro && activeFiguresIntroStep}
-    <div class="figures-intro-backdrop" role="presentation" on:click={(event) => { if (event.target === event.currentTarget) closeFiguresIntro(); }}>
+    <div class="figures-intro-layer" role="presentation">
       {#if figuresIntroTargetRect}
         <div
           class="figures-intro-spotlight"
@@ -7101,7 +7112,21 @@ function clampToDragLengths(person, jointKey, target){
           style={`top:${Math.round(figuresIntroTargetRect.top - 6)}px; left:${Math.round(figuresIntroTargetRect.left - 6)}px; width:${Math.round(figuresIntroTargetRect.width + 12)}px; height:${Math.round(figuresIntroTargetRect.height + 12)}px;`}
         ></div>
       {/if}
-      <div class="figures-intro-card" class:is-anchored={!!figuresIntroTargetRect} style={figuresIntroCalloutStyle} role="dialog" aria-modal="true" aria-labelledby="figures-intro-title">
+      <div
+        class="figures-intro-card figures-intro-card--callout"
+        class:is-above={figuresIntroCalloutPlacement === 'above'}
+        class:is-below={figuresIntroCalloutPlacement !== 'above'}
+        style={figuresIntroCalloutStyle}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="figures-intro-title">
+        {#if figuresIntroTargetRect}
+          <div
+            class="figures-intro-pointer"
+            aria-hidden="true"
+            style={`left:${figuresIntroPointerOffset}px;`}
+          ></div>
+        {/if}
         <div class="figures-intro-header">
           <div>
             <span class="figures-intro-kicker">Getting Started</span>
@@ -7262,7 +7287,7 @@ function clampToDragLengths(person, jointKey, target){
               <button class="icon-btn" on:click={prevFrame} title="Previous frame">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause playback">
+              <button class="icon-btn icon-btn--primary" class:is-active={playing} bind:this={toolbarPlayButtonEl} on:click={togglePlayback} title="Play / Pause playback">
                 {#if playing}
                   <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
                 {:else}
@@ -7763,10 +7788,13 @@ function clampToDragLengths(person, jointKey, target){
   .btn--primary:hover { background: #e5f0ff; }
   /* .btn--ghost removed (unused) */
   .btn--toggle.is-active { border-color: #16a34a; color: #166534; background: #ecfdf5; }
-  .figures-intro-backdrop { position: fixed; inset: 0; z-index: 1900; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(15,23,42,0.52); backdrop-filter: blur(10px); }
-  .figures-intro-card { width: min(100%, 520px); border-radius: 20px; border: 1px solid rgba(148,163,184,0.35); background: linear-gradient(160deg, rgba(255,255,255,0.97), rgba(239,246,255,0.94)); box-shadow: 0 26px 70px rgba(15,23,42,0.28); padding: 20px; color: #0f172a; }
-  .figures-intro-card.is-anchored { position: fixed; margin: 0; z-index: 1902; }
-  .figures-intro-spotlight { position: fixed; z-index: 1901; border-radius: 14px; border: 2px solid rgba(96,165,250,0.95); box-shadow: 0 0 0 9999px rgba(15,23,42,0.28), 0 0 0 8px rgba(96,165,250,0.2), 0 18px 36px rgba(15,23,42,0.35); pointer-events: none; }
+  .figures-intro-layer { position: fixed; inset: 0; z-index: 1900; pointer-events: none; }
+  .figures-intro-card { width: min(100%, 520px); border-radius: 18px; border: 1px solid rgba(148,163,184,0.35); background: linear-gradient(160deg, rgba(255,255,255,0.98), rgba(239,246,255,0.96)); box-shadow: 0 18px 40px rgba(15,23,42,0.18); padding: 16px 18px; color: #0f172a; }
+  .figures-intro-card--callout { position: fixed; z-index: 1902; pointer-events: auto; }
+  .figures-intro-pointer { position: absolute; left: 48px; width: 16px; height: 16px; transform: translateX(-50%) rotate(45deg); background: inherit; border-left: 1px solid rgba(148,163,184,0.35); border-top: 1px solid rgba(148,163,184,0.35); }
+  .figures-intro-card.is-below .figures-intro-pointer { top: -9px; }
+  .figures-intro-card.is-above .figures-intro-pointer { bottom: -9px; transform: translateX(-50%) rotate(225deg); }
+  .figures-intro-spotlight { position: fixed; z-index: 1901; border-radius: 14px; border: 2px solid rgba(96,165,250,0.98); box-shadow: 0 0 0 6px rgba(96,165,250,0.22), 0 14px 26px rgba(15,23,42,0.18); pointer-events: none; background: transparent; }
   .figures-intro-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .figures-intro-kicker { display: inline-block; font: 700 11px/1.1 system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: #2563eb; }
   .figures-intro-progress { margin-top: 6px; font: 12px/1.3 system-ui, sans-serif; color: #475569; }
@@ -7976,8 +8004,9 @@ function clampToDragLengths(person, jointKey, target){
   :global(body.dark-mode) .btn:hover { background:#111827; border-color:#475569; }
   :global(body.dark-mode) .btn--primary { background:#1d4ed8; border-color:#2563eb; color:#e5e7eb; }
   :global(body.dark-mode) .btn--primary:hover { background:#1e40af; border-color:#1d4ed8; }
-  :global(body.dark-mode) .figures-intro-card { background: linear-gradient(160deg, rgba(15,23,42,0.98), rgba(15,23,42,0.92)); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
-  :global(body.dark-mode) .figures-intro-spotlight { border-color: rgba(96,165,250,0.98); box-shadow: 0 0 0 9999px rgba(2,6,23,0.42), 0 0 0 8px rgba(59,130,246,0.22), 0 18px 36px rgba(2,6,23,0.55); }
+  :global(body.dark-mode) .figures-intro-card { background: linear-gradient(160deg, rgba(15,23,42,0.98), rgba(15,23,42,0.94)); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
+  :global(body.dark-mode) .figures-intro-pointer { border-left-color: rgba(59,73,102,0.82); border-top-color: rgba(59,73,102,0.82); }
+  :global(body.dark-mode) .figures-intro-spotlight { border-color: rgba(96,165,250,0.98); box-shadow: 0 0 0 6px rgba(59,130,246,0.2), 0 14px 26px rgba(2,6,23,0.34); }
   :global(body.dark-mode) .figures-intro-progress,
   :global(body.dark-mode) .figures-intro-body { color: #cbd5e1; }
   :global(body.dark-mode) .figures-intro-close { background: rgba(15,23,42,0.92); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
