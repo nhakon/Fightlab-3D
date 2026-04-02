@@ -770,6 +770,11 @@ function isLocked(person, key){
       return;
     }
     if (isLandscapeSideRailViewport()){
+      if (compactToolbar){
+        mobileViewportLeftInset = 0;
+        mobileViewportBottomInset = 0;
+        return;
+      }
       const toolbarRight = toolbarEl?.getBoundingClientRect?.().right;
       mobileViewportLeftInset = Number.isFinite(toolbarRight)
         ? Math.max(0, toolbarRight + 8)
@@ -7977,6 +7982,22 @@ function clampToDragLengths(person, jointKey, target){
       width: 100% !important;
       padding: 0 !important;
     }
+    .preset-ui.bottom.toolbar-compact {
+      top: auto !important;
+      bottom: max(6px, env(safe-area-inset-bottom)) !important;
+      left: max(6px, env(safe-area-inset-left)) !important;
+      right: auto !important;
+      width: auto !important;
+      max-width: none !important;
+      min-width: 0 !important;
+      max-height: none !important;
+      padding: 6px 8px !important;
+      overflow: visible !important;
+    }
+    .preset-ui.bottom.toolbar-compact .toolbar-layout.is-compact {
+      width: auto !important;
+      padding: 0 !important;
+    }
     .preset-ui.bottom.toolbar-menu-open,
     .preset-ui.bottom.toolbar-menu-open .toolbar-layout,
     .preset-ui.bottom.toolbar-menu-open .row-left,
@@ -8133,6 +8154,15 @@ function clampToDragLengths(person, jointKey, target){
       padding: 4px 6px;
       gap: 4px;
       max-height: calc(100dvh - 8px);
+    }
+    .preset-ui.bottom.toolbar-compact {
+      top: auto !important;
+      bottom: max(4px, env(safe-area-inset-bottom)) !important;
+      left: max(4px, env(safe-area-inset-left)) !important;
+      right: auto !important;
+      width: auto !important;
+      max-height: none !important;
+      padding: 4px 6px !important;
     }
     .expanded-grid { gap: 2px 5px; }
     .row-left, .row-center, .row-right { gap: 3px; }
