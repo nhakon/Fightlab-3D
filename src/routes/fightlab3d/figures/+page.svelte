@@ -6347,7 +6347,7 @@ function clampToDragLengths(person, jointKey, target){
         setColor(upperHandleA, hoverA ? HANDLE_COLOR_HOVER : (upperHandleA?.userData?.defaultColor||HANDLE_COLOR_A));
         setColor(upperHandleB, hoverB ? HANDLE_COLOR_HOVER : (upperHandleB?.userData?.defaultColor||HANDLE_COLOR_B));
         // Cursor feedback
-        try{ const el = renderer?.domElement; if (el) el.style.cursor = (hoverA || hoverB) ? 'move' : (lockState==='select' ? 'crosshair' : 'default'); }catch(e){}
+        try{ const el = renderer?.domElement; if (el) el.style.cursor = (lockState==='select' ? 'crosshair' : 'default'); }catch(e){}
       }catch(e){}
       return;
     }
@@ -7060,6 +7060,7 @@ function clampToDragLengths(person, jointKey, target){
               <button class="icon-btn" on:click={nextFrame} title="Next frame">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
+              <span class="counter counter--compact">{poses.length ? (currentFrame + 1) : 0}/{poses.length}</span>
             </div>
           </div>
         </div>
@@ -7519,9 +7520,10 @@ function clampToDragLengths(person, jointKey, target){
   .toolbar-collapse-toggle.is-active { background:#eef5ff; border-color:#3b82f6; color:#0b5bd3; }
   .toolbar-layout { width:100%; padding-inline: 4px; box-sizing: border-box; }
   .toolbar-layout.is-compact { display:block; width:auto; padding:8px 24px 0 0; }
-  .toolbar-layout.is-compact > .toolbar-row:not(.toolbar-row--compact) { display:none; }
-  .toolbar-row--compact { display:none; }
-  .toolbar-layout.is-compact .toolbar-row--compact { display:flex; }
+  .toolbar-layout:not(.is-compact) > .toolbar-row--compact { display:none !important; }
+  .toolbar-layout.is-compact > .toolbar-row:not(.toolbar-row--compact) { display:none !important; }
+  .toolbar-row--compact { display:none !important; }
+  .toolbar-layout.is-compact > .toolbar-row--compact { display:flex !important; }
   .expanded-grid { display:grid; grid-template-columns: repeat(3, minmax(280px, 1fr)); grid-template-rows: repeat(2, auto); gap:4px 10px; align-items:start; justify-items:stretch; }
   .toolbar-row { display:contents; }
   .row-left, .row-center, .row-right { display:flex; align-items:center; justify-content:flex-start; gap:10px; flex-wrap:wrap; min-width:0; max-width:100%; }
@@ -7534,6 +7536,7 @@ function clampToDragLengths(person, jointKey, target){
   .controls-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; }
   .controls-row--expanded { flex-wrap:nowrap; column-gap:10px; }
   .controls-row--compact { justify-content:center; }
+  .counter--compact { min-width: 44px; text-align:center; }
   .speed-inline { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; }
   .speed-inline label { font-size:12px; color:#444; white-space:nowrap; }
   .speed-label { font-size:12px; color:#444; white-space:nowrap; }
