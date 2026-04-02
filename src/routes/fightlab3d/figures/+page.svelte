@@ -7322,27 +7322,28 @@ function clampToDragLengths(person, jointKey, target){
             </div>
           </div>
           <div class="row-right playback-save-row">
-            <div class="playback-dropdown">
-            <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
-                <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
-                <div class="input-actions playback-input-actions">
-                  <button class="inline-action save-action" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'savePlayback'} on:click={saveCurrentPlayback} title="Save playback">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-                  </button>
-                  <button class="inline-action" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </button>
+            <div class="playback-stack">
+              <div class="playback-dropdown">
+                <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
+                  <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
+                  <div class="input-actions playback-input-actions">
+                    <button class="inline-action save-action" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'savePlayback'} on:click={saveCurrentPlayback} title="Save playback">
+                      <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                    </button>
+                    <button class="inline-action" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
+                      <svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                  </div>
                 </div>
-              </div>
-              {#if showSavedPlaybacksMenu}
-                {#key playbacksMenuVersion}
-                <div
-                  class="menu-popup"
-                  role="menu"
-                  aria-label="Playback folders"
-                  tabindex="-1"
-                  bind:this={playbacksMenuEl}
-                  on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, playbackFolderView || '')}>
+                {#if showSavedPlaybacksMenu}
+                  {#key playbacksMenuVersion}
+                  <div
+                    class="menu-popup"
+                    role="menu"
+                    aria-label="Playback folders"
+                    tabindex="-1"
+                    bind:this={playbacksMenuEl}
+                    on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, playbackFolderView || '')}>
                   {#if playbackFolderView === null}
                     <div class="menu-item" style="justify-content:flex-start; gap:6px; cursor:default;">
                       <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => {
@@ -7473,11 +7474,18 @@ function clampToDragLengths(person, jointKey, target){
                       {/each}
                     {:else}
                       <div class="menu-item"><span class="name" style="opacity:.6;">No playbacks in this folder</span></div>
+                      {/if}
                     {/if}
-                  {/if}
-                </div>
-                {/key}
-              {/if}
+                  </div>
+                  {/key}
+                {/if}
+              </div>
+              <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
+                <input class="input" type="text" bind:value={comment} placeholder="Frame comment" />
+                <button class="inline-action save-action" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'saveFrame'} on:click={saveCurrentFrame} title="Save frame">
+                  <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -7505,14 +7513,6 @@ function clampToDragLengths(person, jointKey, target){
                   <input class="slim" id="playback-speed" type="range" min="0" max="100" step="1" value={playbackSpeedPct} on:input={(e)=> setPlaybackSpeedPct(+e.currentTarget.value)} style="width:clamp(90px,16vw,130px);" />
                 </div>
               </div>
-            </div>
-          </div>
-          <div class="row-right playback-comment-row">
-            <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
-              <input class="input" type="text" bind:value={comment} placeholder="Frame comment" />
-              <button class="inline-action save-action" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'saveFrame'} on:click={saveCurrentFrame} title="Save frame">
-                <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-              </button>
             </div>
           </div>
         </div>
@@ -7688,9 +7688,9 @@ function clampToDragLengths(person, jointKey, target){
   .row-center { justify-content:center; }
   .row-center--compact { width:100%; justify-content:center; }
   .row-right { justify-content:flex-end; }
-  .playback-save-row { margin-bottom: -6px; }
-  .playback-comment-row { justify-content:flex-start; }
-  .playback-comment-row { margin-top: -6px; }
+  .playback-save-row { align-items:flex-start; }
+  .playback-stack { display:flex; flex-direction:column; align-items:stretch; gap:0; width:min(100%, 260px); max-width:min(100%, 260px); }
+  .playback-stack > * { width:100%; max-width:100%; }
   .toolbar-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .toolbar-actions.wrap-tight { flex-wrap:nowrap; }
   .controls-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; }
@@ -7713,7 +7713,7 @@ function clampToDragLengths(person, jointKey, target){
   /* .btn--ghost removed (unused) */
   .btn--toggle.is-active { border-color: #16a34a; color: #166534; background: #ecfdf5; }
   .figures-intro-layer { position: fixed; inset: 0; z-index: 1900; display: flex; align-items: center; justify-content: center; padding: 16px; pointer-events: none; }
-  .figures-intro-card { width: min(100%, 520px); border-radius: 18px; border: 1px solid rgba(148,163,184,0.35); background: linear-gradient(160deg, rgba(255,255,255,0.98), rgba(239,246,255,0.96)); box-shadow: 0 18px 40px rgba(15,23,42,0.18); padding: 16px 18px; color: #0f172a; }
+  .figures-intro-card { width: min(100%, 520px); max-height: calc(100dvh - 32px); overflow: auto; border-radius: 18px; border: 1px solid rgba(148,163,184,0.35); background: linear-gradient(160deg, rgba(255,255,255,0.98), rgba(239,246,255,0.96)); box-shadow: 0 18px 40px rgba(15,23,42,0.18); padding: 16px 18px; color: #0f172a; }
   .figures-intro-card--centered { position: relative; z-index: 1902; pointer-events: auto; }
   .intro-highlight { border-color: #2563eb !important; box-shadow: 0 0 0 3px rgba(37,99,235,0.24), 0 10px 24px rgba(37,99,235,0.18) !important; background: #eef5ff !important; color: #0b5bd3 !important; }
   .figures-intro-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -7757,12 +7757,15 @@ function clampToDragLengths(person, jointKey, target){
   .input-actions .inline-action { position:static; right:auto; top:auto; transform:none; flex:0 0 24px; margin-left:0; }
   .playback-input-row { width: min(100%, 260px); max-width: min(100%, 260px); box-sizing: border-box; flex: 0 0 auto; }
   .playback-comment.playback-input-row { width: min(100%, 260px); max-width: min(100%, 260px); box-sizing: border-box; flex: 0 0 auto; }
+  .playback-dropdown { position:relative; width:min(100%, 260px); max-width:min(100%, 260px); }
   .toolbar-field { width: clamp(130px, 14vw, 170px); min-width: 0; max-width: 100%; }
   .toolbar-field--name { width: clamp(190px, 22vw, 260px); }
   .toolbar-frame { width: clamp(190px, 22vw, 260px); max-width: 100%; }
   .playback-comment { min-width: 0; }
   .playback-comment .input { width: 100%; min-width: 0; box-sizing: border-box; }
   .playback-comment { overflow: hidden; }
+  .playback-stack .playback-name-field { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .playback-stack .playback-comment { margin-top: 0; border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
   .inline-action { position:absolute; right:6px; top:50%; transform: translateY(-50%); width:24px; height:24px; padding:0; border:0; background:transparent; cursor:pointer; color:#111; display:inline-flex; align-items:center; justify-content:center; }
   .inline-action.small { width:22px; height:22px; }
   .inline-action.small .icon { width:16px; height:16px; }
@@ -8012,8 +8015,8 @@ function clampToDragLengths(person, jointKey, target){
   .toolbar-field,
   .toolbar-field--name,
   .playback-input-row { max-width: min(100%, 240px); width: min(100%, 240px); }
+  .playback-stack,
   .playback-dropdown,
-  .row-right > .playback-dropdown,
   .row-right { width: min(100%, 240px); max-width: min(100%, 240px); }
   .toolbar-layout,
   .row-left,
@@ -8038,7 +8041,6 @@ function clampToDragLengths(person, jointKey, target){
     .toolbar-row { display:contents; }
     .row-left, .row-center, .row-right { width:auto; min-width:0; justify-content: stretch; gap:4px; max-width: 100%; padding-inline: 2px; }
     .row-left > *, .row-center > *, .row-right > * { width:100%; min-width: 0; max-width: 100%; }
-    .row-right > .playback-input-row { width: min(100%, 260px) !important; max-width: min(100%, 260px) !important; flex: 0 0 auto; }
     .toolbar-actions { width:100%; overflow-x:auto; overflow-y:hidden; flex-wrap:nowrap; justify-content:flex-start; scrollbar-width:none; -ms-overflow-style:none; }
     .toolbar-actions::-webkit-scrollbar { display:none; }
     .toolbar-actions.wrap-tight { flex-wrap: nowrap; }
@@ -8051,6 +8053,7 @@ function clampToDragLengths(person, jointKey, target){
     .btn--fourview { display: none; }
     .playback-input-row { width: min(100%, 260px); max-width: min(100%, 260px); }
     .preset-select-wrap,
+    .playback-stack,
     .playback-dropdown,
     .toolbar-actions { width: calc(100% - 4px); max-width: calc(100% - 4px); }
     .toolbar-field,
@@ -8251,8 +8254,8 @@ function clampToDragLengths(person, jointKey, target){
       word-break: break-word;
       text-wrap: balance;
     }
+    .playback-stack,
     .playback-dropdown,
-    .row-right > .playback-dropdown,
     .row-right {
       width: 100% !important;
       max-width: 100% !important;
@@ -8316,12 +8319,6 @@ function clampToDragLengths(person, jointKey, target){
       width: min(360px, calc(100vw - 190px));
       max-width: calc(100vw - 190px);
     }
-    .playback-comment-row {
-      justify-content: stretch;
-    }
-    .playback-comment-row .playback-comment {
-      width: 100%;
-    }
     :global(body.dark-mode) .preset-ui.bottom {
       background: linear-gradient(150deg, rgba(15,23,42,0.94), rgba(9,12,23,0.9)) !important;
       border-color: rgba(59,73,102,0.8) !important;
@@ -8357,8 +8354,8 @@ function clampToDragLengths(person, jointKey, target){
     .toolbar-field,
     .toolbar-field--name,
     .playback-input-row { max-width: min(100%, 200px); width: min(100%, 200px); }
+    .playback-stack,
     .playback-dropdown,
-    .row-right > .playback-dropdown,
     .row-right { width: min(100%, 200px); max-width: min(100%, 200px); }
   }
   @media (pointer: coarse) and (max-height: 620px){
@@ -8386,8 +8383,8 @@ function clampToDragLengths(person, jointKey, target){
     .toolbar-field,
     .toolbar-field--name,
     .playback-input-row { max-width: min(100%, 220px); width: min(100%, 220px); }
+    .playback-stack,
     .playback-dropdown,
-    .row-right > .playback-dropdown,
     .row-right { width: min(100%, 220px); max-width: min(100%, 220px); }
   }
   @media (pointer: coarse){
@@ -8434,8 +8431,8 @@ function clampToDragLengths(person, jointKey, target){
       justify-content: flex-start;
       overflow: visible;
     }
+    .playback-stack,
     .playback-dropdown,
-    .row-right > .playback-dropdown,
     .row-right,
     .preset-select-wrap.with-actions,
     .playback-input-row,
@@ -8462,7 +8459,6 @@ function clampToDragLengths(person, jointKey, target){
     .preset-select-wrap.with-actions { width: 100%; }
     .row-left, .row-center, .row-right { padding-inline: 3px; }
     .playback-input-row { width: min(100%, 260px) !important; max-width: min(100%, 260px) !important; overflow: hidden; }
-    .row-right > .playback-input-row { width: min(100%, 260px) !important; max-width: min(100%, 260px) !important; }
     .playback-comment.playback-input-row { width: min(100%, 260px) !important; max-width: min(100%, 260px) !important; }
     .input-with-icon { overflow: hidden; }
     .toolbar-field,
@@ -8480,6 +8476,27 @@ function clampToDragLengths(person, jointKey, target){
     .figures-intro-actions { flex-direction: column; align-items: stretch; }
     .figures-intro-nav { width: 100%; justify-content: flex-end; }
   }
+  @media (max-width: 420px), (pointer: coarse) and (orientation: landscape) and (max-height: 430px){
+    .figures-intro-layer {
+      align-items: flex-start;
+      padding: max(8px, env(safe-area-inset-top)) 8px 8px;
+    }
+    .figures-intro-card {
+      width: min(100%, 320px);
+      max-height: calc(100dvh - 16px);
+      padding: 10px 12px;
+      border-radius: 14px;
+    }
+    .figures-intro-header { gap: 8px; }
+    .figures-intro-title { margin: 8px 0 6px; font-size: clamp(18px, 5vw, 22px); }
+    .figures-intro-progress,
+    .figures-intro-body,
+    .figures-intro-tip { font-size: 12px; line-height: 1.4; }
+    .figures-intro-tip { margin-top: 10px; padding: 8px 10px; }
+    .figures-intro-dots { margin-top: 12px; gap: 6px; }
+    .figures-intro-actions { margin-top: 14px; gap: 8px; }
+    .figures-intro-close { width: 30px; height: 30px; font-size: 20px; }
+  }
   @media (pointer: coarse) and (orientation: landscape){
     .figures-intro-layer {
       align-items: flex-start;
@@ -8489,6 +8506,11 @@ function clampToDragLengths(person, jointKey, target){
     }
     .figures-intro-card--centered {
       width: min(100%, 420px);
+    }
+  }
+  @media (max-width: 420px), (pointer: coarse) and (orientation: landscape) and (max-height: 430px){
+    .figures-intro-card--centered {
+      width: min(100%, 320px);
     }
   }
   @media (max-width: 520px){
