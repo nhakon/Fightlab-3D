@@ -5878,6 +5878,10 @@ function clampToDragLengths(person, jointKey, target){
     mouse.x = ndc.x; mouse.y = ndc.y;
     virtCursorX = event.clientX; virtCursorY = event.clientY;
     mouseLockedToJoint = false;
+    if (!dragging && (isCtrlLike || event.shiftKey)){
+      const modifierHandlePerson = (edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event);
+      if (modifierHandlePerson && startUpperHandleDrag(event, modifierHandlePerson, view, cam, ctrlOnly, handleWholeFigure)) return;
+    }
     // Prefer joints and body hits before the rotation handle so hidden handles cannot steal the click.
     let hit = edgeJointHit || pickJoint(event, { allowFallback: false });
     const hitBody = !hit ? (edgeHipHit || pickHipBody(event)) : null;
