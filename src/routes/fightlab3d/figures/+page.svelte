@@ -2931,10 +2931,6 @@ function isLocked(person, key){
       syncMeshesNoSolve();
       return;
     }
-    if (bridgeDrag.active) {
-      syncMeshesNoSolve();
-      return;
-    }
     // Handle-rotation uses world-space joints that can include twist; keep meshes
     // in sync without re-deriving joints from skeleton during the drag.
     if (upperDrag.active || lowerHandleDrag.active) {
@@ -7651,8 +7647,8 @@ function clampToDragLengths(person, jointKey, target){
   .toolbar-collapse-toggle { position:absolute; top:8px; right:8px; width:28px; height:28px; padding:0; border:1px solid #d0d7de; border-radius:9999px; background:#fff; color:#111; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; z-index:2; }
   .toolbar-collapse-toggle:hover { background:#f7f8fa; border-color:#c4cbd3; }
   .toolbar-collapse-toggle.is-active { background:#eef5ff; border-color:#3b82f6; color:#0b5bd3; }
-  .toolbar-layout { width:100%; padding: 8px 40px 0 4px; box-sizing: border-box; }
-  .toolbar-layout.is-compact { display:block; width:auto; padding:8px 40px 0 4px; }
+  .toolbar-layout { width:100%; padding-inline: 4px; box-sizing: border-box; }
+  .toolbar-layout.is-compact { display:block; width:auto; padding:8px 24px 0 0; }
   .toolbar-layout:not(.is-compact) > .toolbar-row--compact { display:none !important; }
   .toolbar-layout.is-compact > .toolbar-row:not(.toolbar-row--compact) { display:none !important; }
   .toolbar-row--compact { display:none !important; }
