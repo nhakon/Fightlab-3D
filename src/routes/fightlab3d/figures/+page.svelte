@@ -648,10 +648,11 @@ let shoulderCenterToNeckLenB = 0;
   const HIGHLIGHT_COLOR = 0xff2d2d;
   const JOINT_BASE_COLOR_LIGHT = 0x111111;
   const JOINT_BASE_COLOR_DARK = 0xffffff;
+  const JOINT_COLOR_A = 0x000000;
+  const JOINT_COLOR_B = 0x4a4a4a;
   function getJointDefaultColor(person){
-    const scheme = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
-    if (person === 'A') return scheme.A;
-    if (person === 'B') return scheme.B;
+    if (person === 'A') return JOINT_COLOR_A;
+    if (person === 'B') return JOINT_COLOR_B;
     return darkMode ? JOINT_BASE_COLOR_DARK : JOINT_BASE_COLOR_LIGHT;
   }
   function applyJointDefaultColors(){
