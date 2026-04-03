@@ -3138,6 +3138,66 @@ function isLocked(person, key){
     return v.clone().sub(nn.multiplyScalar(v.clone().dot(nn)));
   }
 
+  function clampBridgeTargetCenter(currentCenter, targetCenter, leftOffset, rightOffset, joints){
+    const footL = new THREE.Vector3(...joints.footL);
+    const footR = new THREE.Vector3(...joints.footR);
+    const hipLNow = new THREE.Vector3(...joints.hipL);
+    const hipRNow = new THREE.Vector3(...joints.hipR);
+    const kneeL = new THREE.Vector3(...joints.kneeL);
+    const kneeR = new THREE.Vector3(...joints.kneeR);
+    const reachL = Math.max(1e-4, hipLNow.distanceTo(kneeL) + kneeL.distanceTo(footL) - 1e-4);
+    const reachR = Math.max(1e-4, hipRNow.distanceTo(kneeR) + kneeR.distanceTo(footR) - 1e-4);
+    const delta = targetCenter.clone().sub(currentCenter);
+    const isReachable = (scale)=>{
+      const center = currentCenter.clone().addScaledVector(delta, scale);
+      const nextHipL = center.clone().add(leftOffset);
+      const nextHipR = center.clone().add(rightOffset);
+      return nextHipL.distanceTo(footL) <= reachL && nextHipR.distanceTo(footR) <= reachR;
+    };
+    if (isReachable(1)) return targetCenter.clone();
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 18; i += 1){
+      const mid = (lo + hi) * 0.5;
+      if (isReachable(mid)) lo = mid;
+      else hi = mid;
+    }
+    return currentCenter.clone().addScaledVector(delta, lo);
+  }
+
+  function solveBridgeKnee(hipOld, kneeOld, foot, hipNew){
+    const upperLen = hipOld.distanceTo(kneeOld);
+    const lowerLen = kneeOld.distanceTo(foot);
+    const toFoot = foot.clone().sub(hipNew);
+    let dist = toFoot.length();
+    const maxReach = Math.max(1e-4, upperLen + lowerLen - 1e-4);
+    if (dist > maxReach) dist = maxReach;
+    const ex = dist > 1e-6 ? toFoot.clone().multiplyScalar(1 / toFoot.length()) : foot.clone().sub(hipOld).normalize();
+    const a = (upperLen * upperLen - lowerLen * lowerLen + dist * dist) / (2 * Math.max(dist, 1e-6));
+    const center = hipNew.clone().add(ex.clone().multiplyScalar(a));
+    const h2 = Math.max(0, upperLen * upperLen - a * a);
+    const h = Math.sqrt(h2);
+
+    let perp = projectPerp(kneeOld.clone().sub(center), ex);
+    if (perp.lengthSq() < 1e-8){
+      const oldPlaneNormal = hipOld.clone().sub(kneeOld).cross(foot.clone().sub(kneeOld));
+      perp = projectPerp(oldPlaneNormal.clone().cross(ex), ex);
+    }
+    if (perp.lengthSq() < 1e-8){
+      perp = projectPerp(new THREE.Vector3(0, 1, 0), ex);
+    }
+    if (perp.lengthSq() < 1e-8){
+      perp = projectPerp(new THREE.Vector3(1, 0, 0), ex);
+    }
+    if (perp.lengthSq() < 1e-8){
+      return center;
+    }
+    perp.normalize();
+    const candidateA = center.clone().add(perp.clone().multiplyScalar(h));
+    const candidateB = center.clone().add(perp.clone().multiplyScalar(-h));
+    return candidateA.distanceTo(kneeOld) <= candidateB.distanceTo(kneeOld) ? candidateA : candidateB;
+  }
+
   // New: strict clamp where shoulders behave exactly like hips (fixed radius to center)
   function clampToDragLengthsStrict(person, jointKey, target){
     const isHip = (jointKey === 'hipL' || jointKey === 'hipR');
@@ -6659,35 +6719,27 @@ function clampToDragLengths(person, jointKey, target){
         const hipR0 = bridgeDrag.hipRStart;
         const center0 = bridgeDrag.hipCenterStart;
         const targetCenter = target.clone();
-        targetCenter.y = Math.max(targetCenter.y, FLOOR_Y + 0.02);
-        // Prevent unstable behavior: clamp maximum hip center height so legs can still reach the floor.
-        try {
-          const hipLNow = new THREE.Vector3(...joints.hipL);
-          const hipRNow = new THREE.Vector3(...joints.hipR);
-          const kneeL = new THREE.Vector3(...joints.kneeL);
-          const kneeR = new THREE.Vector3(...joints.kneeR);
-          const footL = new THREE.Vector3(...joints.footL);
-          const footR = new THREE.Vector3(...joints.footR);
-          const footY = Math.min(footL.y, footR.y);
-          const legLenL = hipLNow.distanceTo(kneeL) + kneeL.distanceTo(footL);
-          const legLenR = hipRNow.distanceTo(kneeR) + kneeR.distanceTo(footR);
-          const legLen = Math.max(1e-4, Math.min(legLenL, legLenR));
-          const maxCenterY = footY + legLen * 0.98;
-          if (targetCenter.y > maxCenterY) {
-            // Once at the height limit, ignore further upward drag to avoid solver freak-outs.
-            return;
-          }
-        } catch(e) {}
         const hipLNow = new THREE.Vector3(...joints.hipL);
         const hipRNow = new THREE.Vector3(...joints.hipR);
         const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
         const leftOffset = hipL0.clone().sub(center0);
         const rightOffset = hipR0.clone().sub(center0);
-        const newHipL = targetCenter.clone().add(leftOffset);
-        const newHipR = targetCenter.clone().add(rightOffset);
+        const clampedCenter = clampBridgeTargetCenter(currentCenter, targetCenter, leftOffset, rightOffset, joints);
+        const newHipL = clampedCenter.clone().add(leftOffset);
+        const newHipR = clampedCenter.clone().add(rightOffset);
+        const kneeLNow = new THREE.Vector3(...joints.kneeL);
+        const kneeRNow = new THREE.Vector3(...joints.kneeR);
+        const footLNow = new THREE.Vector3(...joints.footL);
+        const footRNow = new THREE.Vector3(...joints.footR);
+        const newKneeL = solveBridgeKnee(hipLNow, kneeLNow, footLNow, newHipL);
+        const newKneeR = solveBridgeKnee(hipRNow, kneeRNow, footRNow, newHipR);
         joints.hipL = [newHipL.x, newHipL.y, newHipL.z];
         joints.hipR = [newHipR.x, newHipR.y, newHipR.z];
-        const delta = targetCenter.clone().sub(currentCenter);
+        joints.kneeL = [newKneeL.x, newKneeL.y, newKneeL.z];
+        joints.kneeR = [newKneeR.x, newKneeR.y, newKneeR.z];
+        joints.footL = [footLNow.x, footLNow.y, footLNow.z];
+        joints.footR = [footRNow.x, footRNow.y, footRNow.z];
+        const delta = clampedCenter.clone().sub(currentCenter);
         if (delta.lengthSq() > 1e-12) {
           const keys = ['shoulderL','shoulderR','elbowL','elbowR','handL','handR','neck','head'];
           for (const key of keys){
