@@ -1428,7 +1428,7 @@ function isLocked(person, key){
   let playbacksMenuEl;
   let playbacksToggleEl;
   let playbackContextEl;
-  let playbackContextMenu = { visible:false, x:0, y:0, folder:'' };
+  let playbackContextMenu = { visible:false, x:0, y:0, folder:'', playbackIdx:-1, label:'' };
   let playbacksMenuVersion = 0;
   let compactToolbar = false;
   let presetsMenuEl;
@@ -5373,12 +5373,50 @@ function clampToDragLengths(person, jointKey, target){
     playbacksMenuVersion += 1;
     syncOpenPlaybackFolders();
   }
-  function openPlaybackContext(e, folderName=''){
+  function renamePlaybackFolder(oldName, nextName){
+    const prev = folderKey(oldName);
+    const next = folderKey(nextName);
+    if (!prev || !next || prev === next) return;
+    const isDescendant = (value)=> value === prev || value.startsWith(`${prev}/`);
+    const remap = (value)=>{
+      const key = folderKey(value);
+      if (!isDescendant(key)) return key;
+      if (key === prev) return next;
+      return `${next}${key.slice(prev.length)}`;
+    };
+    playbackFolders = Array.from(new Set(playbackFolders.map(remap).filter(Boolean)));
+    savedPlaybacks = savedPlaybacks.map((pb)=> ({ ...pb, folder: remap(pb.folder) }));
+    if (playbackFolderView && isDescendant(playbackFolderView)) playbackFolderView = remap(playbackFolderView);
+    if (editingPlaybackFolder && isDescendant(editingPlaybackFolder)) editingPlaybackFolder = remap(editingPlaybackFolder);
+    persistPlaybackFolders();
+    persistSavedPlaybacks();
+    playbackGroups = groupPlaybacks(savedPlaybacks);
+    playbackFolders = [...playbackFolders];
+    playbackGroups = [...playbackGroups];
+    playbacksMenuVersion += 1;
+    syncOpenPlaybackFolders();
+  }
+  function promptRenamePlaybackFolder(folderName){
+    const current = folderKey(folderName);
+    if (!current) return;
+    const leaf = current.split('/').filter(Boolean).pop() || current;
+    const val = prompt('Rename folder', leaf);
+    if (!val || !val.trim()) return;
+    const parent = current.includes('/') ? current.slice(0, current.lastIndexOf('/')) : '';
+    const next = combineFolderPath(parent, val);
+    renamePlaybackFolder(current, next);
+  }
+  function openPlaybackContext(e, opts = {}){
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
-    playbackContextMenu = { visible:true, x: e?.clientX||0, y: e?.clientY||0, folder: folderKey(folderName) };
+    const folder = typeof opts === 'string' ? folderKey(opts) : folderKey(opts.folderName);
+    const playbackIdx = Number.isInteger(opts?.playbackIdx) ? opts.playbackIdx : -1;
+    const label = playbackIdx >= 0
+      ? (savedPlaybacks?.[playbackIdx]?.name || `Playback ${playbackIdx + 1}`)
+      : (folder ? folder.split('/').filter(Boolean).pop() || folder : '');
+    playbackContextMenu = { visible:true, x: e?.clientX||0, y: e?.clientY||0, folder, playbackIdx, label };
   }
   function closePlaybackContext(){
-    playbackContextMenu = { visible:false, x:0, y:0, folder:'' };
+    playbackContextMenu = { visible:false, x:0, y:0, folder:'', playbackIdx:-1, label:'' };
   }
   function movePlaybackToFolder(idx, folderName){
     const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
@@ -6673,7 +6711,6 @@ function clampToDragLengths(person, jointKey, target){
   }
 
   function pointerUpHandler(event){
-    const bridgeReleasePerson = bridgeDrag.active ? bridgeDrag.person : null;
     try{ if (renderer?.domElement?.releasePointerCapture) renderer.domElement.releasePointerCapture(event.pointerId); }catch(e){}
     if (event?.pointerType === 'touch' && event?.pointerId != null){
       activeTouchPointers.delete(event.pointerId);
@@ -6708,22 +6745,10 @@ function clampToDragLengths(person, jointKey, target){
         } else if (upperDrag.person === 'A') syncSkeletonFromJoints('A'); else if (upperDrag.person === 'B') syncSkeletonFromJoints('B');
       } else if (lowerHandleDrag.active){
         if (lowerHandleDrag.person === 'A') syncSkeletonFromJoints('A'); else if (lowerHandleDrag.person === 'B') syncSkeletonFromJoints('B');
-      } else if (bridgeReleasePerson){
-        syncSkeletonFromJoints(bridgeReleasePerson);
       } else if (activeJointIdx != null){
         if (activePerson === 'A') syncSkeletonFromJoints('A'); else if (activePerson === 'B') syncSkeletonFromJoints('B');
       }
     } catch(e){}
-    try{
-      if (bridgeReleasePerson){
-        const skel = bridgeReleasePerson === 'A' ? skeletonA : skeletonB;
-        if (skel){
-          groundSkeleton(skel);
-          if (bridgeReleasePerson === 'A') jointsA = jointsFromSkeleton(skel);
-          else jointsB = jointsFromSkeleton(skel);
-        }
-      }
-    }catch(e){}
     // If the user was dragging the head/neck, update the preferred local head rotation
     try{
       if (headDragPerson === 'A' && skeletonA){
@@ -6752,9 +6777,6 @@ function clampToDragLengths(person, jointKey, target){
     upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.baseRelOther.clear(); upperDrag.pivotOther.set(0,0,0);
     natLock = { active:false, person:null, spineBefore:null, headBefore:null, headDrag:false };
     stopDepthNudge();
-    if (bridgeReleasePerson){
-      updateMeshesFromJoints();
-    }
   }
 
   function wheelHandler(event){
@@ -7259,13 +7281,16 @@ function clampToDragLengths(person, jointKey, target){
                             class="menu-row-btn"
                             style="flex:1; text-align:left; display:flex; align-items:center; gap:6px;"
                             on:click={() => playbackFolderView = folderName}
-                            on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, folderName)}
+                            on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, { folderName })}
                             on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); playbackFolderView = folderName; }}}
                             on:dragover|preventDefault={() => {
                               if (draggingPlaybackIdx!=null) movePlaybackToFolder(draggingPlaybackIdx, folderName);
                             }}>
                             <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                             <span class="name">{folderName}</span>
+                          </button>
+                          <button class="inline-action small edit-action" on:click|stopPropagation={() => promptRenamePlaybackFolder(folderName)} title="Rename folder">
+                            <svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.5 3.5l4 4-10 10H6.5v-4.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                           </button>
                           <button class="inline-action small danger-action" on:click|stopPropagation={() => deletePlaybackFolder(folderName)} title="Delete folder">
                             <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
@@ -7274,7 +7299,7 @@ function clampToDragLengths(person, jointKey, target){
                       {/each}
                       {#if playbacksInFolder('').length}
                         {#each playbacksInFolder('') as pb (pb._idx)}
-                          <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null}>
+                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null} on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, { playbackIdx: pb._idx, folderName: pb.folder })}>
                             <button type="button" class="menu-row-btn" on:click={() => { loadSavedPlayback(pb._idx); showSavedPlaybacksMenu=false; }}>
                               <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
                             </button>
@@ -7344,9 +7369,13 @@ function clampToDragLengths(person, jointKey, target){
                             class="menu-row-btn"
                             style="flex:1; text-align:left; display:flex; align-items:center; gap:6px;"
                             on:click={() => playbackFolderView = sub}
+                            on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, { folderName: sub })}
                             on:dragover|preventDefault={() => { if (draggingPlaybackIdx!=null) movePlaybackToFolder(draggingPlaybackIdx, sub); }}>
                             <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                             <span class="name">{sub}</span>
+                          </button>
+                          <button class="inline-action small edit-action" on:click|stopPropagation={() => promptRenamePlaybackFolder(sub)} title="Rename folder">
+                            <svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.5 3.5l4 4-10 10H6.5v-4.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                           </button>
                           <button class="inline-action small danger-action" on:click|stopPropagation={() => deletePlaybackFolder(sub)} title="Delete folder">
                             <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
@@ -7356,7 +7385,7 @@ function clampToDragLengths(person, jointKey, target){
                     {/if}
                     {#if playbacksInFolder(playbackFolderView).length}
                       {#each playbacksInFolder(playbackFolderView) as pb (pb._idx)}
-                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null}>
+                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null} on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, { playbackIdx: pb._idx, folderName: pb.folder })}>
                           <button type="button" class="menu-row-btn" on:click={() => { loadSavedPlayback(pb._idx); showSavedPlaybacksMenu=false; }}>
                             <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
                           </button>
@@ -7395,7 +7424,6 @@ function clampToDragLengths(person, jointKey, target){
                 on:click={toggleSingleJointMode}
                 title="Toggle movement mode (E)">{singleJointMode ? 'Single Joint Mode' : 'Natural Mode'}</button>
               <button class="btn" class:is-active={torsoFreeze} on:click={toggleTorsoFreeze} title="Torso Lock (Q)">Torso Lock</button>
-              <button class="btn mirror-pose-btn" on:click={mirrorPoseYZPlane}>Mirror Pose</button>
             </div>
           </div>
           <div class="row-center">
@@ -7419,15 +7447,27 @@ function clampToDragLengths(person, jointKey, target){
 
       {#if playbackContextMenu.visible}
         <div
-          class="menu-popup"
+          class="menu-popup playback-context-popup"
           role="menu"
-          aria-label="Playback folder context menu"
+          aria-label="Playback context menu"
           tabindex="-1"
           bind:this={playbackContextEl}
-          style="position:fixed; left:{playbackContextMenu.x}px; top:{playbackContextMenu.y}px; z-index:1300; min-width:180px;"
+          style="position:fixed; left:{playbackContextMenu.x}px; top:{playbackContextMenu.y}px; z-index:1300; min-width:220px;"
           on:click|stopPropagation={() => {}}
           on:keydown|stopPropagation={() => {}}
           on:contextmenu|preventDefault={() => {}}>
+          <div class="playback-context-popup__title">
+            {#if playbackContextMenu.playbackIdx >= 0}
+              Playback
+            {:else if playbackContextMenu.folder}
+              Folder
+            {:else}
+              Playback Library
+            {/if}
+          </div>
+          {#if playbackContextMenu.label}
+            <div class="playback-context-popup__label">{playbackContextMenu.label}</div>
+          {/if}
           <button
             type="button"
             class="menu-item"
@@ -7444,6 +7484,43 @@ function clampToDragLengths(person, jointKey, target){
             on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
             <span class="name">Add folder here</span>
           </button>
+          {#if playbackContextMenu.folder}
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitem"
+              on:click={() => {
+                promptRenamePlaybackFolder(playbackContextMenu.folder);
+                closePlaybackContext();
+              }}
+              on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
+              <span class="name">Rename folder</span>
+            </button>
+          {/if}
+          {#if playbackContextMenu.playbackIdx >= 0}
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitem"
+              on:click={() => {
+                startPlaybackEdit(playbackContextMenu.playbackIdx);
+                closePlaybackContext();
+              }}
+              on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
+              <span class="name">Edit playback</span>
+            </button>
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitem"
+              on:click={() => {
+                deleteSavedPlayback(playbackContextMenu.playbackIdx);
+                closePlaybackContext();
+              }}
+              on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
+              <span class="name">Delete playback</span>
+            </button>
+          {/if}
           {#if playbackContextMenu.folder}
             <button
               type="button"
@@ -7574,8 +7651,8 @@ function clampToDragLengths(person, jointKey, target){
   .toolbar-collapse-toggle { position:absolute; top:8px; right:8px; width:28px; height:28px; padding:0; border:1px solid #d0d7de; border-radius:9999px; background:#fff; color:#111; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; z-index:2; }
   .toolbar-collapse-toggle:hover { background:#f7f8fa; border-color:#c4cbd3; }
   .toolbar-collapse-toggle.is-active { background:#eef5ff; border-color:#3b82f6; color:#0b5bd3; }
-  .toolbar-layout { width:100%; padding-inline: 4px; box-sizing: border-box; }
-  .toolbar-layout.is-compact { display:block; width:auto; padding:8px 24px 0 0; }
+  .toolbar-layout { width:100%; padding: 8px 40px 0 4px; box-sizing: border-box; }
+  .toolbar-layout.is-compact { display:block; width:auto; padding:8px 40px 0 4px; }
   .toolbar-layout:not(.is-compact) > .toolbar-row--compact { display:none !important; }
   .toolbar-layout.is-compact > .toolbar-row:not(.toolbar-row--compact) { display:none !important; }
   .toolbar-row--compact { display:none !important; }
@@ -7682,6 +7759,12 @@ function clampToDragLengths(person, jointKey, target){
   input[type="range"].slim::-moz-range-track { height: 6px; background: #fff; border-radius: 9999px; border: 1px solid #000; box-shadow: inset 0 1px 0 rgba(0,0,0,0.08); }
   input[type="range"].slim::-moz-range-thumb { width: 14px; height: 14px; background: #3b82f6; border: 0; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.18); }
   .menu-popup { position:absolute; bottom: 110%; right:0; background:linear-gradient(135deg, #ffffff 0%, #f6f7fb 100%); border:1px solid #d0d7de; border-radius:12px; box-shadow:0 10px 28px rgba(0,0,0,0.14); padding:6px; min-width: 200px; max-height: 240px; max-width: min(100vw - 18px, 420px); width: min(420px, 100%); overflow:auto; z-index: 12; box-sizing: border-box; }
+  .playback-context-popup { background: linear-gradient(180deg, rgba(255,255,255,0.99), rgba(244,247,252,0.98)); border-color:#b9c6d8; box-shadow: 0 18px 42px rgba(15,23,42,0.28); color:#0f172a; }
+  .playback-context-popup__title { padding: 6px 8px 2px; font: 700 11px/1.2 system-ui, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color:#475569; }
+  .playback-context-popup__label { margin: 0 8px 6px; padding: 8px 10px; border-radius: 8px; background: rgba(148,163,184,0.14); font: 600 13px/1.35 system-ui, sans-serif; color:#0f172a; word-break: break-word; }
+  .playback-context-popup .menu-item { min-height: 34px; }
+  .playback-context-popup .menu-item:hover { background: rgba(37,99,235,0.10); }
+  .playback-context-popup .menu-item .name { color:#0f172a; }
   .preset-menu { display:grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap:8px 12px; min-width: 420px; width: min(100vw - 18px, 760px); max-width: calc(100vw - 18px); }
   .preset-menu-col { display:flex; flex-direction:column; gap:4px; }
   .menu-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px; cursor:pointer; border-radius:6px; }
@@ -7766,6 +7849,11 @@ function clampToDragLengths(person, jointKey, target){
     border-color: rgba(59,73,102,0.8);
     color: #e5e7eb;
   }
+  :global(body.dark-mode) .playback-context-popup { background: linear-gradient(180deg, rgba(15,23,42,0.99), rgba(8,12,22,0.97)); border-color: rgba(96,165,250,0.35); box-shadow: 0 18px 42px rgba(0,0,0,0.48); color:#e5e7eb; }
+  :global(body.dark-mode) .playback-context-popup__title { color:#94a3b8; }
+  :global(body.dark-mode) .playback-context-popup__label { background: rgba(148,163,184,0.14); color:#f8fafc; }
+  :global(body.dark-mode) .playback-context-popup .menu-item:hover { background: rgba(59,130,246,0.18); }
+  :global(body.dark-mode) .playback-context-popup .menu-item .name { color:#e5e7eb; }
   :global(body.dark-mode) .account-btn {
     background: #0f172a;
     border-color: #334155;
@@ -8344,8 +8432,5 @@ function clampToDragLengths(person, jointKey, target){
     .input-with-icon .input { width: 100%; max-width: 100%; }
     .mobile-undo-control { width: 34px; min-width: 34px; padding: 0; border-radius: 9999px; }
     .playback-comment .input { width: 100%; }
-  }
-  @media (max-width: 520px){
-    .mirror-pose-btn { display: none; }
   }
 </style>
