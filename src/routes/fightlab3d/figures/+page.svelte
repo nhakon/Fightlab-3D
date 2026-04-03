@@ -648,6 +648,27 @@ let shoulderCenterToNeckLenB = 0;
   const HIGHLIGHT_COLOR = 0xff2d2d;
   const JOINT_BASE_COLOR_LIGHT = 0x111111;
   const JOINT_BASE_COLOR_DARK = 0xffffff;
+  const JOINT_COLOR_MAP = {
+    head: 0xd97706,
+    neck: 0xf59e0b,
+    shoulderL: 0x2563eb,
+    elbowL: 0x0891b2,
+    handL: 0x0f766e,
+    hipL: 0x7c3aed,
+    kneeL: 0x9333ea,
+    footL: 0x16a34a,
+    toeL: 0x15803d,
+    shoulderR: 0xdc2626,
+    elbowR: 0xf97316,
+    handR: 0xea580c,
+    hipR: 0xdb2777,
+    kneeR: 0xe11d48,
+    footR: 0x65a30d,
+    toeR: 0x4d7c0f
+  };
+  function getJointDefaultColor(key){
+    return JOINT_COLOR_MAP[key] ?? (darkMode ? JOINT_BASE_COLOR_DARK : JOINT_BASE_COLOR_LIGHT);
+  }
   const FACE_FEATURE_COLOR = 0xdddddd;
   // Active snap animations for constraints (linear root translation)
   let activeSnaps = []; // { follower:'A'|'B', initialRoot:THREE.Vector3, delta:THREE.Vector3, t0:number, dur:number }
@@ -1577,10 +1598,10 @@ function isLocked(person, key){
     try{
       if (groundMesh?.material?.color) groundMesh.material.color.setHex(darkMode ? groundDark : groundLight);
     }catch(_){}
-    const jointColor = darkMode ? JOINT_BASE_COLOR_DARK : JOINT_BASE_COLOR_LIGHT;
     const allJoints = [...(jointMeshesA || []), ...(jointMeshesB || [])];
     for (const m of allJoints){
       try{
+        const jointColor = getJointDefaultColor(m?.userData?.key);
         if (m?.material?.color) m.material.color.setHex(jointColor);
         if (m?.userData) m.userData.defaultColor = jointColor;
       }catch(_){}
@@ -2437,17 +2458,16 @@ function isLocked(person, key){
     // per-sphere materials to allow individual highlighting
     const bodyMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.55, metalness: 0.05 });
 
-    const jointBaseColor = darkMode ? JOINT_BASE_COLOR_DARK : JOINT_BASE_COLOR_LIGHT;
-    const makeJointMat = () => new THREE.MeshStandardMaterial({ color: jointBaseColor, roughness: 0.35, metalness: 0.02 });
+    const makeJointMat = (key) => new THREE.MeshStandardMaterial({ color: getJointDefaultColor(key), roughness: 0.35, metalness: 0.02 });
     // joint spheres (head bigger; ONLY shoulders slightly larger)
     for (const key of JOINT_KEYS) {
       const radius = key === "head"
         ? HEAD_RADIUS
         : (key.startsWith("shoulder") ? JOINT_BASE_R * SHOULDER_JOINT_SCALE : JOINT_BASE_R);
-      const sphere = new THREE.Mesh(new THREE.SphereGeometry(radius, 24, 18), makeJointMat());
+      const sphere = new THREE.Mesh(new THREE.SphereGeometry(radius, 24, 18), makeJointMat(key));
       sphere.position.set(...joints[key]);
       sphere.userData.key = key;
-      sphere.userData.defaultColor = jointBaseColor;
+      sphere.userData.defaultColor = getJointDefaultColor(key);
       group.add(sphere);
       jointSpheres.push(sphere);
     }
@@ -2496,14 +2516,14 @@ function isLocked(person, key){
     group.add(handLBox); group.add(handRBox); group.add(footLBox); group.add(footRBox);
     // Toe control joints (smaller spheres at toe tips; positioned later)
     const toeRadius = JOINT_BASE_R * TOE_JOINT_SCALE;
-    const toeLJoint = new THREE.Mesh(new THREE.SphereGeometry(toeRadius, 16, 12), makeJointMat());
-    const toeRJoint = new THREE.Mesh(new THREE.SphereGeometry(toeRadius, 16, 12), makeJointMat());
+    const toeLJoint = new THREE.Mesh(new THREE.SphereGeometry(toeRadius, 16, 12), makeJointMat('toeL'));
+    const toeRJoint = new THREE.Mesh(new THREE.SphereGeometry(toeRadius, 16, 12), makeJointMat('toeR'));
     toeLJoint.position.set(...joints.footL);
     toeRJoint.position.set(...joints.footR);
     toeLJoint.userData.key = 'toeL';
     toeRJoint.userData.key = 'toeR';
-    toeLJoint.userData.defaultColor = jointBaseColor;
-    toeRJoint.userData.defaultColor = jointBaseColor;
+    toeLJoint.userData.defaultColor = getJointDefaultColor('toeL');
+    toeRJoint.userData.defaultColor = getJointDefaultColor('toeR');
     toeLJoint.userData.isToeJoint = true; toeLJoint.userData.side = 'L';
     toeRJoint.userData.isToeJoint = true; toeRJoint.userData.side = 'R';
     group.add(toeLJoint); group.add(toeRJoint);
