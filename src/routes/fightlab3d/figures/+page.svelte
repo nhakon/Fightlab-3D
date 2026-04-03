@@ -766,41 +766,6 @@ function isLocked(person, key){
     { keys: 'Save frame button', desc: 'Store the current frame in the playback' },
     { keys: 'Menu and toolbar buttons', desc: 'Open presets, playbacks, comments, and settings' }
   ];
-  const FIGURES_INTRO_STORAGE_PREFIX = 'fightlab3dFiguresIntroSeenV1:';
-  function buildFiguresIntroSteps(isMobile){
-    return [
-      {
-        title: 'Start from presets',
-        body: 'Use this button to load a starting position before you begin adjusting the figures.',
-        tip: 'Pick a built-in preset or reload the current preset here.',
-        target: 'presets'
-      },
-      {
-        title: 'Preview the sequence',
-        body: 'Use these playback controls to move between frames and play the sequence back.',
-        tip: isMobile ? 'You can still orbit and zoom the scene with touch gestures while editing.' : 'You can still orbit and zoom the scene with mouse or trackpad while editing.',
-        target: 'playbackControls'
-      },
-      {
-        title: 'Save a frame',
-        body: 'When a pose looks right, save it as a frame here. The comment field helps explain what should happen in that frame.',
-        tip: 'Build the playback step by step by saving each key position.',
-        target: 'saveFrame'
-      },
-      {
-        title: 'Save the playback',
-        body: 'After you have named the sequence, use this save button to store the whole playback.',
-        tip: 'You can organize saved playbacks into folders from the dropdown beside it.',
-        target: 'savePlayback'
-      },
-      {
-        title: 'Open the menu',
-        body: 'Use the menu to access account options, settings, and the device-specific shortcuts list.',
-        tip: 'This is also where new users can quickly review the controls again.',
-        target: 'menu'
-      }
-    ];
-  }
   function isLandscapeSideRailViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
     return window.matchMedia('(pointer: coarse) and (orientation: landscape) and (max-width: 960px)').matches;
@@ -1503,17 +1468,12 @@ function isLocked(person, key){
   let showAccountShortcuts = false;
   let showAccountSettings = false;
   let showMobileShortcutList = false;
-  let showFiguresIntro = false;
-  let figuresIntroStepIndex = 0;
   let darkMode = false;
   let uiReady = false;
   let navOpen = false;
   const showLanding = false;
   let showFigures = true;
   let featuresRow;
-  let figuresIntroSteps = [];
-  let activeFiguresIntroStep = null;
-  let currentFiguresIntroTarget = '';
   async function openFigures(){
     showFigures = true;
     navOpen = false;
@@ -1529,48 +1489,6 @@ function isLocked(person, key){
   function updateShortcutViewportMode(){
     showMobileShortcutList = isMobileViewport();
   }
-  function getFiguresIntroStorageKey(userId){
-    return `${FIGURES_INTRO_STORAGE_PREFIX}${userId || 'anonymous'}`;
-  }
-  function hasSeenFiguresIntro(userId){
-    if (!userId || typeof window === 'undefined') return true;
-    try{
-      return localStorage.getItem(getFiguresIntroStorageKey(userId)) === 'true';
-    }catch(_){
-      return false;
-    }
-  }
-  function markFiguresIntroSeen(userId){
-    if (!userId || typeof window === 'undefined') return;
-    try{ localStorage.setItem(getFiguresIntroStorageKey(userId), 'true'); }catch(_){}
-  }
-  function maybeShowFiguresIntro(userId){
-    if (!userId) return;
-    figuresIntroStepIndex = 0;
-    compactToolbar = false;
-    closeAllMenus();
-    showFiguresIntro = true;
-  }
-  function closeFiguresIntro(){
-    markFiguresIntroSeen(authUserId);
-    showFiguresIntro = false;
-  }
-  function nextFiguresIntroStep(){
-    if (figuresIntroStepIndex >= figuresIntroSteps.length - 1){
-      closeFiguresIntro();
-      return;
-    }
-    figuresIntroStepIndex += 1;
-  }
-  function previousFiguresIntroStep(){
-    figuresIntroStepIndex = Math.max(0, figuresIntroStepIndex - 1);
-  }
-  $: figuresIntroSteps = buildFiguresIntroSteps(showMobileShortcutList);
-  $: if (figuresIntroStepIndex >= figuresIntroSteps.length){
-    figuresIntroStepIndex = Math.max(0, figuresIntroSteps.length - 1);
-  }
-  $: activeFiguresIntroStep = figuresIntroSteps[figuresIntroStepIndex] ?? null;
-  $: currentFiguresIntroTarget = activeFiguresIntroStep?.target || '';
   // Pinned controls (custom toolbar). Persisted to localStorage
   let pinnedControls = [];
   const SHOW_SAVE_PRESET_BUTTON = false;
@@ -3013,6 +2931,10 @@ function isLocked(person, key){
       syncMeshesNoSolve();
       return;
     }
+    if (bridgeDrag.active) {
+      syncMeshesNoSolve();
+      return;
+    }
     // Handle-rotation uses world-space joints that can include twist; keep meshes
     // in sync without re-deriving joints from skeleton during the drag.
     if (upperDrag.active || lowerHandleDrag.active) {
@@ -4041,10 +3963,6 @@ function clampToDragLengths(person, jointKey, target){
         if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undoLastFigureMove(); return; }
         if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); try{ saveCurrentFrame(); }catch(_){} return; }
         if (e.key === 'Escape') {
-          if (showFiguresIntro){
-            closeFiguresIntro();
-            return;
-          }
           closeAllMenus();
           return;
         }
@@ -4859,7 +4777,6 @@ function clampToDragLengths(person, jointKey, target){
       playbackSyncUserId = '';
       loginName = '';
       loginEmail = '';
-      showFiguresIntro = false;
       return;
     }
     authUserId = user.id || '';
@@ -4870,7 +4787,6 @@ function clampToDragLengths(person, jointKey, target){
       user.user_metadata?.name ||
       user.email?.split('@')[0] ||
       'User';
-    maybeShowFiguresIntro(authUserId);
   }
   function formatAuthError(error){
     const message = error?.message || '';
@@ -6757,6 +6673,7 @@ function clampToDragLengths(person, jointKey, target){
   }
 
   function pointerUpHandler(event){
+    const bridgeReleasePerson = bridgeDrag.active ? bridgeDrag.person : null;
     try{ if (renderer?.domElement?.releasePointerCapture) renderer.domElement.releasePointerCapture(event.pointerId); }catch(e){}
     if (event?.pointerType === 'touch' && event?.pointerId != null){
       activeTouchPointers.delete(event.pointerId);
@@ -6791,10 +6708,22 @@ function clampToDragLengths(person, jointKey, target){
         } else if (upperDrag.person === 'A') syncSkeletonFromJoints('A'); else if (upperDrag.person === 'B') syncSkeletonFromJoints('B');
       } else if (lowerHandleDrag.active){
         if (lowerHandleDrag.person === 'A') syncSkeletonFromJoints('A'); else if (lowerHandleDrag.person === 'B') syncSkeletonFromJoints('B');
+      } else if (bridgeReleasePerson){
+        syncSkeletonFromJoints(bridgeReleasePerson);
       } else if (activeJointIdx != null){
         if (activePerson === 'A') syncSkeletonFromJoints('A'); else if (activePerson === 'B') syncSkeletonFromJoints('B');
       }
     } catch(e){}
+    try{
+      if (bridgeReleasePerson){
+        const skel = bridgeReleasePerson === 'A' ? skeletonA : skeletonB;
+        if (skel){
+          groundSkeleton(skel);
+          if (bridgeReleasePerson === 'A') jointsA = jointsFromSkeleton(skel);
+          else jointsB = jointsFromSkeleton(skel);
+        }
+      }
+    }catch(e){}
     // If the user was dragging the head/neck, update the preferred local head rotation
     try{
       if (headDragPerson === 'A' && skeletonA){
@@ -6823,6 +6752,9 @@ function clampToDragLengths(person, jointKey, target){
     upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.baseRelOther.clear(); upperDrag.pivotOther.set(0,0,0);
     natLock = { active:false, person:null, spineBefore:null, headBefore:null, headDrag:false };
     stopDepthNudge();
+    if (bridgeReleasePerson){
+      updateMeshesFromJoints();
+    }
   }
 
   function wheelHandler(event){
@@ -7045,42 +6977,9 @@ function clampToDragLengths(person, jointKey, target){
     </div>
   </div>
 
-  {#if showFiguresIntro && activeFiguresIntroStep}
-    <div class="figures-intro-layer" role="presentation">
-      <div class="figures-intro-card figures-intro-card--centered" role="dialog" aria-modal="true" aria-labelledby="figures-intro-title">
-        <div class="figures-intro-header">
-          <div>
-            <span class="figures-intro-kicker">Getting Started</span>
-            <div class="figures-intro-progress">Step {figuresIntroStepIndex + 1} of {figuresIntroSteps.length}</div>
-          </div>
-          <button type="button" class="figures-intro-close" on:click={closeFiguresIntro} aria-label="Close intro">×</button>
-        </div>
-        <h2 id="figures-intro-title" class="figures-intro-title">{activeFiguresIntroStep.title}</h2>
-        <p class="figures-intro-body">{activeFiguresIntroStep.body}</p>
-        {#if activeFiguresIntroStep.tip}
-          <p class="figures-intro-tip">{activeFiguresIntroStep.tip}</p>
-        {/if}
-        <div class="figures-intro-dots" aria-hidden="true">
-          {#each figuresIntroSteps as _step, idx}
-            <span class:active={idx === figuresIntroStepIndex}></span>
-          {/each}
-        </div>
-        <div class="figures-intro-actions">
-          <button type="button" class="btn" on:click={closeFiguresIntro}>Skip</button>
-          <div class="figures-intro-nav">
-            <button type="button" class="btn" on:click={previousFiguresIntroStep} disabled={figuresIntroStepIndex === 0}>Back</button>
-            <button type="button" class="btn btn--primary" on:click={nextFiguresIntroStep}>
-              {figuresIntroStepIndex === figuresIntroSteps.length - 1 ? 'Finish' : 'Next'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  {/if}
-
   <div class="scene-gradient" aria-hidden="true"></div>
   <div class="account-anchor">
-    <button class="btn account-btn" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'menu'} bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
+    <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
       <svg class="icon account-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span class="account-label">Menu</span>
     </button>
@@ -7208,7 +7107,7 @@ function clampToDragLengths(person, jointKey, target){
               <button class="icon-btn" on:click={prevFrame} title="Previous frame">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="icon-btn icon-btn--primary" class:is-active={playing} class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'playbackControls'} on:click={togglePlayback} title="Play / Pause playback">
+              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause playback">
                 {#if playing}
                   <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
                 {:else}
@@ -7230,7 +7129,6 @@ function clampToDragLengths(person, jointKey, target){
                   <button
                     type="button"
                     class="preset-trigger"
-                    class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'presets'}
                     aria-haspopup="true"
                     aria-expanded={showSavedPresetsMenu}
                     bind:this={presetsToggleEl}
@@ -7327,7 +7225,7 @@ function clampToDragLengths(person, jointKey, target){
                 <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
                   <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
                   <div class="input-actions playback-input-actions">
-                    <button class="inline-action save-action" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'savePlayback'} on:click={saveCurrentPlayback} title="Save playback">
+                    <button class="inline-action save-action" on:click={saveCurrentPlayback} title="Save playback">
                       <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
                     </button>
                     <button class="inline-action" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
@@ -7482,7 +7380,7 @@ function clampToDragLengths(person, jointKey, target){
               </div>
               <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
                 <input class="input" type="text" bind:value={comment} placeholder="Frame comment" />
-                <button class="inline-action save-action" class:intro-highlight={showFiguresIntro && currentFiguresIntroTarget === 'saveFrame'} on:click={saveCurrentFrame} title="Save frame">
+                <button class="inline-action save-action" on:click={saveCurrentFrame} title="Save frame">
                   <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                 </button>
               </div>
@@ -7688,8 +7586,8 @@ function clampToDragLengths(person, jointKey, target){
   .row-center { justify-content:center; }
   .row-center--compact { width:100%; justify-content:center; }
   .row-right { justify-content:flex-end; }
-  .playback-save-row { align-items:flex-start; }
-  .playback-stack { display:flex; flex-direction:column; align-items:stretch; gap:0; width:min(100%, 260px); max-width:min(100%, 260px); }
+  .playback-save-row { align-items:flex-start; justify-content:flex-end; }
+  .playback-stack { display:flex; flex-direction:column; align-items:stretch; gap:0; width:clamp(190px, 22vw, 260px); max-width:min(100%, 260px); margin-left:auto; }
   .playback-stack > * { width:100%; max-width:100%; }
   .toolbar-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .toolbar-actions.wrap-tight { flex-wrap:nowrap; }
@@ -7712,22 +7610,6 @@ function clampToDragLengths(person, jointKey, target){
   .btn--primary:hover { background: #e5f0ff; }
   /* .btn--ghost removed (unused) */
   .btn--toggle.is-active { border-color: #16a34a; color: #166534; background: #ecfdf5; }
-  .figures-intro-layer { position: fixed; inset: 0; z-index: 1900; display: flex; align-items: center; justify-content: center; padding: 16px; pointer-events: none; }
-  .figures-intro-card { width: min(100%, 520px); max-height: calc(100dvh - 32px); overflow: auto; border-radius: 18px; border: 1px solid rgba(148,163,184,0.35); background: linear-gradient(160deg, rgba(255,255,255,0.98), rgba(239,246,255,0.96)); box-shadow: 0 18px 40px rgba(15,23,42,0.18); padding: 16px 18px; color: #0f172a; }
-  .figures-intro-card--centered { position: relative; z-index: 1902; pointer-events: auto; }
-  .intro-highlight { border-color: #2563eb !important; box-shadow: 0 0 0 3px rgba(37,99,235,0.24), 0 10px 24px rgba(37,99,235,0.18) !important; background: #eef5ff !important; color: #0b5bd3 !important; }
-  .figures-intro-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-  .figures-intro-kicker { display: inline-block; font: 700 11px/1.1 system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: #2563eb; }
-  .figures-intro-progress { margin-top: 6px; font: 12px/1.3 system-ui, sans-serif; color: #475569; }
-  .figures-intro-close { width: 34px; height: 34px; border: 1px solid rgba(148,163,184,0.38); border-radius: 999px; background: rgba(255,255,255,0.8); color: #0f172a; font: 400 24px/1 system-ui, sans-serif; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-  .figures-intro-title { margin: 14px 0 10px; font: 700 clamp(24px, 4vw, 30px)/1.08 system-ui, sans-serif; letter-spacing: -0.03em; }
-  .figures-intro-body { margin: 0; font: 15px/1.6 system-ui, sans-serif; color: #1e293b; }
-  .figures-intro-tip { margin: 14px 0 0; padding: 10px 12px; border-radius: 12px; background: rgba(37,99,235,0.08); font: 13px/1.5 system-ui, sans-serif; color: #1d4ed8; }
-  .figures-intro-dots { display: flex; gap: 8px; margin: 18px 0 0; }
-  .figures-intro-dots span { width: 9px; height: 9px; border-radius: 999px; background: rgba(148,163,184,0.45); }
-  .figures-intro-dots span.active { width: 24px; background: #2563eb; }
-  .figures-intro-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
-  .figures-intro-nav { display: flex; align-items: center; gap: 8px; }
   .account-anchor { position: fixed; top: 12px; left: 12px; z-index: 12; }
   .account-btn { display:inline-flex; align-items:center; gap:6px; background: #ffffff; border:1px solid #d6dbe4; color: #0f172a; padding: 5px 10px; border-radius: 10px; font: 13px/1.2 system-ui, -apple-system, Segoe UI, sans-serif; transition: background .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
   .account-btn:hover, .account-btn:focus-visible { background: #f8fafc; border-color: #c5ccda; color: #0f172a; box-shadow: 0 8px 18px rgba(0,0,0,0.10); }
@@ -7928,14 +7810,6 @@ function clampToDragLengths(person, jointKey, target){
   :global(body.dark-mode) .btn:hover { background:#111827; border-color:#475569; }
   :global(body.dark-mode) .btn--primary { background:#1d4ed8; border-color:#2563eb; color:#e5e7eb; }
   :global(body.dark-mode) .btn--primary:hover { background:#1e40af; border-color:#1d4ed8; }
-  :global(body.dark-mode) .figures-intro-card { background: linear-gradient(160deg, rgba(15,23,42,0.98), rgba(15,23,42,0.94)); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
-  :global(body.dark-mode) .intro-highlight { border-color: #60a5fa !important; box-shadow: 0 0 0 3px rgba(96,165,250,0.26), 0 10px 24px rgba(2,6,23,0.45) !important; background: rgba(29,78,216,0.26) !important; color: #dbeafe !important; }
-  :global(body.dark-mode) .figures-intro-progress,
-  :global(body.dark-mode) .figures-intro-body { color: #cbd5e1; }
-  :global(body.dark-mode) .figures-intro-close { background: rgba(15,23,42,0.92); border-color: rgba(59,73,102,0.82); color: #e5e7eb; }
-  :global(body.dark-mode) .figures-intro-tip { background: rgba(37,99,235,0.18); color: #bfdbfe; }
-  :global(body.dark-mode) .figures-intro-dots span { background: rgba(100,116,139,0.7); }
-  :global(body.dark-mode) .figures-intro-dots span.active { background: #60a5fa; }
   :global(body.dark-mode) .input { background:#0b1220; color:#e5e7eb; border-color:#334155; }
   :global(body.dark-mode) .preset-trigger,
   :global(body.dark-mode) select,
@@ -8470,48 +8344,6 @@ function clampToDragLengths(person, jointKey, target){
     .input-with-icon .input { width: 100%; max-width: 100%; }
     .mobile-undo-control { width: 34px; min-width: 34px; padding: 0; border-radius: 9999px; }
     .playback-comment .input { width: 100%; }
-  }
-  @media (max-width: 640px){
-    .figures-intro-card { padding: 16px; border-radius: 18px; }
-    .figures-intro-actions { flex-direction: column; align-items: stretch; }
-    .figures-intro-nav { width: 100%; justify-content: flex-end; }
-  }
-  @media (max-width: 420px), (pointer: coarse) and (orientation: landscape) and (max-height: 430px){
-    .figures-intro-layer {
-      align-items: flex-start;
-      padding: max(8px, env(safe-area-inset-top)) 8px 8px;
-    }
-    .figures-intro-card {
-      width: min(100%, 320px);
-      max-height: calc(100dvh - 16px);
-      padding: 10px 12px;
-      border-radius: 14px;
-    }
-    .figures-intro-header { gap: 8px; }
-    .figures-intro-title { margin: 8px 0 6px; font-size: clamp(18px, 5vw, 22px); }
-    .figures-intro-progress,
-    .figures-intro-body,
-    .figures-intro-tip { font-size: 12px; line-height: 1.4; }
-    .figures-intro-tip { margin-top: 10px; padding: 8px 10px; }
-    .figures-intro-dots { margin-top: 12px; gap: 6px; }
-    .figures-intro-actions { margin-top: 14px; gap: 8px; }
-    .figures-intro-close { width: 30px; height: 30px; font-size: 20px; }
-  }
-  @media (pointer: coarse) and (orientation: landscape){
-    .figures-intro-layer {
-      align-items: flex-start;
-      justify-content: center;
-      padding-top: max(18px, calc(env(safe-area-inset-top) + 18px));
-      padding-bottom: 12px;
-    }
-    .figures-intro-card--centered {
-      width: min(100%, 420px);
-    }
-  }
-  @media (max-width: 420px), (pointer: coarse) and (orientation: landscape) and (max-height: 430px){
-    .figures-intro-card--centered {
-      width: min(100%, 320px);
-    }
   }
   @media (max-width: 520px){
     .mirror-pose-btn { display: none; }
