@@ -121,7 +121,7 @@
     try{ const el2 = renderer?.domElement; if (el2) el2.style.cursor = 'grabbing'; }catch(e){}
   }
 
-  function startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, ctrlShift){
+  function startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, wholeFigure){
     if (!handlePerson) return false;
     const el = renderer?.domElement;
     dragging = (handlePerson==='A') ? upperHandleA : upperHandleB;
@@ -136,15 +136,15 @@
       startLowerHandleDrag(event, handlePerson, joints, view, cam);
       return true;
     }
-    if (ctrlShift){
+    if (wholeFigure){
       if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
       upperDrag.wholeBody = true;
     }
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     upperDrag.active = true; upperDrag.person = handlePerson; upperDrag.startX = event.clientX; upperDrag.startY = event.clientY; upperDrag.lastX = event.clientX; upperDrag.lastY = event.clientY; upperDrag.view = view; upperDrag.camera = cam; upperDrag.accumQ.identity(); upperDrag.mode = 'yawPitch';
     upperDrag.baseRelOther.clear(); upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.pivotOther.set(0,0,0);
-    // Ctrl+Shift rotates whole figure; otherwise just upper body
-    upperDrag.wholeBody = ctrlShift;
+    // Shift rotates the whole figure; otherwise just the upper body.
+    upperDrag.wholeBody = wholeFigure;
     const hL = new THREE.Vector3(...joints.hipL); const hR = new THREE.Vector3(...joints.hipR); upperDrag.pivot = hL.clone().add(hR).multiplyScalar(0.5);
     upperDrag.baseRel.clear();
     const keys = upperDrag.wholeBody ? Object.keys(joints||{}) : upperBodyKeys();
@@ -772,7 +772,7 @@ function isLocked(person, key){
     { keys: 'E', desc: 'Toggle Natural / Single-Joint' },
     { keys: 'Click head rotation handle', desc: 'Rotate upper body only' },
     { keys: 'Ctrl + click head rotation handle', desc: 'Rotate lower body only' },
-    { keys: 'Ctrl + Shift + click head rotation handle', desc: 'Rotate whole figure' },
+    { keys: 'Shift + click head rotation handle', desc: 'Rotate whole figure' },
     { keys: 'Ctrl + drag joint', desc: 'Move selected figure' },
     { keys: 'Ctrl + Shift + drag joint', desc: 'Move both figures together' },
     { keys: 'Tab', desc: 'Toe rotate mode (while dragging)' },
@@ -5837,7 +5837,8 @@ function clampToDragLengths(person, jointKey, target){
     touchCtrlDragging = hadOtherTouch;
     const isCtrlLike = !!(event.ctrlKey || event.metaKey || touchCtrlDragging);
     const ctrlShift = !!(event.shiftKey && isCtrlLike);
-    const ctrlOnly = !!(!event.shiftKey && isCtrlLike);
+    const handleWholeFigure = !!event.shiftKey;
+    const ctrlOnly = !!(isCtrlLike && !handleWholeFigure);
     const isTouchOrbit = !!(((event.pointerType === 'touch' || event.pointerType === 'mouse' || !event.pointerType) && !isCtrlLike && !event.shiftKey && event.isPrimary !== false && (event.button === 0 || event.button == null)));
     const nx = (event.clientX - rect.left) / rect.width;
     const ny = (event.clientY - rect.top) / rect.height;
@@ -5887,7 +5888,7 @@ function clampToDragLengths(person, jointKey, target){
     }
     if (!dragging && !hit && !hitBody){
       const handlePerson = (edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event);
-      if (handlePerson && startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, ctrlShift)) return;
+      if (handlePerson && startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, handleWholeFigure)) return;
     }
     // Lock selection mode: clicking toggles lock state and exits without starting a drag
     if (lockState === 'select' && hit){ toggleLockForMesh(hit.object); return; }
