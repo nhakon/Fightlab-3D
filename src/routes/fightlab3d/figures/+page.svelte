@@ -2801,6 +2801,7 @@ function isLocked(person, key){
 
   function updateBodyExtras(parts, joints, dims){
     const { torso, pelvis, spine, chest, shoulderBar, handLBox, handRBox, footLBox, footRBox, upperHandle, toeLJoint, toeRJoint, person } = parts;
+    const pelvisDraggingThisFigure = bridgeDrag.active && bridgeDrag.person === person;
     // Update invisible torso anchor (for limits/clamping elsewhere)
     updateTorsoFromJoints(torso, joints, dims);
 
@@ -2836,8 +2837,7 @@ function isLocked(person, key){
     const targetTopNominal = 0.8 * shoulderW;
     const minTopByHips = (targetPelvisW * 1.03) / ratioTB;
     const torsoTopW = clamp(targetTopNominal, minTopByHips, maxTopByMarkers);
-    const spanHS = shoulderCenter.distanceTo(hipCenter);
-    const rawTorsoH = Math.min(HEAD_DIAM * 3.0, spanHS * 0.95);
+    const rawTorsoH = clamp(dims.chestHeight ?? dims.torsoHeight ?? 0.6, 0.18, HEAD_DIAM * 3.0);
     const torsoDepth = clamp(dims.chestDepth ?? TORSO_DEPTH_FIXED, 0.26, 1.0);
     const sxTorso = (torsoTopW) / (2 * TORSO_BASE_TOP_R);
     const szTorso = torsoDepth / (2 * TORSO_BASE_TOP_R);
@@ -2914,8 +2914,10 @@ function isLocked(person, key){
 
     const toeLPos = heelL.clone().add(store.L);
     const toeRPos = heelR.clone().add(store.R);
-    toeLPos.y = Math.max(toeLPos.y, FLOOR_Y + 0.02);
-    toeRPos.y = Math.max(toeRPos.y, FLOOR_Y + 0.02);
+    if (!pelvisDraggingThisFigure){
+      toeLPos.y = Math.max(toeLPos.y, FLOOR_Y + 0.02);
+      toeRPos.y = Math.max(toeRPos.y, FLOOR_Y + 0.02);
+    }
 
     const baseScaleX = FOOT_W/(2*FOOT_SPHERE_R);
     const baseScaleY = FOOT_H/(2*FOOT_SPHERE_R);
@@ -2924,8 +2926,10 @@ function isLocked(person, key){
 
     const centerL = heelL.clone().addScaledVector(store.L, 0.5);
     const centerR = heelR.clone().addScaledVector(store.R, 0.5);
-    centerL.y = Math.max(centerL.y, FLOOR_Y + FOOT_H/2);
-    centerR.y = Math.max(centerR.y, FLOOR_Y + FOOT_H/2);
+    if (!pelvisDraggingThisFigure){
+      centerL.y = Math.max(centerL.y, FLOOR_Y + FOOT_H/2);
+      centerR.y = Math.max(centerR.y, FLOOR_Y + FOOT_H/2);
+    }
 
     const dirL = (store.L.lengthSq() > 1e-6 ? store.L.clone() : fwdXZ.clone()).normalize();
     const dirR = (store.R.lengthSq() > 1e-6 ? store.R.clone() : fwdXZ.clone()).normalize();
