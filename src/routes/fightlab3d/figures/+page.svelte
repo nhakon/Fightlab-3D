@@ -3477,11 +3477,14 @@ function clampToDragLengths(person, jointKey, target){
     return true;
   }
 
-  function translatePoseJoints(person, delta){
+  function translatePoseJoints(person, delta, keys = null){
     if (!delta || delta.lengthSq() < 1e-12) return;
     const joints = person === 'A' ? jointsA : jointsB;
     if (!joints) return;
-    for (const [key, arr] of Object.entries(joints)){
+    const entries = Array.isArray(keys)
+      ? keys.map((key)=> [key, joints[key]])
+      : Object.entries(joints);
+    for (const [key, arr] of entries){
       if (!Array.isArray(arr) || arr.length < 3) continue;
       joints[key] = [arr[0] + delta.x, arr[1] + delta.y, arr[2] + delta.z];
     }
@@ -4403,7 +4406,7 @@ function clampToDragLengths(person, jointKey, target){
         const hipRNow = new THREE.Vector3(...joints.hipR);
         const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
         const delta = rawTarget.clone().sub(currentCenter);
-        translatePoseJoints(person, delta);
+        translatePoseJoints(person, delta, lowerBodyKeys());
         syncSkeletonFromJoints(person);
         syncMeshesNoSolve();
       } else if (activeJointIdx != null) {
@@ -6792,7 +6795,7 @@ function clampToDragLengths(person, jointKey, target){
         const hipRNow = new THREE.Vector3(...joints.hipR);
         const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
         const delta = targetCenter.sub(currentCenter);
-        translatePoseJoints(person, delta);
+        translatePoseJoints(person, delta, lowerBodyKeys());
         syncSkeletonFromJoints(person);
         syncMeshesNoSolve();
       } else if (activeJointIdx != null) {
@@ -7023,7 +7026,7 @@ function clampToDragLengths(person, jointKey, target){
               const hipRNow = new THREE.Vector3(...joints.hipR);
               const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
               const delta = rawTarget.clone().sub(currentCenter);
-              translatePoseJoints(person, delta);
+              translatePoseJoints(person, delta, lowerBodyKeys());
               syncSkeletonFromJoints(person);
               syncMeshesNoSolve();
               return true;
