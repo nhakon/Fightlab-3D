@@ -40,9 +40,10 @@
   const mouse = new THREE.Vector2();
   // Independent drag state per figure
   const dragState = {
-    A: { plane: null, offset: null, camera: null, view: 'persp', lastTarget: null, atLimit: false, justScrolled: false },
-    B: { plane: null, offset: null, camera: null, view: 'persp', lastTarget: null, atLimit: false, justScrolled: false }
+    A: { plane: null, offset: null, camera: null, view: 'persp', lastTarget: null, atLimit: false, justScrolled: false, startClientX: 0, startClientY: 0, moved: false },
+    B: { plane: null, offset: null, camera: null, view: 'persp', lastTarget: null, atLimit: false, justScrolled: false, startClientX: 0, startClientY: 0, moved: false }
   };
+  const DRAG_ACTIVATE_PX = 4;
 
   // Preserve torso/head yaw+roll during Natural-mode drags
   let natLock = { active:false, person:null, spineBefore:null, headBefore:null, headDrag:false };
@@ -369,7 +370,7 @@
   };
 let toeRotateDrag = { active:false, person:null, side:null, startOffset:new THREE.Vector3(), startToeWorld:new THREE.Vector3(), startX:0, startY:0, camera:null };
 
-  // Bridge drag: clicking the hip/pelvis structure moves both hips together (bridge-like motion)
+  // Pelvis drag: clicking the hip/pelvis structure moves the figure rigidly from the hips
   let bridgeDrag = {
     active: false,
     person: null,             // 'A' | 'B'
@@ -2681,8 +2682,8 @@ function isLocked(person, key){
     ctrlDragging = false;
     dragCamera = null;
     dragView = 'persp';
-    dragState.A.plane = dragState.A.offset = dragState.A.camera = null; dragState.A.view = 'persp'; dragState.A.lastTarget = null; dragState.A.atLimit = false; dragState.A.justScrolled = false;
-    dragState.B.plane = dragState.B.offset = dragState.B.camera = null; dragState.B.view = 'persp'; dragState.B.lastTarget = null; dragState.B.atLimit = false; dragState.B.justScrolled = false;
+    dragState.A.plane = dragState.A.offset = dragState.A.camera = null; dragState.A.view = 'persp'; dragState.A.lastTarget = null; dragState.A.atLimit = false; dragState.A.justScrolled = false; dragState.A.startClientX = 0; dragState.A.startClientY = 0; dragState.A.moved = false;
+    dragState.B.plane = dragState.B.offset = dragState.B.camera = null; dragState.B.view = 'persp'; dragState.B.lastTarget = null; dragState.B.atLimit = false; dragState.B.justScrolled = false; dragState.B.startClientX = 0; dragState.B.startClientY = 0; dragState.B.moved = false;
     dragSnapshotTaken = false;
     dragRootFreezeActive = false;
     dragFreezeWhich = 'none';
@@ -3457,6 +3458,35 @@ function clampToDragLengths(person, jointKey, target){
     const skel = (person==='A') ? skeletonA : skeletonB;
     const joints = (person==='A') ? jointsA : jointsB;
     try { applyJointsToSkeletonExact(skel, joints); } catch(e){}
+  }
+
+  function primeDragActivation(ds, event){
+    if (!ds) return;
+    ds.startClientX = event?.clientX ?? 0;
+    ds.startClientY = event?.clientY ?? 0;
+    ds.moved = false;
+  }
+
+  function dragHasActivated(ds, event){
+    if (!ds) return true;
+    if (ds.moved) return true;
+    const dx = (event?.clientX ?? ds.startClientX) - ds.startClientX;
+    const dy = (event?.clientY ?? ds.startClientY) - ds.startClientY;
+    if ((dx * dx) + (dy * dy) < (DRAG_ACTIVATE_PX * DRAG_ACTIVATE_PX)) return false;
+    ds.moved = true;
+    return true;
+  }
+
+  function translatePoseJoints(person, delta){
+    if (!delta || delta.lengthSq() < 1e-12) return;
+    const joints = person === 'A' ? jointsA : jointsB;
+    if (!joints) return;
+    for (const [key, arr] of Object.entries(joints)){
+      if (!Array.isArray(arr) || arr.length < 3) continue;
+      joints[key] = [arr[0] + delta.x, arr[1] + delta.y, arr[2] + delta.z];
+    }
+    if (person === 'A') jointsA = joints;
+    else jointsB = joints;
   }
 
   // ---------- Joint Angle Limits (Directional) ----------
@@ -4336,11 +4366,13 @@ function clampToDragLengths(person, jointKey, target){
     if (!dragging) return;
     const el = renderer?.domElement; if (!el) return;
     const ds = activePerson==='A' ? dragState.A : dragState.B;
+    if (!ds?.moved) return;
     const cam = ds.camera || dragCamera || camera;
     raycaster.setFromCamera(mouse, cam);
     const intersectPoint = new THREE.Vector3();
     if (raycaster.ray.intersectPlane(ds.plane, intersectPoint)){
-      let target = intersectPoint.add(ds.offset.clone());
+      const rawTarget = intersectPoint.add(ds.offset.clone());
+      let target = rawTarget.clone();
       target.y = Math.max(target.y, FLOOR_Y + 0.02);
       if (shiftDragging){
         if (torsoFreeze) { return; }
@@ -4363,6 +4395,17 @@ function clampToDragLengths(person, jointKey, target){
         if (sel==='A') { skeletonA.rootPos.add(delta); if (torsoFreeze && torsoFreezeRefA) torsoFreezeRefA.rootPos.add(delta); groundSkeleton(skeletonA); jointsA = jointsFromSkeleton(skeletonA); }
         else { skeletonB.rootPos.add(delta); if (torsoFreeze && torsoFreezeRefB) torsoFreezeRefB.rootPos.add(delta); groundSkeleton(skeletonB); jointsB = jointsFromSkeleton(skeletonB); }
         updateMeshesFromJoints();
+      } else if (bridgeDrag.active && dragging && !shiftDragging && !ctrlDragging) {
+        const person = bridgeDrag.person || activePerson;
+        const joints = person === 'A' ? jointsA : jointsB;
+        if (!joints?.hipL || !joints?.hipR) return;
+        const hipLNow = new THREE.Vector3(...joints.hipL);
+        const hipRNow = new THREE.Vector3(...joints.hipR);
+        const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
+        const delta = rawTarget.clone().sub(currentCenter);
+        translatePoseJoints(person, delta);
+        syncSkeletonFromJoints(person);
+        syncMeshesNoSolve();
       } else if (activeJointIdx != null) {
         applyJointDragTarget(target, ds);
       }
@@ -6123,6 +6166,7 @@ function clampToDragLengths(person, jointKey, target){
       ds.offset = new THREE.Vector3().subVectors(worldPoint, intersectPoint);
       ds.camera = cam; ds.view = view;
       ds.lastTarget = null; ds.atLimit = false; ds.justScrolled = false;
+      primeDragActivation(ds, event);
       controls.enabled = false; orbitEnabled = false;
 
       // Snapshot length constraints for this joint
@@ -6158,7 +6202,7 @@ function clampToDragLengths(person, jointKey, target){
           const hipCenter = hipL.clone().add(hipR).multiplyScalar(0.5);
 
           if (hitBody2.part === 'pelvis') {
-            // Bridge-style hip drag (existing behavior)
+            // Pelvis drag: translate the pose rigidly from the hip box
             bridgeDrag.active = true;
             bridgeDrag.person = person;
             bridgeDrag.hipLStart.copy(hipL);
@@ -6225,6 +6269,7 @@ function clampToDragLengths(person, jointKey, target){
           ds.offset = new THREE.Vector3().subVectors(worldPoint, intersectPoint);
           ds.camera = cam; ds.view = view;
           ds.lastTarget = null; ds.atLimit = false; ds.justScrolled = false;
+          primeDragActivation(ds, event);
           controls.enabled = false; orbitEnabled = false;
           try{ const el2 = renderer?.domElement; if (el2) el2.style.cursor = 'grabbing'; }catch(e){}
           return;
@@ -6659,11 +6704,13 @@ function clampToDragLengths(person, jointKey, target){
     const wasdActive = (moveKeys.w || moveKeys.a || moveKeys.s || moveKeys.d);
     if (wasdActive) return;
     const ds = activePerson==='A' ? dragState.A : dragState.B;
+    if (!dragHasActivated(ds, event)) return;
     const cam = ds.camera || dragCamera || camera;
     raycaster.setFromCamera(mouse, cam);
     const intersectPoint = new THREE.Vector3();
     if (raycaster.ray.intersectPlane(ds.plane, intersectPoint)){
-      const target = intersectPoint.add(ds.offset.clone());
+      const rawTarget = intersectPoint.add(ds.offset.clone());
+      const target = rawTarget.clone();
       target.y = Math.max(target.y, FLOOR_Y + 0.02);
       if (shiftDragging){
         const prev = dragging.position.clone();
@@ -6739,43 +6786,15 @@ function clampToDragLengths(person, jointKey, target){
       } else if (bridgeDrag.active && dragging && !shiftDragging && !ctrlDragging) {
         const person = bridgeDrag.person;
         const joints = person === 'A' ? jointsA : jointsB;
-        const hipL0 = bridgeDrag.hipLStart;
-        const hipR0 = bridgeDrag.hipRStart;
-        const center0 = bridgeDrag.hipCenterStart;
-        const targetCenter = target.clone();
+        const targetCenter = rawTarget.clone();
+        if (!joints?.hipL || !joints?.hipR) return;
         const hipLNow = new THREE.Vector3(...joints.hipL);
         const hipRNow = new THREE.Vector3(...joints.hipR);
         const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
-        const leftOffset = hipL0.clone().sub(center0);
-        const rightOffset = hipR0.clone().sub(center0);
-        const clampedCenter = clampBridgeTargetCenter(currentCenter, targetCenter, leftOffset, rightOffset, joints);
-        const newHipL = clampedCenter.clone().add(leftOffset);
-        const newHipR = clampedCenter.clone().add(rightOffset);
-        const kneeLNow = new THREE.Vector3(...joints.kneeL);
-        const kneeRNow = new THREE.Vector3(...joints.kneeR);
-        const footLNow = new THREE.Vector3(...joints.footL);
-        const footRNow = new THREE.Vector3(...joints.footR);
-        const newKneeL = solveBridgeKnee(hipLNow, kneeLNow, footLNow, newHipL);
-        const newKneeR = solveBridgeKnee(hipRNow, kneeRNow, footRNow, newHipR);
-        joints.hipL = [newHipL.x, newHipL.y, newHipL.z];
-        joints.hipR = [newHipR.x, newHipR.y, newHipR.z];
-        joints.kneeL = [newKneeL.x, newKneeL.y, newKneeL.z];
-        joints.kneeR = [newKneeR.x, newKneeR.y, newKneeR.z];
-        joints.footL = [footLNow.x, footLNow.y, footLNow.z];
-        joints.footR = [footRNow.x, footRNow.y, footRNow.z];
-        const delta = clampedCenter.clone().sub(currentCenter);
-        if (delta.lengthSq() > 1e-12) {
-          const keys = ['shoulderL','shoulderR','elbowL','elbowR','handL','handR','neck','head'];
-          for (const key of keys){
-            if (isLocked && isLocked(person, key)) continue;
-            const arr = joints[key];
-            if (!arr) continue;
-            const v = new THREE.Vector3(...arr).add(delta);
-            joints[key] = [v.x, v.y, v.z];
-          }
-        }
+        const delta = targetCenter.sub(currentCenter);
+        translatePoseJoints(person, delta);
         syncSkeletonFromJoints(person);
-        updateMeshesFromJoints();
+        syncMeshesNoSolve();
       } else if (activeJointIdx != null) {
         applyJointDragTarget(target, ds);
       }
@@ -6817,6 +6836,8 @@ function clampToDragLengths(person, jointKey, target){
         } else if (upperDrag.person === 'A') syncSkeletonFromJoints('A'); else if (upperDrag.person === 'B') syncSkeletonFromJoints('B');
       } else if (lowerHandleDrag.active){
         if (lowerHandleDrag.person === 'A') syncSkeletonFromJoints('A'); else if (lowerHandleDrag.person === 'B') syncSkeletonFromJoints('B');
+      } else if (bridgeDrag.active){
+        if (bridgeDrag.person === 'A') syncSkeletonFromJoints('A'); else if (bridgeDrag.person === 'B') syncSkeletonFromJoints('B');
       } else if (activeJointIdx != null){
         if (activePerson === 'A') syncSkeletonFromJoints('A'); else if (activePerson === 'B') syncSkeletonFromJoints('B');
       }
@@ -6833,8 +6854,8 @@ function clampToDragLengths(person, jointKey, target){
     dragging = null; dragCamera = null; dragView = 'persp'; activeJointIdx = null; shiftDragging = false; ctrlDragging = false; controls.enabled = orbitEnabled; orthoPan.active = false;
     try{ const el = renderer?.domElement; if (el) el.style.cursor = (lockState==='select' ? 'crosshair' : 'default'); }catch(e){}
     if (lockState === 'select') setLockPreview(null);
-    dragState.A.plane = dragState.A.offset = dragState.A.camera = null; dragState.A.view = 'persp'; dragState.A.lastTarget = null; dragState.A.atLimit = false; dragState.A.justScrolled = false;
-    dragState.B.plane = dragState.B.offset = dragState.B.camera = null; dragState.B.view = 'persp'; dragState.B.lastTarget = null; dragState.B.atLimit = false; dragState.B.justScrolled = false;
+    dragState.A.plane = dragState.A.offset = dragState.A.camera = null; dragState.A.view = 'persp'; dragState.A.lastTarget = null; dragState.A.atLimit = false; dragState.A.justScrolled = false; dragState.A.startClientX = 0; dragState.A.startClientY = 0; dragState.A.moved = false;
+    dragState.B.plane = dragState.B.offset = dragState.B.camera = null; dragState.B.view = 'persp'; dragState.B.lastTarget = null; dragState.B.atLimit = false; dragState.B.justScrolled = false; dragState.B.startClientX = 0; dragState.B.startClientY = 0; dragState.B.moved = false;
     dragSnapshotTaken = false;
     dragRootFreezeActive = false; dragFreezeWhich = 'none'; dragRootA = null; dragRootB = null; dragSpineRefA = null; dragSpineRefB = null;
     dragLengthConstraint = {active:false, person:null, jointKey:null, parentKey:null, childKey:null, lParent:0, lChild:0};
@@ -6969,7 +6990,8 @@ function clampToDragLengths(person, jointKey, target){
           raycaster.setFromCamera(mouse, camUse);
           const hit = new THREE.Vector3();
           if (raycaster.ray.intersectPlane(ds.plane, hit)){
-            const target = hit.add(ds.offset.clone());
+            const rawTarget = hit.add(ds.offset.clone());
+            const target = rawTarget.clone();
             target.y = Math.max(target.y, FLOOR_Y + 0.02);
             if (activeJointIdx != null){
               applyJointDragTarget(target, ds);
@@ -6991,6 +7013,19 @@ function clampToDragLengths(person, jointKey, target){
               if (!store[side]) store[side] = new THREE.Vector3();
               store[side].copy(offset);
               updateMeshesFromJoints();
+              return true;
+            }
+            if (bridgeDrag.active && dragging && !ctrlDragging){
+              const person = bridgeDrag.person || activePerson;
+              const joints = person === 'A' ? jointsA : jointsB;
+              if (!joints?.hipL || !joints?.hipR) return true;
+              const hipLNow = new THREE.Vector3(...joints.hipL);
+              const hipRNow = new THREE.Vector3(...joints.hipR);
+              const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
+              const delta = rawTarget.clone().sub(currentCenter);
+              translatePoseJoints(person, delta);
+              syncSkeletonFromJoints(person);
+              syncMeshesNoSolve();
               return true;
             }
             const prev = dragging.position.clone();
