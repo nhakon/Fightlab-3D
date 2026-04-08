@@ -3154,7 +3154,11 @@ function isLocked(person, key){
   // Push a point out of torso spheres for self and the other figure; clamp to floor
   function applyJointConstraints(person, jointKey, point){
     const p = point.clone();
-    p.y = Math.max(p.y, FLOOR_Y + 0.02);
+    const floorLimit = FLOOR_Y + 0.02;
+    const naturalDragBuried = !!(dragging && activePerson === person && activeJointIdx != null && !singleJointMode && !shiftDragging && !ctrlDragging && figureMinYFromJoints(person) < floorLimit - 1e-6);
+    if (!naturalDragBuried) {
+      p.y = Math.max(p.y, floorLimit);
+    }
     const rj = jointRadiusForKey(jointKey);
     // Build torso spheres for self and other using joints arrays
     const selfJ = person==='A' ? jointsA : jointsB;
