@@ -2569,6 +2569,20 @@ function isLocked(person, key){
     mesh.scale.set(1, scaleY, 1);
   }
 
+  function alignCylinderFixedLength(mesh, start, end, fixedLength) {
+    const v = new THREE.Vector3().subVectors(end, start);
+    if (v.lengthSq() < 1e-12) return;
+    const dir = v.normalize();
+    const length = Math.max(1e-6, fixedLength);
+    const mid = start.clone().addScaledVector(dir, length * 0.5);
+    mesh.position.copy(mid);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    mesh.quaternion.copy(q);
+    const baseLength = mesh?.userData?.baseLength;
+    const scaleY = (baseLength && baseLength > 1e-6) ? (length / baseLength) : length;
+    mesh.scale.set(1, scaleY, 1);
+  }
+
   // Update torso box from joints (shoulders & hips)
   function updateTorsoFromJoints(torsoMesh, joints, dims) {
     const sL = new THREE.Vector3(...joints.shoulderL);
@@ -2826,7 +2840,8 @@ function isLocked(person, key){
     pelvis.rotation.set(0, Math.atan2(hipDir.z, hipDir.x), 0);
 
     // ---- Spine connector
-    alignCylinder(spine, hipCenter, shoulderCenter);
+    const spineLen = clamp(dims.torsoHeight ?? dims.chestHeight ?? 0.6, TORSO_HEIGHT_MIN, TORSO_HEIGHT_MAX);
+    alignCylinderFixedLength(spine, hipCenter, shoulderCenter, spineLen);
 
     // ---- Torso frustum (wider at shoulders, narrower at hips)
     const chestCenter = new THREE.Vector3().lerpVectors(hipCenter, shoulderCenter, 0.58);
