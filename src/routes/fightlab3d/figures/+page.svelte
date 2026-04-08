@@ -2982,6 +2982,23 @@ function isLocked(person, key){
     if (toeRJoint){ toeRJoint.position.copy(toeRPos); }
   }
 
+  function figureMinYFromJoints(person){
+    const joints = person === 'A' ? jointsA : jointsB;
+    if (!joints) return Infinity;
+    let minY = Infinity;
+    for (const arr of Object.values(joints)){
+      if (!Array.isArray(arr) || arr.length < 2) continue;
+      if (arr[1] < minY) minY = arr[1];
+    }
+    return minY;
+  }
+
+  function shouldSkipGroundingDuringNaturalDrag(person){
+    if (!dragging || activePerson !== person) return false;
+    if (activeJointIdx == null || singleJointMode || shiftDragging || ctrlDragging) return false;
+    return figureMinYFromJoints(person) < (FLOOR_Y + 0.02 - 1e-6);
+  }
+
   // ---------- Mesh sync from joints ----------
   function updateMeshesFromJoints() {
     if (undoing || playbackApplying) {
@@ -3067,13 +3084,16 @@ function isLocked(person, key){
         const skipB2 = (armTranslateDrag.active && armTranslateDrag.person === 'B') ||
                        (elbowTranslateDrag.active && elbowTranslateDrag.person === 'B') ||
                        (handTranslateDrag.active && handTranslateDrag.person === 'B');
+        const skipGroundA = shouldSkipGroundingDuringNaturalDrag('A');
+        const skipGroundB = shouldSkipGroundingDuringNaturalDrag('B');
         const draggingPerson = solverTarget;
         const draggingHeadNeckA = dragging && draggingPerson === 'A' && (activeJointIdx === IDX.head || activeJointIdx === IDX.neck);
         const draggingHeadNeckB = dragging && draggingPerson === 'B' && (activeJointIdx === IDX.head || activeJointIdx === IDX.neck);
         const enforceA = !draggingHeadNeckA;
         const enforceB = !draggingHeadNeckB;
         if (skeletonA && !skipA2) {
-          groundSkeleton(skeletonA);
+          if (!skipGroundA) groundSkeleton(skeletonA);
+          else computeFK(skeletonA);
           if (dragging && draggingPerson === 'A'){ clampTorsoDriftDuringDrag('A'); }
           enforceRootAnchorDuringDrag('A');
           enforceHeadAnchorDuringDrag('A');
@@ -3081,7 +3101,8 @@ function isLocked(person, key){
           if (enforceA) enforceNeckLength('A');
         }
         if (skeletonB && !skipB2) {
-          groundSkeleton(skeletonB);
+          if (!skipGroundB) groundSkeleton(skeletonB);
+          else computeFK(skeletonB);
           if (dragging && draggingPerson === 'B'){ clampTorsoDriftDuringDrag('B'); }
           enforceRootAnchorDuringDrag('B');
           enforceHeadAnchorDuringDrag('B');
