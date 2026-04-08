@@ -2144,12 +2144,30 @@ function isLocked(person, key){
     const apply = (v) => [v.x + delta.x, v.y + delta.y, v.z + delta.z];
     const _sL = new THREE.Vector3(...joints.shoulderL);
     const _sR = new THREE.Vector3(...joints.shoulderR);
+    const _eL = new THREE.Vector3(...joints.elbowL);
+    const _eR = new THREE.Vector3(...joints.elbowR);
+    const _hL = new THREE.Vector3(...joints.handL);
+    const _hR = new THREE.Vector3(...joints.handR);
     const _neck = new THREE.Vector3(...joints.neck);
     const _head = new THREE.Vector3(...joints.head);
     joints.shoulderL = apply(_sL);
     joints.shoulderR = apply(_sR);
+    joints.elbowL    = apply(_eL);
+    joints.elbowR    = apply(_eR);
+    joints.handL     = apply(_hL);
+    joints.handR     = apply(_hR);
     joints.neck      = apply(_neck);
     joints.head      = apply(_head);
+  }
+
+  function preserveTorsoLengthForPerson(person){
+    const joints = person === 'A' ? jointsA : jointsB;
+    if (!joints) return;
+    const targetLen = person === 'A' ? neutralTorsoLenA : neutralTorsoLenB;
+    if (!(targetLen > 0)) return;
+    enforceTorsoLength(joints, targetLen);
+    if (person === 'A') jointsA = joints;
+    else jointsB = joints;
   }
   function desiredBoneLength(person, a, b){
     try{
@@ -4426,6 +4444,7 @@ function clampToDragLengths(person, jointKey, target){
         const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
         const delta = rawTarget.clone().sub(currentCenter);
         translatePoseJoints(person, delta, lowerBodyKeys());
+        preserveTorsoLengthForPerson(person);
         syncSkeletonFromJoints(person);
         syncMeshesNoSolve();
       } else if (activeJointIdx != null) {
@@ -6815,6 +6834,7 @@ function clampToDragLengths(person, jointKey, target){
         const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
         const delta = targetCenter.sub(currentCenter);
         translatePoseJoints(person, delta, lowerBodyKeys());
+        preserveTorsoLengthForPerson(person);
         syncSkeletonFromJoints(person);
         syncMeshesNoSolve();
       } else if (activeJointIdx != null) {
@@ -7046,6 +7066,7 @@ function clampToDragLengths(person, jointKey, target){
               const currentCenter = hipLNow.clone().add(hipRNow).multiplyScalar(0.5);
               const delta = rawTarget.clone().sub(currentCenter);
               translatePoseJoints(person, delta, lowerBodyKeys());
+              preserveTorsoLengthForPerson(person);
               syncSkeletonFromJoints(person);
               syncMeshesNoSolve();
               return true;
