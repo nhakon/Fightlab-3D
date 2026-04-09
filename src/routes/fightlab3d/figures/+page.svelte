@@ -47,6 +47,8 @@
 
   // Preserve torso/head yaw+roll during Natural-mode drags
   let natLock = { active:false, person:null, spineBefore:null, headBefore:null, headDrag:false };
+  let naturalDragBelowFloorA = false;
+  let naturalDragBelowFloorB = false;
   // Preferred head local rotation per figure; updated when user explicitly drags the head/neck
   let headPreferredA = null, headPreferredB = null;
   let headDragPerson = null; // 'A' | 'B' while head is being dragged
@@ -104,6 +106,9 @@
     return ['hipL','hipR','kneeL','kneeR','footL','footR'];
   }
   function startLowerHandleDrag(event, person, joints, view, cam){
+    const floorLimit = FLOOR_Y + 0.02;
+    if (person === 'A') naturalDragBelowFloorA = figureMinYFromJoints(person) < (floorLimit - 1e-6);
+    else naturalDragBelowFloorB = figureMinYFromJoints(person) < (floorLimit - 1e-6);
     lowerHandleDrag.active = true;
     lowerHandleDrag.person = person;
     lowerHandleDrag.lastX = event.clientX; lowerHandleDrag.lastY = event.clientY;
@@ -125,6 +130,9 @@
   function startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, wholeFigure){
     if (!handlePerson) return false;
     const el = renderer?.domElement;
+    const floorLimit = FLOOR_Y + 0.02;
+    if (handlePerson === 'A') naturalDragBelowFloorA = figureMinYFromJoints(handlePerson) < (floorLimit - 1e-6);
+    else naturalDragBelowFloorB = figureMinYFromJoints(handlePerson) < (floorLimit - 1e-6);
     dragging = (handlePerson==='A') ? upperHandleA : upperHandleB;
     activePerson = handlePerson;
     selectedPerson = handlePerson;
@@ -2993,10 +3001,13 @@ function isLocked(person, key){
     return minY;
   }
 
+  function wasBelowFloorAtNaturalDragStart(person){
+    return person === 'A' ? naturalDragBelowFloorA : naturalDragBelowFloorB;
+  }
+
   function shouldSkipGroundingDuringNaturalDrag(person){
     if (!dragging || activePerson !== person) return false;
-    if (activeJointIdx == null || singleJointMode || shiftDragging || ctrlDragging) return false;
-    return figureMinYFromJoints(person) < (FLOOR_Y + 0.02 - 1e-6);
+    return wasBelowFloorAtNaturalDragStart(person);
   }
 
   // ---------- Mesh sync from joints ----------
@@ -3155,7 +3166,7 @@ function isLocked(person, key){
   function applyJointConstraints(person, jointKey, point){
     const p = point.clone();
     const floorLimit = FLOOR_Y + 0.02;
-    const naturalDragBuried = !!(dragging && activePerson === person && activeJointIdx != null && !singleJointMode && !shiftDragging && !ctrlDragging && figureMinYFromJoints(person) < floorLimit - 1e-6);
+    const naturalDragBuried = !!(dragging && activePerson === person && activeJointIdx != null && !singleJointMode && !shiftDragging && !ctrlDragging && wasBelowFloorAtNaturalDragStart(person));
     if (!naturalDragBuried) {
       p.y = Math.max(p.y, floorLimit);
     }
@@ -6021,6 +6032,12 @@ function clampToDragLengths(person, jointKey, target){
       activePerson = jointMeshesA.includes(dragging) ? 'A' : 'B';
       selectedPerson = activePerson;
       activeJointIdx = NAME_TO_IDX[dragging.userData.key] ?? null;
+      const figureMinYAtDragStart = figureMinYFromJoints(activePerson);
+      if (activePerson === 'A') {
+        naturalDragBelowFloorA = (activeJointIdx != null && !singleJointMode && !shiftDragging && !ctrlDragging && figureMinYAtDragStart < (FLOOR_Y + 0.02 - 1e-6));
+      } else {
+        naturalDragBelowFloorB = (activeJointIdx != null && !singleJointMode && !shiftDragging && !ctrlDragging && figureMinYAtDragStart < (FLOOR_Y + 0.02 - 1e-6));
+      }
       // Track when user explicitly starts dragging the head/neck
       const isHeadOrNeck = (activeJointIdx === IDX.head || activeJointIdx === IDX.neck);
       headDragPerson = isHeadOrNeck ? activePerson : null;
@@ -6269,6 +6286,9 @@ function clampToDragLengths(person, jointKey, target){
 
           if (hitBody2.part === 'pelvis') {
             // Pelvis drag: translate the pose rigidly from the hip box
+            const floorLimit = FLOOR_Y + 0.02;
+            if (person === 'A') naturalDragBelowFloorA = figureMinYFromJoints(person) < (floorLimit - 1e-6);
+            else naturalDragBelowFloorB = figureMinYFromJoints(person) < (floorLimit - 1e-6);
             bridgeDrag.active = true;
             bridgeDrag.person = person;
             bridgeDrag.hipLStart.copy(hipL);
@@ -6776,8 +6796,10 @@ function clampToDragLengths(person, jointKey, target){
     const intersectPoint = new THREE.Vector3();
     if (raycaster.ray.intersectPlane(ds.plane, intersectPoint)){
       const rawTarget = intersectPoint.add(ds.offset.clone());
-      const target = rawTarget.clone();
-      target.y = Math.max(target.y, FLOOR_Y + 0.02);
+    const target = rawTarget.clone();
+      if (!shouldSkipGroundingDuringNaturalDrag(activePerson)) {
+        target.y = Math.max(target.y, FLOOR_Y + 0.02);
+      }
       if (shiftDragging){
         const prev = dragging.position.clone();
         const delta = new THREE.Vector3().subVectors(target, prev);
@@ -6936,6 +6958,8 @@ function clampToDragLengths(person, jointKey, target){
     upperDrag.active = false; upperDrag.person = null; upperDrag.wholeBody = false; upperDrag.mode = 'yawPitch'; upperDrag.baseDir.set(0,1,0);
     upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.baseRelOther.clear(); upperDrag.pivotOther.set(0,0,0);
     natLock = { active:false, person:null, spineBefore:null, headBefore:null, headDrag:false };
+    naturalDragBelowFloorA = false;
+    naturalDragBelowFloorB = false;
     stopDepthNudge();
   }
 
@@ -7059,7 +7083,9 @@ function clampToDragLengths(person, jointKey, target){
           if (raycaster.ray.intersectPlane(ds.plane, hit)){
             const rawTarget = hit.add(ds.offset.clone());
             const target = rawTarget.clone();
-            target.y = Math.max(target.y, FLOOR_Y + 0.02);
+            if (!shouldSkipGroundingDuringNaturalDrag(activePerson)) {
+              target.y = Math.max(target.y, FLOOR_Y + 0.02);
+            }
             if (activeJointIdx != null){
               applyJointDragTarget(target, ds);
               return true;
