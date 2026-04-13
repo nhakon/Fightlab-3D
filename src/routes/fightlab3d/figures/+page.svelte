@@ -7784,7 +7784,7 @@ function clampToDragLengths(person, jointKey, target){
 
   /* menu styles removed (unused) */
   .counter { font:12px/1.2 system-ui, sans-serif; color:#555; margin-left:8px; }
-  .editing-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:4px 6px; background:#ffffff; border:1px solid #d7deea; border-radius:8px; box-shadow: 0 6px 16px rgba(15,23,42,0.10); opacity: 1; }
+  .editing-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; background:#ffffff; border:3px solid #0f172a; border-radius:12px; box-shadow: 0 16px 34px rgba(15,23,42,0.30); color:#0f172a; opacity: 1; position: relative; z-index: 20; }
   .shortcut-list { display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:10px 14px; margin:6px 0 10px 0; padding:10px; border:1px solid #eee; border-radius:10px; background:#fafafa; max-height: 360px; overflow-y: auto; overflow-x: hidden; }
   .shortcut-row { display:grid; grid-template-columns: 50% 50%; align-items:start; gap:6px 12px; font:12px/1.3 system-ui, sans-serif; color:#333; }
   .shortcut-row .keys { font-weight:700; color:#0f172a; white-space:normal; width: 100%; word-break: break-word; }
@@ -7837,7 +7837,7 @@ function clampToDragLengths(person, jointKey, target){
     border-color: rgba(59,73,102,0.8);
     color: #e5e7eb;
   }
-  :global(body.dark-mode) .editing-bar { background: rgba(15,23,42,0.96); border-color: rgba(71,85,105,0.9); box-shadow: 0 8px 20px rgba(0,0,0,0.35); }
+  :global(body.dark-mode) .editing-bar { background: rgba(2,6,23,0.98); border-color: rgba(226,232,240,0.95); box-shadow: 0 18px 36px rgba(0,0,0,0.7); color:#f8fafc; }
   :global(body.dark-mode) .account-btn {
     background: #0f172a;
     border-color: #334155;
