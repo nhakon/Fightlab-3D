@@ -376,7 +376,6 @@
     kneeStart: new THREE.Vector3(),
     toeOffsetStart: new THREE.Vector3()
   };
-let toeRotateDrag = { active:false, person:null, side:null, startOffset:new THREE.Vector3(), startToeWorld:new THREE.Vector3(), startX:0, startY:0, camera:null };
 
   // Pelvis drag: clicking the hip/pelvis structure moves the figure rigidly from the hips
   let bridgeDrag = {
@@ -410,13 +409,12 @@ let toeRotateDrag = { active:false, person:null, side:null, startOffset:new THRE
   let dragging = null;           // sphere mesh being dragged
   let activePerson = null;       // "A" or "B"
   let activeJointIdx = null;     // index in hierarchical skeleton
-  let shiftDragging = false;     // true if Shift+Ctrl held at pointerdown
+  let shiftDragging = false;     // combined move mode disabled; kept for existing guards
   let ctrlDragging = false;      // true if Ctrl held at pointerdown (move one figure)
   let touchCtrlDragging = false; // true when a second touch should behave like Ctrl
   const activeTouchPointers = new Set();
   let touchOrbitDrag = { active: false, pointerId: null, lastX: 0, lastY: 0 };
   let touchOrbitRotateRestore = false;
-  let tabToeRotate = false;      // true while Tab held (rotate toe joint instead of translate)
   let orbitEnabled = true;
   let selectedPerson = 'A';      // current selected figure for ctrl-drag
   // Quick UI hide/show toggle (H) ? only hides pose editor (lil-gui)
@@ -537,7 +535,6 @@ let toeRotateDrag = { active:false, person:null, side:null, startOffset:new THRE
   const UPPER_HANDLE_OCCLUSION_EPS = 0.025;
   const UPPER_HANDLE_ROT_SENS_YAW = 0.005;  // radians per pixel (horizontal move)
   const UPPER_HANDLE_ROT_SENS_PITCH = 0.004; // radians per pixel (vertical move)
-  const TOE_ROTATE_SENS = 0.01; // radians per pixel for Ctrl-drag toe rotation
   let handBoxesA = { L: null, R: null }, handBoxesB = { L: null, R: null };
   let footBoxesA = { L: null, R: null }, footBoxesB = { L: null, R: null };
   let toeJointsA = { L: null, R: null }, toeJointsB = { L: null, R: null };
@@ -783,8 +780,6 @@ function isLocked(person, key){
     { keys: 'Ctrl + click head rotation handle', desc: 'Rotate lower body only' },
     { keys: 'Shift + click head rotation handle', desc: 'Rotate whole figure' },
     { keys: 'Ctrl + drag joint', desc: 'Move selected figure' },
-    { keys: 'Ctrl + Shift + drag joint', desc: 'Move both figures together' },
-    { keys: 'Tab', desc: 'Toe rotate mode (while dragging)' },
     { keys: 'Space', desc: 'Play/pause animation (idle) or nudge joint closer (dragging)' },
     { keys: 'F', desc: 'Nudge joint farther (while dragging)' }
   ];
@@ -1459,8 +1454,6 @@ function isLocked(person, key){
   let openPlaybackFolders = [];
   let playbacksMenuEl;
   let playbacksToggleEl;
-  let playbackContextEl;
-  let playbackContextMenu = { visible:false, x:0, y:0, folder:'', playbackIdx:-1, label:'' };
   let playbacksMenuVersion = 0;
   let compactToolbar = false;
   let presetsMenuEl;
@@ -2737,7 +2730,6 @@ function isLocked(person, key){
     elbowTranslateDrag.active = false; elbowTranslateDrag.person = null; elbowTranslateDrag.side = null;
     handTranslateDrag.active = false; handTranslateDrag.person = null; handTranslateDrag.side = null;
     footDrag.active = false;
-    toeRotateDrag.active = false; toeRotateDrag.person = null; toeRotateDrag.side = null; toeRotateDrag.startOffset.set(0,0,0); toeRotateDrag.startToeWorld.set(0,0,0); toeRotateDrag.startX = 0; toeRotateDrag.startY = 0; toeRotateDrag.camera = null;
     lowerHandleDrag.active = false; lowerHandleDrag.person = null; lowerHandleDrag.accumQ.identity(); lowerHandleDrag.baseRel.clear();
     upperDrag.active = false; upperDrag.person = null; upperDrag.wholeBody = false; upperDrag.mode = 'yawPitch'; upperDrag.baseDir.set(0,1,0);
     upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.baseRelOther.clear(); upperDrag.pivotOther.set(0,0,0);
@@ -4153,7 +4145,6 @@ function clampToDragLengths(person, jointKey, target){
         if (dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); startDepthNudge(-1); return; }
         if (!dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); togglePlayback(); return; }
         if (dragging && (e.key === 'f' || e.key === 'F' || e.code === 'KeyF')) { e.preventDefault(); startDepthNudge(1); return; }
-        if (e.key === 'Tab') { e.preventDefault(); tabToeRotate = true; return; }
         if (e.key === 'h' || e.key === 'H') { e.preventDefault(); toggleUI(); return; }
         if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); toggleTorsoFreeze(); return; }
         if (e.key === 'e' || e.key === 'E') { e.preventDefault(); toggleSingleJointMode(); return; }
@@ -4162,7 +4153,6 @@ function clampToDragLengths(person, jointKey, target){
       const ku = (e)=>{
         if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
         if (e.code === 'Space' || e.key === ' ' || e.key === 'f' || e.key === 'F' || e.code === 'KeyF') { stopDepthNudge(); }
-        if (e.key === 'Tab') { tabToeRotate = false; return; }
         handleWASDKeyUp(e);
       };
       window.addEventListener('keydown', kd);
@@ -4173,7 +4163,6 @@ function clampToDragLengths(person, jointKey, target){
         if (showSavedPresetsMenu && !clickInside(t, presetsMenuEl, presetsToggleEl)) showSavedPresetsMenu = false;
         if (showAccountMenu && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllMenus();
         if ((showAccountAuth || showAccountSettings || showAccountShortcuts) && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllSettingTabs();
-        if (playbackContextMenu.visible && !clickInside(t, playbackContextEl, null)) closePlaybackContext();
       };
       window.addEventListener('pointerdown', handleGlobalPointer, true);
       // Pointer lock disabled to keep OS cursor visible while dragging
@@ -4450,18 +4439,7 @@ function clampToDragLengths(person, jointKey, target){
       const rawTarget = intersectPoint.add(ds.offset.clone());
       let target = rawTarget.clone();
       target.y = Math.max(target.y, FLOOR_Y + 0.02);
-      if (shiftDragging){
-        if (torsoFreeze) { return; }
-        const prev = dragging.position.clone();
-        const delta = new THREE.Vector3().subVectors(target, prev);
-        const allY = [...jointMeshesA, ...jointMeshesB].map(m=> m.position.y);
-        const minY = Math.min(...allY);
-        if (delta.y < 0){ const minAllowedDy = (FLOOR_Y + 0.02) - minY; if (delta.y < minAllowedDy) delta.y = minAllowedDy; }
-        skeletonA.rootPos.add(delta); skeletonB.rootPos.add(delta);
-        groundSkeleton(skeletonA); groundSkeleton(skeletonB);
-        jointsA = jointsFromSkeleton(skeletonA); jointsB = jointsFromSkeleton(skeletonB);
-        updateMeshesFromJoints();
-      } else if (ctrlDragging){
+      if (ctrlDragging){
         const prev = dragging.position.clone();
         const delta = new THREE.Vector3().subVectors(target, prev);
         const sel = selectedPerson === 'A' ? 'A' : 'B';
@@ -5442,6 +5420,8 @@ function clampToDragLengths(person, jointKey, target){
     if (idx<0 || idx>=savedPresets.length) return;
     editingPresetIdx = idx;
     editingPresetName = savedPresets[idx].name || `Preset ${idx+1}`;
+    showSavedPresetsMenu = false;
+    showSavedPlaybacksMenu = false;
     showFrameComments = false;
     comment = '';
     commentText = '';
@@ -5601,18 +5581,6 @@ function clampToDragLengths(person, jointKey, target){
     const next = combineFolderPath(parent, val);
     renamePlaybackFolder(current, next);
   }
-  function openPlaybackContext(e, opts = {}){
-    if (e && typeof e.preventDefault === 'function') e.preventDefault();
-    const folder = typeof opts === 'string' ? folderKey(opts) : folderKey(opts.folderName);
-    const playbackIdx = Number.isInteger(opts?.playbackIdx) ? opts.playbackIdx : -1;
-    const label = playbackIdx >= 0
-      ? (savedPlaybacks?.[playbackIdx]?.name || `Playback ${playbackIdx + 1}`)
-      : (folder ? folder.split('/').filter(Boolean).pop() || folder : '');
-    playbackContextMenu = { visible:true, x: e?.clientX||0, y: e?.clientY||0, folder, playbackIdx, label };
-  }
-  function closePlaybackContext(){
-    playbackContextMenu = { visible:false, x:0, y:0, folder:'', playbackIdx:-1, label:'' };
-  }
   function movePlaybackToFolder(idx, folderName){
     const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
     const folder = folderKey(folderName);
@@ -5690,6 +5658,8 @@ function clampToDragLengths(person, jointKey, target){
     editingPlaybackIdx = idx;
     editingPlaybackName = savedPlaybacks[idx].name || `Playback ${idx+1}`;
     editingPlaybackFolder = folderKey(savedPlaybacks[idx].folder) || "";
+    showSavedPlaybacksMenu = false;
+    showSavedPresetsMenu = false;
     try{
       const frames = deepCopyFrames(savedPlaybacks[idx].frames);
       poses = frames;
@@ -5956,7 +5926,6 @@ function clampToDragLengths(person, jointKey, target){
     }
     touchCtrlDragging = hadOtherTouch;
     const isCtrlLike = !!(event.ctrlKey || event.metaKey || touchCtrlDragging);
-    const ctrlShift = !!(event.shiftKey && isCtrlLike);
     const handleWholeFigure = !!event.shiftKey;
     const ctrlOnly = !!(isCtrlLike && !handleWholeFigure);
     const isTouchOrbit = !!(((event.pointerType === 'touch' || event.pointerType === 'mouse' || !event.pointerType) && !isCtrlLike && !event.shiftKey && event.isPrimary !== false && (event.button === 0 || event.button == null)));
@@ -5992,7 +5961,7 @@ function clampToDragLengths(person, jointKey, target){
       }catch(e){}
     }
     ctrlDragging = isCtrlLike;
-    shiftDragging = ctrlShift;
+    shiftDragging = false;
     // cache last mouse NDC so drag continues updating if camera moves (WASD)
     const ndc = ndcForEventInView(event, view);
     mouse.x = ndc.x; mouse.y = ndc.y;
@@ -6209,33 +6178,6 @@ function clampToDragLengths(person, jointKey, target){
         }
       } else {
         footDrag.active = false;
-      }
-
-      // Toe rotation: hold Tab while clicking a toe joint to rotate instead of translate
-      toeRotateDrag.active = false; toeRotateDrag.person = null; toeRotateDrag.side = null;
-      toeRotateDrag.startOffset.set(0,0,0); toeRotateDrag.startToeWorld.set(0,0,0); toeRotateDrag.startX = 0; toeRotateDrag.startY = 0; toeRotateDrag.camera = null;
-      if (tabToeRotate && dragging?.userData?.isToeJoint){
-        const side = dragging.userData.side === 'L' ? 'L' : 'R';
-        const store = activePerson === 'B' ? toeOffsets.B : toeOffsets.A;
-        const joints = activePerson === 'A' ? jointsA : jointsB;
-        const heelKey = side === 'L' ? 'footL' : 'footR';
-        const heelArr = joints?.[heelKey];
-        const heel = heelArr ? new THREE.Vector3(...heelArr) : null;
-        const toeWorld = dragging.getWorldPosition(new THREE.Vector3());
-        let base = store?.[side]?.clone();
-        if ((!base || base.lengthSq() < 1e-8) && heel){
-          const toePos = dragging.getWorldPosition(new THREE.Vector3());
-          base = toePos.clone().sub(heel);
-        }
-        if (!base) base = new THREE.Vector3(TOE_EXTEND, 0, 0);
-        if (!store[side]) store[side] = base.clone(); else store[side].copy(base);
-        toeRotateDrag.active = true;
-        toeRotateDrag.person = activePerson;
-        toeRotateDrag.side = side;
-        toeRotateDrag.startOffset.copy(base);
-        toeRotateDrag.startX = event.clientX; toeRotateDrag.startY = event.clientY;
-        toeRotateDrag.camera = cam;
-        toeRotateDrag.startToeWorld.copy(toeWorld);
       }
 
       dragCamera = cam; dragView = view;
@@ -6587,7 +6529,7 @@ function clampToDragLengths(person, jointKey, target){
     }
     const keyboardCtrlLike = !!(event.ctrlKey || event.metaKey);
     ctrlDragging = !!(keyboardCtrlLike || touchCtrlDragging);
-    shiftDragging = !!(event.shiftKey && keyboardCtrlLike);
+    shiftDragging = false;
     activePointerView = view;
     const ndc = ndcForEventInView(event, dragging ? dragView : view);
     mouse.x = ndc.x; mouse.y = ndc.y;
@@ -6800,52 +6742,7 @@ function clampToDragLengths(person, jointKey, target){
       if (!shouldSkipGroundingDuringNaturalDrag(activePerson)) {
         target.y = Math.max(target.y, FLOOR_Y + 0.02);
       }
-      if (shiftDragging){
-        const prev = dragging.position.clone();
-        const delta = new THREE.Vector3().subVectors(target, prev);
-        const allY = [...jointMeshesA, ...jointMeshesB].map(m=> m.position.y);
-        const minY = Math.min(...allY);
-        if (delta.y < 0){ const minAllowedDy = (FLOOR_Y + 0.02) - minY; if (delta.y < minAllowedDy) delta.y = minAllowedDy; }
-        skeletonA.rootPos.add(delta); skeletonB.rootPos.add(delta);
-        groundSkeleton(skeletonA); groundSkeleton(skeletonB);
-        jointsA = jointsFromSkeleton(skeletonA); jointsB = jointsFromSkeleton(skeletonB);
-        updateMeshesFromJoints();
-      } else if (toeRotateDrag.active) {
-        const person = toeRotateDrag.person;
-        const side = toeRotateDrag.side;
-        const store = person === 'B' ? toeOffsets.B : toeOffsets.A;
-        const joints = person === 'A' ? jointsA : jointsB;
-        const heelKey = side === 'L' ? 'footL' : 'footR';
-        const anchor = toeRotateDrag.startToeWorld?.clone() || dragging.getWorldPosition(new THREE.Vector3());
-        const base = toeRotateDrag.startOffset;
-        if (store && base && base.lengthSq() > 1e-8){
-          const yaw = (event.clientX - toeRotateDrag.startX) * TOE_ROTATE_SENS;
-          const pitch = (event.clientY - toeRotateDrag.startY) * TOE_ROTATE_SENS;
-          const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
-          let right = new THREE.Vector3(1,0,0);
-          const camUse = toeRotateDrag.camera || cam;
-          try{
-            const dir = camUse.getWorldDirection(new THREE.Vector3()).normalize();
-            right = new THREE.Vector3().crossVectors(new THREE.Vector3(0,1,0), dir).normalize();
-            if (right.lengthSq() < 1e-8) right = new THREE.Vector3(1,0,0);
-          }catch(e){}
-          const qPitch = new THREE.Quaternion().setFromAxisAngle(right, -pitch);
-          const rotated = base.clone().applyQuaternion(qYaw).applyQuaternion(qPitch);
-          if (anchor && joints?.[heelKey]){
-            let newHeel = anchor.clone().sub(rotated);
-            if (newHeel.y < FLOOR_Y + 0.02) newHeel.y = FLOOR_Y + 0.02;
-            const finalOffset = anchor.clone().sub(newHeel);
-            if (!store[side]) store[side] = new THREE.Vector3();
-            store[side].copy(finalOffset);
-            joints[heelKey] = [newHeel.x, newHeel.y, newHeel.z];
-            syncSkeletonFromJoints(person);
-          } else {
-            if (!store[side]) store[side] = new THREE.Vector3();
-            store[side].copy(rotated);
-          }
-          updateMeshesFromJoints();
-        }
-      } else if (ctrlDragging){
+      if (ctrlDragging){
         const prev = dragging.position.clone();
         const delta = new THREE.Vector3().subVectors(target, prev);
         const sel = selectedPerson === 'A' ? 'A' : 'B';
@@ -6953,7 +6850,6 @@ function clampToDragLengths(person, jointKey, target){
     elbowTranslateDrag.active = false; elbowTranslateDrag.person = null; elbowTranslateDrag.side = null;
     handTranslateDrag.active = false; handTranslateDrag.person = null; handTranslateDrag.side = null;
     footDrag.active = false;
-    toeRotateDrag.active = false; toeRotateDrag.person = null; toeRotateDrag.side = null; toeRotateDrag.startOffset.set(0,0,0); toeRotateDrag.startToeWorld.set(0,0,0); toeRotateDrag.startX = 0; toeRotateDrag.startY = 0; toeRotateDrag.camera = null;
     lowerHandleDrag.active = false; lowerHandleDrag.person = null; lowerHandleDrag.accumQ.identity(); lowerHandleDrag.baseRel.clear();
     upperDrag.active = false; upperDrag.person = null; upperDrag.wholeBody = false; upperDrag.mode = 'yawPitch'; upperDrag.baseDir.set(0,1,0);
     upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.baseRelOther.clear(); upperDrag.pivotOther.set(0,0,0);
@@ -7464,7 +7360,7 @@ function clampToDragLengths(person, jointKey, target){
                     aria-label="Playback folders"
                     tabindex="-1"
                     bind:this={playbacksMenuEl}
-                    on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, playbackFolderView || '')}>
+                    >
                   {#if playbackFolderView === null}
                     <div class="menu-item" style="justify-content:flex-start; gap:6px; cursor:default;">
                       <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => {
@@ -7482,7 +7378,6 @@ function clampToDragLengths(person, jointKey, target){
                             class="menu-row-btn"
                             style="flex:1; text-align:left; display:flex; align-items:center; gap:6px;"
                             on:click={() => playbackFolderView = folderName}
-                            on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, { folderName })}
                             on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); playbackFolderView = folderName; }}}
                             on:dragover|preventDefault={() => {
                               if (draggingPlaybackIdx!=null) movePlaybackToFolder(draggingPlaybackIdx, folderName);
@@ -7500,7 +7395,7 @@ function clampToDragLengths(person, jointKey, target){
                       {/each}
                       {#if playbacksInFolder('').length}
                         {#each playbacksInFolder('') as pb (pb._idx)}
-                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null} on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, { playbackIdx: pb._idx, folderName: pb.folder })}>
+                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null}>
                             <button type="button" class="menu-row-btn" on:click={() => { loadSavedPlayback(pb._idx); showSavedPlaybacksMenu=false; }}>
                               <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
                             </button>
@@ -7570,7 +7465,6 @@ function clampToDragLengths(person, jointKey, target){
                             class="menu-row-btn"
                             style="flex:1; text-align:left; display:flex; align-items:center; gap:6px;"
                             on:click={() => playbackFolderView = sub}
-                            on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, { folderName: sub })}
                             on:dragover|preventDefault={() => { if (draggingPlaybackIdx!=null) movePlaybackToFolder(draggingPlaybackIdx, sub); }}>
                             <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                             <span class="name">{sub}</span>
@@ -7586,7 +7480,7 @@ function clampToDragLengths(person, jointKey, target){
                     {/if}
                     {#if playbacksInFolder(playbackFolderView).length}
                       {#each playbacksInFolder(playbackFolderView) as pb (pb._idx)}
-                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null} on:contextmenu|preventDefault={(e)=> openPlaybackContext(e, { playbackIdx: pb._idx, folderName: pb.folder })}>
+                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null}>
                           <button type="button" class="menu-row-btn" on:click={() => { loadSavedPlayback(pb._idx); showSavedPlaybacksMenu=false; }}>
                             <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
                           </button>
@@ -7645,107 +7539,6 @@ function clampToDragLengths(person, jointKey, target){
         </div>
       </div>
     </div>
-
-      {#if playbackContextMenu.visible}
-        <div
-          class="menu-popup playback-context-popup"
-          role="menu"
-          aria-label="Playback context menu"
-          tabindex="-1"
-          bind:this={playbackContextEl}
-          style="position:fixed; left:{playbackContextMenu.x}px; top:{playbackContextMenu.y}px; z-index:1300; min-width:220px;"
-          on:click|stopPropagation={() => {}}
-          on:keydown|stopPropagation={() => {}}
-          on:contextmenu|preventDefault={() => {}}>
-          <div class="playback-context-popup__title">
-            {#if playbackContextMenu.playbackIdx >= 0}
-              Playback
-            {:else if playbackContextMenu.folder}
-              Folder
-            {:else}
-              Playback Library
-            {/if}
-          </div>
-          {#if playbackContextMenu.label}
-            <div class="playback-context-popup__label">{playbackContextMenu.label}</div>
-          {/if}
-          <button
-            type="button"
-            class="menu-item"
-            role="menuitem"
-            on:click={() => {
-              const val = prompt('New folder name');
-              if (val && val.trim()){
-                addPlaybackFolder(val, playbackContextMenu.folder || null);
-                playbackGroups = groupPlaybacks(savedPlaybacks);
-                persistPlaybackFolders();
-              }
-              closePlaybackContext();
-            }}
-            on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
-            <span class="name">Add folder here</span>
-          </button>
-          {#if playbackContextMenu.folder}
-            <button
-              type="button"
-              class="menu-item"
-              role="menuitem"
-              on:click={() => {
-                promptRenamePlaybackFolder(playbackContextMenu.folder);
-                closePlaybackContext();
-              }}
-              on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
-              <span class="name">Rename folder</span>
-            </button>
-          {/if}
-          {#if playbackContextMenu.playbackIdx >= 0}
-            <button
-              type="button"
-              class="menu-item"
-              role="menuitem"
-              on:click={() => {
-                startPlaybackEdit(playbackContextMenu.playbackIdx);
-                closePlaybackContext();
-              }}
-              on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
-              <span class="name">Edit playback</span>
-            </button>
-            <button
-              type="button"
-              class="menu-item"
-              role="menuitem"
-              on:click={() => {
-                deleteSavedPlayback(playbackContextMenu.playbackIdx);
-                closePlaybackContext();
-              }}
-              on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
-              <span class="name">Delete playback</span>
-            </button>
-          {/if}
-          {#if playbackContextMenu.folder}
-            <button
-              type="button"
-              class="menu-item"
-              role="menuitem"
-              on:click={() => {
-                deletePlaybackFolder(playbackContextMenu.folder);
-                closePlaybackContext();
-              }}
-              on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
-              <span class="name">Delete "{playbackContextMenu.folder}"</span>
-            </button>
-          {/if}
-          <button
-            type="button"
-            class="menu-item"
-            role="menuitem"
-            on:click={closePlaybackContext}
-            on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.currentTarget?.click(); } }}>
-            <span class="name" style="opacity:0.7;">Close</span>
-          </button>
-        </div>
-      {/if}
-
     {#if editingPlaybackIdx >= 0}
       <div class="editing-bar collapse-hide">
         <span class="meta-label" style="font-size:12px; color:#444;">Editing playback {editingPlaybackIdx + 1}</span>
@@ -7960,12 +7753,6 @@ function clampToDragLengths(person, jointKey, target){
   input[type="range"].slim::-moz-range-track { height: 6px; background: #fff; border-radius: 9999px; border: 1px solid #000; box-shadow: inset 0 1px 0 rgba(0,0,0,0.08); }
   input[type="range"].slim::-moz-range-thumb { width: 14px; height: 14px; background: #3b82f6; border: 0; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.18); }
   .menu-popup { position:absolute; bottom: 110%; right:0; background:linear-gradient(135deg, #ffffff 0%, #f6f7fb 100%); border:1px solid #d0d7de; border-radius:12px; box-shadow:0 10px 28px rgba(0,0,0,0.14); padding:6px; min-width: 200px; max-height: 240px; max-width: min(100vw - 18px, 420px); width: min(420px, 100%); overflow:auto; z-index: 12; box-sizing: border-box; }
-  .playback-context-popup { background: linear-gradient(180deg, rgba(255,255,255,0.99), rgba(244,247,252,0.98)); border-color:#b9c6d8; box-shadow: 0 18px 42px rgba(15,23,42,0.28); color:#0f172a; }
-  .playback-context-popup__title { padding: 6px 8px 2px; font: 700 11px/1.2 system-ui, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color:#475569; }
-  .playback-context-popup__label { margin: 0 8px 6px; padding: 8px 10px; border-radius: 8px; background: rgba(148,163,184,0.14); font: 600 13px/1.35 system-ui, sans-serif; color:#0f172a; word-break: break-word; }
-  .playback-context-popup .menu-item { min-height: 34px; }
-  .playback-context-popup .menu-item:hover { background: rgba(37,99,235,0.10); }
-  .playback-context-popup .menu-item .name { color:#0f172a; }
   .preset-menu { display:grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap:8px 12px; min-width: 420px; width: min(100vw - 18px, 760px); max-width: calc(100vw - 18px); }
   .preset-menu-col { display:flex; flex-direction:column; gap:4px; }
   .menu-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px; cursor:pointer; border-radius:6px; }
@@ -8050,11 +7837,6 @@ function clampToDragLengths(person, jointKey, target){
     border-color: rgba(59,73,102,0.8);
     color: #e5e7eb;
   }
-  :global(body.dark-mode) .playback-context-popup { background: linear-gradient(180deg, rgba(15,23,42,0.99), rgba(8,12,22,0.97)); border-color: rgba(96,165,250,0.35); box-shadow: 0 18px 42px rgba(0,0,0,0.48); color:#e5e7eb; }
-  :global(body.dark-mode) .playback-context-popup__title { color:#94a3b8; }
-  :global(body.dark-mode) .playback-context-popup__label { background: rgba(148,163,184,0.14); color:#f8fafc; }
-  :global(body.dark-mode) .playback-context-popup .menu-item:hover { background: rgba(59,130,246,0.18); }
-  :global(body.dark-mode) .playback-context-popup .menu-item .name { color:#e5e7eb; }
   :global(body.dark-mode) .account-btn {
     background: #0f172a;
     border-color: #334155;
