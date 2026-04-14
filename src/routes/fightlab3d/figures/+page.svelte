@@ -3560,6 +3560,26 @@ function clampToDragLengths(person, jointKey, target){
     else jointsB = joints;
   }
 
+  function rotatePoseJointsAroundY(person, angle, pivot = null){
+    if (!Number.isFinite(angle) || Math.abs(angle) < 1e-6) return;
+    const joints = person === 'A' ? jointsA : jointsB;
+    if (!joints) return;
+    const hL = joints.hipL ? new THREE.Vector3(...joints.hipL) : null;
+    const hR = joints.hipR ? new THREE.Vector3(...joints.hipR) : null;
+    const center = pivot
+      ? pivot.clone()
+      : (hL && hR ? hL.clone().add(hR).multiplyScalar(0.5) : new THREE.Vector3());
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), angle);
+    for (const [key, arr] of Object.entries(joints)){
+      if (!Array.isArray(arr) || arr.length < 3) continue;
+      if (isLocked && isLocked(person, key)) continue;
+      const v = new THREE.Vector3(arr[0], arr[1], arr[2]).sub(center).applyQuaternion(q).add(center);
+      joints[key] = [v.x, v.y, v.z];
+    }
+    if (person === 'A') jointsA = joints;
+    else jointsB = joints;
+  }
+
   // ---------- Joint Angle Limits (Directional) ----------
   function torsoFrameFromSkel(skel){
     computeFK(skel);
@@ -4445,11 +4465,13 @@ function clampToDragLengths(person, jointKey, target){
       if (ctrlDragging){
         const prev = dragging.position.clone();
         const delta = new THREE.Vector3().subVectors(target, prev);
-        if (shiftDragging){
-          delta.x = 0;
-          delta.z = 0;
-        }
         const sel = selectedPerson === 'A' ? 'A' : 'B';
+        if (shiftDragging){
+          const yaw = -delta.x * UPPER_HANDLE_ROT_SENS_YAW;
+          rotatePoseJointsAroundY(sel, yaw);
+          syncMeshesNoSolve();
+          return;
+        }
         const selMeshes = sel==='A' ? jointMeshesA : jointMeshesB;
         const minY = Math.min(...selMeshes.map(m=> m.position.y));
         if (delta.y < 0){ const minAllowedDy = (FLOOR_Y + 0.02) - minY; if (delta.y < minAllowedDy) delta.y = minAllowedDy; }
@@ -6833,11 +6855,13 @@ function clampToDragLengths(person, jointKey, target){
       if (ctrlDragging){
         const prev = dragging.position.clone();
         const delta = new THREE.Vector3().subVectors(target, prev);
-        if (shiftDragging){
-          delta.x = 0;
-          delta.z = 0;
-        }
         const sel = selectedPerson === 'A' ? 'A' : 'B';
+        if (shiftDragging){
+          const yaw = -delta.x * UPPER_HANDLE_ROT_SENS_YAW;
+          rotatePoseJointsAroundY(sel, yaw);
+          syncMeshesNoSolve();
+          return;
+        }
         const selMeshes = sel==='A' ? jointMeshesA : jointMeshesB;
         const minY = Math.min(...selMeshes.map(m=> m.position.y));
         if (delta.y < 0){ const minAllowedDy = (FLOOR_Y + 0.02) - minY; if (delta.y < minAllowedDy) delta.y = minAllowedDy; }
