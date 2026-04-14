@@ -6797,7 +6797,7 @@ function clampToDragLengths(person, jointKey, target){
           qDelta = qRoll.multiply(qPitch);
         } else if (upperDrag.mode === 'yawOnly'){
           const yaw = -dx * UPPER_HANDLE_ROT_SENS_YAW;
-          const qYaw = new THREE.Quaternion().setFromAxisAngle(tf.yUp, yaw);
+          const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
           qDelta = qYaw;
         } else if (upperDrag.mode === 'pitchOnly'){
           const qPitch = new THREE.Quaternion().setFromAxisAngle(tf.xRight, pitch);
