@@ -4448,8 +4448,6 @@ function clampToDragLengths(person, jointKey, target){
         if (shiftDragging){
           delta.x = 0;
           delta.z = 0;
-        } else {
-          delta.y = 0;
         }
         const sel = selectedPerson === 'A' ? 'A' : 'B';
         const selMeshes = sel==='A' ? jointMeshesA : jointMeshesB;
@@ -6002,6 +6000,42 @@ function clampToDragLengths(person, jointKey, target){
       return;
     }
     if (hit){
+      if (isCtrlLike && event.shiftKey){
+        const person = jointMeshesA.includes(hit.object) ? 'A' : 'B';
+        const joints = person === 'A' ? jointsA : jointsB;
+        if (!joints) return;
+        activePerson = person;
+        selectedPerson = person;
+        activeJointIdx = null;
+        const isUpper =
+          hit.object.userData?.key && upperBodyKeys().includes(hit.object.userData.key);
+        const keysOverride = isUpper ? upperBodyKeys() : lowerBodyKeys();
+        if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+        upperDrag.active = true;
+        upperDrag.person = person;
+        upperDrag.startX = event.clientX;
+        upperDrag.startY = event.clientY;
+        upperDrag.lastX = event.clientX;
+        upperDrag.lastY = event.clientY;
+        upperDrag.view = view;
+        upperDrag.camera = cam;
+        upperDrag.accumQ.identity();
+        upperDrag.baseRelOther.clear(); upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.pivotOther.set(0,0,0);
+        upperDrag.wholeBody = false;
+        upperDrag.keysOverride = keysOverride;
+        upperDrag.mode = 'yawRoll';
+        const hL = joints.hipL ? new THREE.Vector3(...joints.hipL) : null;
+        const hR = joints.hipR ? new THREE.Vector3(...joints.hipR) : null;
+        upperDrag.pivot = (hL && hR) ? hL.clone().add(hR).multiplyScalar(0.5) : (skeletonA && person === 'A' ? skeletonA.rootPos.clone() : (skeletonB && person === 'B' ? skeletonB.rootPos.clone() : new THREE.Vector3()));
+        upperDrag.baseRel.clear();
+        for (const k of keysOverride){
+          const p = joints[k]; if (!p) continue;
+          upperDrag.baseRel.set(k, new THREE.Vector3(p[0]-upperDrag.pivot.x, p[1]-upperDrag.pivot.y, p[2]-upperDrag.pivot.z));
+        }
+        dragCamera = cam; dragView = view;
+        controls.enabled = false; orbitEnabled = false;
+        return;
+      }
       if (event.shiftKey && !isCtrlLike){
         const person = jointMeshesA.includes(hit.object) ? 'A' : 'B';
         const joints = person === 'A' ? jointsA : jointsB;
@@ -6574,7 +6608,7 @@ function clampToDragLengths(person, jointKey, target){
     }
     const keyboardCtrlLike = !!(event.ctrlKey || event.metaKey);
     ctrlDragging = !!(keyboardCtrlLike || touchCtrlDragging);
-    shiftDragging = false;
+    shiftDragging = !!(keyboardCtrlLike && event.shiftKey);
     activePointerView = view;
     const ndc = ndcForEventInView(event, dragging ? dragView : view);
     mouse.x = ndc.x; mouse.y = ndc.y;
@@ -6739,6 +6773,12 @@ function clampToDragLengths(person, jointKey, target){
           const qRoll = new THREE.Quaternion().setFromAxisAngle(tf.zForward, roll);
           const qPitch = new THREE.Quaternion().setFromAxisAngle(tf.xRight, pitch);
           qDelta = qRoll.multiply(qPitch);
+        } else if (upperDrag.mode === 'yawRoll'){
+          const yaw = -dx * UPPER_HANDLE_ROT_SENS_YAW;
+          const roll = -dy * UPPER_HANDLE_ROT_SENS_PITCH;
+          const qYaw = new THREE.Quaternion().setFromAxisAngle(tf.yUp, yaw);
+          const qRoll = new THREE.Quaternion().setFromAxisAngle(tf.zForward, roll);
+          qDelta = qYaw.multiply(qRoll);
         } else if (upperDrag.mode === 'pitchOnly'){
           const qPitch = new THREE.Quaternion().setFromAxisAngle(tf.xRight, pitch);
           qDelta = qPitch;
@@ -6796,8 +6836,6 @@ function clampToDragLengths(person, jointKey, target){
         if (shiftDragging){
           delta.x = 0;
           delta.z = 0;
-        } else {
-          delta.y = 0;
         }
         const sel = selectedPerson === 'A' ? 'A' : 'B';
         const selMeshes = sel==='A' ? jointMeshesA : jointMeshesB;
