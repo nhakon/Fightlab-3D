@@ -71,6 +71,8 @@
     camera: null,
     // when true (Ctrl+click on upper handle), rotate the whole figure instead of just upper body
     wholeBody: false,
+    // optional key override for joint-triggered rotation
+    keysOverride: null,
     // drag rotation mode: 'yawPitch' for handle, 'pendulum' for torso click
     mode: 'yawPitch',
     // base direction from hip center to shoulder center at drag start
@@ -409,7 +411,7 @@
   let dragging = null;           // sphere mesh being dragged
   let activePerson = null;       // "A" or "B"
   let activeJointIdx = null;     // index in hierarchical skeleton
-  let shiftDragging = false;     // combined move mode disabled; kept for existing guards
+  let shiftDragging = false;     // true if Ctrl+Shift held at pointerdown (vertical move)
   let ctrlDragging = false;      // true if Ctrl held at pointerdown (move one figure)
   let touchCtrlDragging = false; // true when a second touch should behave like Ctrl
   const activeTouchPointers = new Set();
@@ -779,7 +781,8 @@ function isLocked(person, key){
     { keys: 'Click head rotation handle', desc: 'Rotate upper body only' },
     { keys: 'Ctrl + click head rotation handle', desc: 'Rotate lower body only' },
     { keys: 'Shift + click head rotation handle', desc: 'Rotate whole figure' },
-    { keys: 'Ctrl + drag joint', desc: 'Move selected figure' },
+    { keys: 'Ctrl + drag joint', desc: 'Move selected figure along the floor' },
+    { keys: 'Ctrl + Shift + drag joint', desc: 'Move selected figure up/down' },
     { keys: 'Space', desc: 'Play/pause animation (idle) or nudge joint closer (dragging)' },
     { keys: 'F', desc: 'Nudge joint farther (while dragging)' }
   ];
@@ -2731,7 +2734,7 @@ function isLocked(person, key){
     handTranslateDrag.active = false; handTranslateDrag.person = null; handTranslateDrag.side = null;
     footDrag.active = false;
     lowerHandleDrag.active = false; lowerHandleDrag.person = null; lowerHandleDrag.accumQ.identity(); lowerHandleDrag.baseRel.clear();
-    upperDrag.active = false; upperDrag.person = null; upperDrag.wholeBody = false; upperDrag.mode = 'yawPitch'; upperDrag.baseDir.set(0,1,0);
+    upperDrag.active = false; upperDrag.person = null; upperDrag.wholeBody = false; upperDrag.keysOverride = null; upperDrag.mode = 'yawPitch'; upperDrag.baseDir.set(0,1,0);
     upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.baseRelOther.clear(); upperDrag.pivotOther.set(0,0,0);
     natLock = { active:false, person:null, spineBefore:null, headBefore:null, headDrag:false };
     activeSnaps = [];
@@ -4442,6 +4445,12 @@ function clampToDragLengths(person, jointKey, target){
       if (ctrlDragging){
         const prev = dragging.position.clone();
         const delta = new THREE.Vector3().subVectors(target, prev);
+        if (shiftDragging){
+          delta.x = 0;
+          delta.z = 0;
+        } else {
+          delta.y = 0;
+        }
         const sel = selectedPerson === 'A' ? 'A' : 'B';
         const selMeshes = sel==='A' ? jointMeshesA : jointMeshesB;
         const minY = Math.min(...selMeshes.map(m=> m.position.y));
@@ -5961,7 +5970,7 @@ function clampToDragLengths(person, jointKey, target){
       }catch(e){}
     }
     ctrlDragging = isCtrlLike;
-    shiftDragging = false;
+    shiftDragging = !!(isCtrlLike && event.shiftKey);
     // cache last mouse NDC so drag continues updating if camera moves (WASD)
     const ndc = ndcForEventInView(event, view);
     mouse.x = ndc.x; mouse.y = ndc.y;
@@ -6000,6 +6009,9 @@ function clampToDragLengths(person, jointKey, target){
         activePerson = person;
         selectedPerson = person;
         activeJointIdx = null;
+        const isUpper =
+          hit.object.userData?.key && upperBodyKeys().includes(hit.object.userData.key);
+        const keysOverride = isUpper ? upperBodyKeys() : lowerBodyKeys();
         if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
         upperDrag.active = true;
         upperDrag.person = person;
@@ -6011,13 +6023,14 @@ function clampToDragLengths(person, jointKey, target){
         upperDrag.camera = cam;
         upperDrag.accumQ.identity();
         upperDrag.baseRelOther.clear(); upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.pivotOther.set(0,0,0);
-        upperDrag.wholeBody = true;
+        upperDrag.wholeBody = false;
+        upperDrag.keysOverride = keysOverride;
         upperDrag.mode = 'pitchOnly';
         const hL = joints.hipL ? new THREE.Vector3(...joints.hipL) : null;
         const hR = joints.hipR ? new THREE.Vector3(...joints.hipR) : null;
         upperDrag.pivot = (hL && hR) ? hL.clone().add(hR).multiplyScalar(0.5) : (skeletonA && person === 'A' ? skeletonA.rootPos.clone() : (skeletonB && person === 'B' ? skeletonB.rootPos.clone() : new THREE.Vector3()));
         upperDrag.baseRel.clear();
-        for (const k of Object.keys(joints||{})){
+        for (const k of keysOverride){
           const p = joints[k]; if (!p) continue;
           upperDrag.baseRel.set(k, new THREE.Vector3(p[0]-upperDrag.pivot.x, p[1]-upperDrag.pivot.y, p[2]-upperDrag.pivot.z));
         }
@@ -6741,7 +6754,7 @@ function clampToDragLengths(person, jointKey, target){
         upperDrag.accumQ.premultiply(qDelta);
       }
       // Rotate all captured keys when wholeBody is true, otherwise only upper-body keys
-      const keys = upperDrag.wholeBody ? Array.from(upperDrag.baseRel.keys()) : upperBodyKeys();
+      const keys = upperDrag.keysOverride ? upperDrag.keysOverride : (upperDrag.wholeBody ? Array.from(upperDrag.baseRel.keys()) : upperBodyKeys());
       for (const k of keys){
         if (isLocked && isLocked(person, k)) continue;
         const rel0 = upperDrag.baseRel.get(k); if (!rel0) continue;
@@ -6780,6 +6793,12 @@ function clampToDragLengths(person, jointKey, target){
       if (ctrlDragging){
         const prev = dragging.position.clone();
         const delta = new THREE.Vector3().subVectors(target, prev);
+        if (shiftDragging){
+          delta.x = 0;
+          delta.z = 0;
+        } else {
+          delta.y = 0;
+        }
         const sel = selectedPerson === 'A' ? 'A' : 'B';
         const selMeshes = sel==='A' ? jointMeshesA : jointMeshesB;
         const minY = Math.min(...selMeshes.map(m=> m.position.y));
@@ -6886,7 +6905,7 @@ function clampToDragLengths(person, jointKey, target){
     handTranslateDrag.active = false; handTranslateDrag.person = null; handTranslateDrag.side = null;
     footDrag.active = false;
     lowerHandleDrag.active = false; lowerHandleDrag.person = null; lowerHandleDrag.accumQ.identity(); lowerHandleDrag.baseRel.clear();
-    upperDrag.active = false; upperDrag.person = null; upperDrag.wholeBody = false; upperDrag.mode = 'yawPitch'; upperDrag.baseDir.set(0,1,0);
+    upperDrag.active = false; upperDrag.person = null; upperDrag.wholeBody = false; upperDrag.keysOverride = null; upperDrag.mode = 'yawPitch'; upperDrag.baseDir.set(0,1,0);
     upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.baseRelOther.clear(); upperDrag.pivotOther.set(0,0,0);
     natLock = { active:false, person:null, spineBefore:null, headBefore:null, headDrag:false };
     naturalDragBelowFloorA = false;
