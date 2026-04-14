@@ -7748,7 +7748,7 @@ function clampToDragLengths(person, jointKey, target){
   }
   /* Responsive toolbar */
   .preset-ui { backdrop-filter: saturate(180%) blur(10px); box-sizing: border-box; }
-  .preset-ui.bottom { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); right: auto; z-index: 10; background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)); border:1px solid rgba(212,228,255,0.9); border-radius:14px; padding:10px 22px; box-shadow:0 10px 28px rgba(15, 23, 42, 0.12); display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; width: clamp(280px, calc(100vw - 80px), 1680px); justify-content: center; }
+  .preset-ui.bottom { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); right: auto; z-index: 10; background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)); border:1px solid rgba(212,228,255,0.9); border-radius:14px; padding:10px 22px; padding-right: 58px; box-shadow:0 10px 28px rgba(15, 23, 42, 0.12); display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; width: clamp(280px, calc(100vw - 80px), 1200px); justify-content: center; }
   .preset-ui.bottom.toolbar-compact { width: auto; min-width: 0; padding: 12px 14px 10px; }
   .preset-ui.bottom.toolbar-menu-open,
   .preset-ui.bottom.toolbar-menu-open .toolbar-layout,
@@ -7765,7 +7765,7 @@ function clampToDragLengths(person, jointKey, target){
   .toolbar-layout.is-compact > .toolbar-row:not(.toolbar-row--compact) { display:none !important; }
   .toolbar-row--compact { display:none !important; }
   .toolbar-layout.is-compact > .toolbar-row--compact { display:flex !important; }
-  .expanded-grid { display:grid; grid-template-columns: repeat(3, minmax(280px, 1fr)); grid-template-rows: repeat(2, auto); gap:4px 10px; align-items:start; justify-items:stretch; }
+  .expanded-grid { display:grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); grid-template-rows: repeat(2, auto); gap:4px 8px; align-items:start; justify-items:stretch; }
   .toolbar-row { display:contents; }
   .row-left, .row-center, .row-right { display:flex; align-items:center; justify-content:flex-start; gap:10px; flex-wrap:wrap; min-width:0; max-width:100%; }
   .row-center { justify-content:center; }
