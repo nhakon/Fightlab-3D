@@ -6045,7 +6045,7 @@ function clampToDragLengths(person, jointKey, target){
         upperDrag.baseRelOther.clear(); upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.pivotOther.set(0,0,0);
         upperDrag.wholeBody = false;
         upperDrag.keysOverride = keysOverride;
-        upperDrag.mode = 'yawRoll';
+        upperDrag.mode = 'yawOnly';
         const hL = joints.hipL ? new THREE.Vector3(...joints.hipL) : null;
         const hR = joints.hipR ? new THREE.Vector3(...joints.hipR) : null;
         upperDrag.pivot = (hL && hR) ? hL.clone().add(hR).multiplyScalar(0.5) : (skeletonA && person === 'A' ? skeletonA.rootPos.clone() : (skeletonB && person === 'B' ? skeletonB.rootPos.clone() : new THREE.Vector3()));
@@ -6795,12 +6795,10 @@ function clampToDragLengths(person, jointKey, target){
           const qRoll = new THREE.Quaternion().setFromAxisAngle(tf.zForward, roll);
           const qPitch = new THREE.Quaternion().setFromAxisAngle(tf.xRight, pitch);
           qDelta = qRoll.multiply(qPitch);
-        } else if (upperDrag.mode === 'yawRoll'){
+        } else if (upperDrag.mode === 'yawOnly'){
           const yaw = -dx * UPPER_HANDLE_ROT_SENS_YAW;
-          const roll = -dy * UPPER_HANDLE_ROT_SENS_PITCH;
           const qYaw = new THREE.Quaternion().setFromAxisAngle(tf.yUp, yaw);
-          const qRoll = new THREE.Quaternion().setFromAxisAngle(tf.zForward, roll);
-          qDelta = qYaw.multiply(qRoll);
+          qDelta = qYaw;
         } else if (upperDrag.mode === 'pitchOnly'){
           const qPitch = new THREE.Quaternion().setFromAxisAngle(tf.xRight, pitch);
           qDelta = qPitch;
