@@ -5993,6 +5993,38 @@ function clampToDragLengths(person, jointKey, target){
       return;
     }
     if (hit){
+      if (event.shiftKey && !isCtrlLike){
+        const person = jointMeshesA.includes(hit.object) ? 'A' : 'B';
+        const joints = person === 'A' ? jointsA : jointsB;
+        if (!joints) return;
+        activePerson = person;
+        selectedPerson = person;
+        activeJointIdx = null;
+        if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+        upperDrag.active = true;
+        upperDrag.person = person;
+        upperDrag.startX = event.clientX;
+        upperDrag.startY = event.clientY;
+        upperDrag.lastX = event.clientX;
+        upperDrag.lastY = event.clientY;
+        upperDrag.view = view;
+        upperDrag.camera = cam;
+        upperDrag.accumQ.identity();
+        upperDrag.baseRelOther.clear(); upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.pivotOther.set(0,0,0);
+        upperDrag.wholeBody = true;
+        upperDrag.mode = 'pitchOnly';
+        const hL = joints.hipL ? new THREE.Vector3(...joints.hipL) : null;
+        const hR = joints.hipR ? new THREE.Vector3(...joints.hipR) : null;
+        upperDrag.pivot = (hL && hR) ? hL.clone().add(hR).multiplyScalar(0.5) : (skeletonA && person === 'A' ? skeletonA.rootPos.clone() : (skeletonB && person === 'B' ? skeletonB.rootPos.clone() : new THREE.Vector3()));
+        upperDrag.baseRel.clear();
+        for (const k of Object.keys(joints||{})){
+          const p = joints[k]; if (!p) continue;
+          upperDrag.baseRel.set(k, new THREE.Vector3(p[0]-upperDrag.pivot.x, p[1]-upperDrag.pivot.y, p[2]-upperDrag.pivot.z));
+        }
+        dragCamera = cam; dragView = view;
+        controls.enabled = false; orbitEnabled = false;
+        return;
+      }
       // Do not allow dragging locked joints
       const isA = jointMeshesA.includes(hit.object);
       const k = hit.object.userData.key;
@@ -6694,6 +6726,9 @@ function clampToDragLengths(person, jointKey, target){
           const qRoll = new THREE.Quaternion().setFromAxisAngle(tf.zForward, roll);
           const qPitch = new THREE.Quaternion().setFromAxisAngle(tf.xRight, pitch);
           qDelta = qRoll.multiply(qPitch);
+        } else if (upperDrag.mode === 'pitchOnly'){
+          const qPitch = new THREE.Quaternion().setFromAxisAngle(tf.xRight, pitch);
+          qDelta = qPitch;
         } else {
           const yaw = -dx * UPPER_HANDLE_ROT_SENS_YAW;
           const qYaw = new THREE.Quaternion().setFromAxisAngle(tf.yUp, yaw);
