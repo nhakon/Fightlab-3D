@@ -4900,6 +4900,20 @@ function clampToDragLengths(person, jointKey, target){
   }
   function nextFrame(){ if (!poses.length) return; applyFrame((currentFrame+1)%poses.length); }
   function prevFrame(){ if (!poses.length) return; applyFrame((currentFrame-1+poses.length)%poses.length); }
+  function commitLivePoseToCurrentFrame(){
+    if (!poses || !poses[currentFrame]) return;
+    poses[currentFrame] = { ...poses[currentFrame], data: buildPoseSnapshot() };
+  }
+  function selectPlaybackEditFrame(value){
+    if (editingPlaybackIdx < 0 || !poses || poses.length === 0) return;
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return;
+    const nextIdx = Math.max(0, Math.min(poses.length - 1, parsed - 1));
+    if (nextIdx === currentFrame) return;
+    stopPlayback();
+    commitLivePoseToCurrentFrame();
+    applyFrame(nextIdx);
+  }
   function restartPlaybackTimer(){
     if (!playing) return;
     try{ if (intervalId) clearInterval(intervalId); }catch(e){}
@@ -5664,9 +5678,7 @@ function clampToDragLengths(person, jointKey, target){
     const name = (editingPlaybackName||"").trim() || savedPlaybacks[idx].name || `Playback ${idx+1}`;
     const folder = folderKey(editingPlaybackFolder);
     // Update the currently visible frame with the live pose before saving
-    if (poses[currentFrame]){
-      poses[currentFrame] = { ...poses[currentFrame], data: buildPoseSnapshot() };
-    }
+    commitLivePoseToCurrentFrame();
     const frames = deepCopyFrames(poses);
     savedPlaybacks = savedPlaybacks.map((pb, i)=> i===idx ? { name, frames, folder } : pb);
     persistSavedPlaybacks();
@@ -5698,9 +5710,7 @@ function clampToDragLengths(person, jointKey, target){
   }
   function saveCurrentPlayback(){
     if (!poses || poses.length === 0) return;
-    if (poses[currentFrame]){
-      poses[currentFrame] = { ...poses[currentFrame], data: buildPoseSnapshot() };
-    }
+    commitLivePoseToCurrentFrame();
     const name = (newPlaybackName||"").trim() || `Playback ${savedPlaybacks.length+1}`;
     const folder = folderKey(playbackFolderView);
     const frames = deepCopyFrames(poses);
@@ -7656,6 +7666,26 @@ function clampToDragLengths(person, jointKey, target){
     {#if editingPlaybackIdx >= 0}
       <div class="editing-bar collapse-hide">
         <span class="meta-label" style="font-size:12px; color:#444;">Editing playback {editingPlaybackIdx + 1}</span>
+        <label class="frame-edit-field">
+          <span class="meta-label">Frame</span>
+          <input
+            class="input frame-edit-input"
+            type="number"
+            min="1"
+            max={Math.max(poses.length, 1)}
+            value={poses.length ? currentFrame + 1 : 0}
+            disabled={!poses.length}
+            aria-label="Frame to edit"
+            on:change={(e) => selectPlaybackEditFrame(e.currentTarget.value)}
+            on:keydown={(e) => {
+              if (e.key === 'Enter') {
+                e.currentTarget.blur();
+                selectPlaybackEditFrame(e.currentTarget.value);
+              }
+            }}
+          />
+          <span class="meta-label">/ {poses.length}</span>
+        </label>
         <input class="input" type="text" bind:value={editingPlaybackName} placeholder="Playback name" style="width:clamp(140px,24vw,220px);" />
         <select class="input" bind:value={editingPlaybackFolder} style="width:clamp(140px,20vw,200px);">
           <option value="">No folder</option>
@@ -7899,6 +7929,8 @@ function clampToDragLengths(person, jointKey, target){
   /* menu styles removed (unused) */
   .counter { font:12px/1.2 system-ui, sans-serif; color:#555; margin-left:8px; }
   .editing-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; background:#ffffff; border:3px solid #0f172a; border-radius:12px; box-shadow: 0 16px 34px rgba(15,23,42,0.30); color:#0f172a; opacity: 1; position: relative; z-index: 20; }
+  .frame-edit-field { display:inline-flex; align-items:center; gap:5px; }
+  .frame-edit-input { width:68px; text-align:center; }
   .shortcut-list { display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:10px 14px; margin:6px 0 10px 0; padding:10px; border:1px solid #eee; border-radius:10px; background:#fafafa; max-height: 360px; overflow-y: auto; overflow-x: hidden; }
   .shortcut-row { display:grid; grid-template-columns: 50% 50%; align-items:start; gap:6px 12px; font:12px/1.3 system-ui, sans-serif; color:#333; }
   .shortcut-row .keys { font-weight:700; color:#0f172a; white-space:normal; width: 100%; word-break: break-word; }
