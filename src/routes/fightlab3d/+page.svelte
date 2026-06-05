@@ -1,6 +1,6 @@
 ﻿<script>
   import { onMount } from 'svelte';
-  import frontpagePicture from './figures/jiu-jitsu-assets/frontpage-hero.png';
+  import backControlPicture from './figures/jiu-jitsu-assets/meshy-back-control.png';
 
   const clamp01 = (v) => Math.max(0, Math.min(1, v));
   const mapRange = (inMin, inMax, outMin, outMax, v) => {
@@ -43,7 +43,7 @@
       period: '/month',
       description: 'Stay sharp between classes with saved sequences and notes.',
       features: ['Unlimited sequences', 'Notes per keyframe', 'Offline replay'],
-      cta: 'Start free'
+      cta: 'Try now'
     },
     {
       id: 'coach',
@@ -52,7 +52,7 @@
       period: '/month',
       description: 'Share drills before class starts so everyone shows up ready.',
       features: ['Shareable links', 'Folders for lessons', 'Priority support'],
-      cta: 'Start free',
+      cta: 'Try now',
       highlight: true,
       tag: 'Popular'
     },
@@ -63,7 +63,7 @@
       period: '/month',
       description: 'Keep every athlete in sync with comments and review.',
       features: ['Seats for 6', 'Review comments', 'Role-based access'],
-      cta: 'Start free'
+      cta: 'Try now'
     }
   ];
   const customerStories = [
@@ -131,37 +131,54 @@
   }
 
   function updateCardViewportMode() {
+    let nextMobilePortraitCards = false;
     if (typeof window === 'undefined' || !window.matchMedia) {
-      mobilePortraitCards = false;
+      nextMobilePortraitCards = false;
+    } else {
+      nextMobilePortraitCards = window.matchMedia('(pointer: coarse) and (orientation: portrait) and (max-width: 800px)').matches;
+    }
+    if (mobilePortraitCards !== nextMobilePortraitCards) mobilePortraitCards = nextMobilePortraitCards;
+  }
+
+  function setCardFlipStates(nextStates) {
+    if (
+      cardFlipStates.length === nextStates.length &&
+      cardFlipStates.every((state, idx) => state === nextStates[idx])
+    ) {
       return;
     }
-    mobilePortraitCards = window.matchMedia('(pointer: coarse) and (orientation: portrait) and (max-width: 800px)').matches;
+    cardFlipStates = nextStates;
   }
 
   function updateCardsFromScroll() {
     updateCardViewportMode();
     const p = sectionProgress(cardRangeEl);
     const headerProgress = clamp01((p - 0.1) / 0.15);
-    cardHeaderOffset = mapRange(0, 1, 40, 0, headerProgress);
-    cardHeaderOpacity = headerProgress;
+    const nextHeaderOffset = Math.round(mapRange(0, 1, 40, 0, headerProgress) * 2) / 2;
+    const nextHeaderOpacity = Math.round(headerProgress * 100) / 100;
+    if (Math.abs(cardHeaderOffset - nextHeaderOffset) >= 0.5) cardHeaderOffset = nextHeaderOffset;
+    if (Math.abs(cardHeaderOpacity - nextHeaderOpacity) >= 0.01) cardHeaderOpacity = nextHeaderOpacity;
     if (mobilePortraitCards) {
-      cardWidth = 100;
-      cardGapOpen = true;
-      cardFlipped = false;
+      if (cardWidth !== 100) cardWidth = 100;
+      if (!cardGapOpen) cardGapOpen = true;
+      if (cardFlipped) cardFlipped = false;
       const vh = window.innerHeight || 1;
-      cardFlipStates = cardSlices.map((_, idx) => {
+      setCardFlipStates(cardSlices.map((_, idx) => {
         const el = cardEls[idx];
         if (!el) return false;
         const rect = el.getBoundingClientRect();
         return rect.top <= vh * 0.68;
-      });
+      }));
       return;
     }
     const widthProgress = clamp01(p / 0.2);
-    cardWidth = mapRange(0, 1, 75, 60, widthProgress);
-    cardGapOpen = p >= 0.2;
-    cardFlipped = p >= 0.35;
-    cardFlipStates = cardSlices.map(() => cardFlipped);
+    const nextCardWidth = Math.round(mapRange(0, 1, 75, 60, widthProgress) * 10) / 10;
+    const nextCardGapOpen = p >= 0.2;
+    const nextCardFlipped = p >= 0.35;
+    if (Math.abs(cardWidth - nextCardWidth) >= 0.1) cardWidth = nextCardWidth;
+    if (cardGapOpen !== nextCardGapOpen) cardGapOpen = nextCardGapOpen;
+    if (cardFlipped !== nextCardFlipped) cardFlipped = nextCardFlipped;
+    setCardFlipStates(cardSlices.map(() => nextCardFlipped));
   }
 
   function mediaCapture(node, idx) {
@@ -204,6 +221,16 @@
     }
   }
 
+  function preloadCardImages() {
+    if (typeof window === 'undefined') return;
+    cardSlices.forEach((card) => {
+      const img = new Image();
+      img.src = card.image || cardImage;
+      img.decoding = 'async';
+      img.decode?.().catch(() => {});
+    });
+  }
+
   function handleScroll() {
     if (ticking) return;
     ticking = true;
@@ -214,6 +241,7 @@
   }
 
   onMount(() => {
+    preloadCardImages();
     updateCardsFromScroll();
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('resize', handleScroll, { passive: true });
@@ -229,6 +257,9 @@
   <title>Fightlab 3D</title>
   <meta name="description" content="Build, adjust, and replay grappling sequences in 3D." />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  {#each cardSlices as card}
+    <link rel="preload" as="image" href={card.image || cardImage} />
+  {/each}
 </svelte:head>
 
 <svelte:window on:keydown={handleMediaKeydown} />
@@ -240,7 +271,7 @@
       <span class="brand-text">Fightlab 3D</span>
     </div>
     <div class="nav-actions">
-      <a class="nav-link-btn primary" href="/fightlab3d/login">Start free</a>
+      <a class="nav-link-btn primary" href="/fightlab3d/login">Try now</a>
     </div>
   </div>
 </header>
@@ -252,11 +283,11 @@
         <h1 class="display">Memorize techniques faster</h1>
         <p class="lead">Fightlab 3D is a martial arts pose-to-animation creator.</p>
         <div class="hero-actions">
-          <a class="nav-link-btn ghost" href="/fightlab3d/login">Start free</a>
+          <a class="nav-link-btn ghost" href="/fightlab3d/login">Try now</a>
         </div>
       </div>
       <div class="hero-visual">
-        <img src={frontpagePicture} alt="Frontpage preview" class="hero-img" loading="lazy" />
+        <img src={backControlPicture} alt="Meshy figures in back control" class="hero-img" loading="lazy" />
       </div>
     </div>
   </section>
@@ -277,7 +308,14 @@
             >
               <div class="card-inner">
                 <div class="card-face card-front">
-                  <img src={card.image || cardImage} alt={card.title} style={`object-position:${card.position};`} loading="lazy" />
+                  <img
+                    src={card.image || cardImage}
+                    alt={card.title}
+                    style={`object-position:${card.position};`}
+                    loading="eager"
+                    decoding="async"
+                    fetchpriority="high"
+                  />
                 </div>
                 <div class="card-face card-back">
                   <span>{card.label}</span>
@@ -390,7 +428,7 @@
         <h2 class="section-title">Ready to start?</h2>
         <p class="muted">Get Fightlab 3D and keep every technique at your fingertips.</p>
       </div>
-      <a class="nav-link-btn primary" href="/fightlab3d/login">Start free</a>
+      <a class="nav-link-btn primary" href="/fightlab3d/login">Try now</a>
     </div>
   </section>
 
@@ -520,9 +558,9 @@
   .card-sticky-header { text-align:center; max-width:720px; margin:0 auto; will-change: transform, opacity; transition: transform .35s ease, opacity .35s ease; }
   .card-sticky-header h3 { margin:0 0 6px 0; font: clamp(24px, 5vw, 32px)/1.1 'Sora', 'Inter', system-ui, sans-serif; color:#f8fafc; }
   .card-sticky-header .muted { color:#cbd5f5; }
-  .card-container { position:relative; display:flex; width: var(--card-width, 75%); gap:0; perspective: 1200px; transform: translateZ(0); transition: width .35s ease, gap .35s ease; }
-  .card-container.is-open { gap:20px; }
-  .card { position:relative; flex:1; aspect-ratio: 5 / 7; transform-style: preserve-3d; transition: transform .75s ease, border-radius .35s ease, box-shadow .35s ease; border-radius:18px; box-shadow: 0 12px 32px rgba(0,0,0,0.28); background: linear-gradient(140deg, #111827, #0b1220); }
+  .card-container { position:relative; display:flex; width: var(--card-width, 75%); gap:var(--card-gap, 0px); perspective: 1200px; transform: translate3d(0,0,0); will-change: width; overflow: visible; }
+  .card-container.is-open { --card-gap:20px; }
+  .card { position:relative; flex:1; aspect-ratio: 5 / 7; transform-style: preserve-3d; transition: transform .52s cubic-bezier(.22,.72,.2,1), border-radius .25s ease; border-radius:18px; box-shadow: 0 10px 24px rgba(0,0,0,0.24); background: linear-gradient(140deg, #111827, #0b1220); will-change: transform; }
   .card-left { border-radius:18px 0 0 18px; }
   .card-center { border-radius:0; }
   .card-right { border-radius:0 18px 18px 0; }
@@ -530,17 +568,19 @@
   .card-inner {
     position:absolute;
     inset:0;
+    z-index:1;
     border-radius:inherit;
     transform-style: preserve-3d;
-    transition: transform 0.75s ease;
-    will-change: transform;
+    transform: translate3d(0,0,0);
   }
-  .card.is-offset.card-left { transform: translateY(26px) rotateZ(-12deg); }
-  .card.is-offset.card-right { transform: translateY(26px) rotateZ(12deg); }
-  .card-face { position:absolute; inset:0; border-radius:inherit; overflow:hidden; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+  .card.is-offset.card-left { transform: translate3d(0,26px,0) rotateZ(-12deg); }
+  .card.is-offset.card-right { transform: translate3d(0,26px,0) rotateZ(12deg); }
+  .card.is-flipped { transform: rotateY(180deg); }
+  .card.is-offset.card-left.is-flipped { transform: translate3d(0,26px,0) rotateZ(-12deg) rotateY(180deg); }
+  .card.is-offset.card-right.is-flipped { transform: translate3d(0,26px,0) rotateZ(12deg) rotateY(180deg); }
+  .card-face { position:absolute; inset:0; border-radius:inherit; overflow:hidden; backface-visibility: hidden; -webkit-backface-visibility: hidden; transform: translate3d(0,0,0); }
   .card-back { transform: rotateY(180deg); }
-  .card.is-flipped .card-inner { transform: rotateY(180deg); }
-  .card-front img { width:100%; height:100%; object-fit:cover; border-radius:inherit; filter: saturate(1.05); }
+  .card-front img { width:100%; height:100%; object-fit:cover; border-radius:inherit; display:block; }
   .card-back { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:10px; padding:24px; background: linear-gradient(150deg, #111827, #0f172a); color:#f8fafc; text-align:center; }
   .card-back span { font: 12px/1.2 'Sora', 'Inter', system-ui, sans-serif; letter-spacing:0.14em; text-transform:uppercase; color:#94a3b8; }
   .card-back p { margin:0; font: 18px/1.3 'Sora', 'Inter', system-ui, sans-serif; }
@@ -552,6 +592,7 @@
       width:100% !important;
       max-width: calc(100% - 16px);
       gap: 12px;
+      transform: none !important;
       overflow-x: auto;
       overflow-y: visible;
       -webkit-overflow-scrolling: touch;
@@ -592,6 +633,7 @@
       margin: 0 auto;
       flex-direction: column;
       gap: 16px;
+      transform: none !important;
       overflow: visible;
     }
     .card {

@@ -3,6 +3,8 @@
   import { goto } from "$app/navigation";
   import * as THREE from "three";
   import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+  import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
+  import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils";
   import { GUI } from "lil-gui";
   import * as Poses from "$lib/poses";
   import { isSupabaseConfigured, requireSupabase } from "$lib/supabase";
@@ -16,6 +18,8 @@
   import poseMountPreset from "./jiu-jitsu-assets/pose-mount.json";
 
   // ---------- Config / State ----------
+  const MESHY_FIGURE_URL = '/fightlab3d/meshy/Meshy_AI_Low_Poly_Humanoid_Fig_biped/Meshy_AI_Low_Poly_Humanoid_Fig_biped_Character_output.glb';
+  const MESHY_TEXTURE_URL = '/fightlab3d/meshy/Meshy_AI_Blue_Articulated_Mann_0526130405/Meshy_AI_Blue_Articulated_Mann_0526130405_texture.glb';
   let canvas;
   let scene, camera, renderer, controls;
   let groundMesh = null;
@@ -224,7 +228,7 @@
       ...jointMeshesB,
       ...boneMeshesA,
       ...boneMeshesB,
-      pelvisA, pelvisB, chestA, chestB, torsoA, torsoB, spineA, spineB, shoulderBarA, shoulderBarB
+      pelvisA, pelvisB, chestA, chestB, torsoA, torsoB, spineA, spineB
     ].filter((obj) => obj && obj !== ignoreRoot && !ignoreRoot?.children?.includes(obj));
   }
 
@@ -462,14 +466,15 @@
       toeOffsetsB: {
         L: toeOffsets.B.L.clone(),
         R: toeOffsets.B.R.clone()
-      }
+      },
+      meshyRig: serializeMeshyRigPose()
     };
     undoHistory.push(snap);
     if (undoHistory.length > 100) undoHistory.shift();
   }
 
   function undoLastFigureMove(){
-    if (dragging) return; // avoid interfering mid-drag
+    if (dragging || meshyRigDrag || meshyFigureDrag || meshyRigTwistDrag) return; // avoid interfering mid-drag
     const snap = undoHistory.pop();
     if (!snap) return;
     // Restore joints first
@@ -494,29 +499,9 @@
       skeletonB.rootPos.copy(snap.rootB);
       groundSkeleton(skeletonB);
     } catch(e){}
-    // If torso lock is active, keep the freeze reference aligned to the restored pose
-    if (torsoFreeze){
-      try{
-        if (skeletonA && torsoFreezeRefA){
-          torsoFreezeRefA.rootPos.copy(skeletonA.rootPos);
-          torsoFreezeRefA.spineLocal.copy(skeletonA.angleRot[IDX.spine]);
-          if (torsoFreezeRefA.shoulderL && skeletonA.angleRot[IDX.shoulderL]) torsoFreezeRefA.shoulderL.copy(skeletonA.angleRot[IDX.shoulderL]);
-          if (torsoFreezeRefA.shoulderR && skeletonA.angleRot[IDX.shoulderR]) torsoFreezeRefA.shoulderR.copy(skeletonA.angleRot[IDX.shoulderR]);
-          if (torsoFreezeRefA.neck && skeletonA.angleRot[IDX.neck]) torsoFreezeRefA.neck.copy(skeletonA.angleRot[IDX.neck]);
-          if (torsoFreezeRefA.head && skeletonA.angleRot[IDX.head]) torsoFreezeRefA.head.copy(skeletonA.angleRot[IDX.head]);
-        }
-        if (skeletonB && torsoFreezeRefB){
-          torsoFreezeRefB.rootPos.copy(skeletonB.rootPos);
-          torsoFreezeRefB.spineLocal.copy(skeletonB.angleRot[IDX.spine]);
-          if (torsoFreezeRefB.shoulderL && skeletonB.angleRot[IDX.shoulderL]) torsoFreezeRefB.shoulderL.copy(skeletonB.angleRot[IDX.shoulderL]);
-          if (torsoFreezeRefB.shoulderR && skeletonB.angleRot[IDX.shoulderR]) torsoFreezeRefB.shoulderR.copy(skeletonB.angleRot[IDX.shoulderR]);
-          if (torsoFreezeRefB.neck && skeletonB.angleRot[IDX.neck]) torsoFreezeRefB.neck.copy(skeletonB.angleRot[IDX.neck]);
-          if (torsoFreezeRefB.head && skeletonB.angleRot[IDX.head]) torsoFreezeRefB.head.copy(skeletonB.angleRot[IDX.head]);
-        }
-      }catch(e){}
-    }
     undoing = true;
     updateMeshesFromJoints();
+    if (snap.meshyRig) applyMeshyRigPose(snap.meshyRig);
     undoing = false;
   }
 
@@ -526,7 +511,6 @@
   let pelvisA = null, pelvisB = null;
   let spineA = null, spineB = null;
   let chestA = null, chestB = null; // visible chest ellipsoid
-  let shoulderBarA = null, shoulderBarB = null;
   let upperHandleA = null, upperHandleB = null; // 3D control icons for upper-body rotation
   const HANDLE_COLOR_A = 0x4f7bff;
   const HANDLE_COLOR_B = 0x2fb6a7;
@@ -544,11 +528,6 @@
     A: { L: new THREE.Vector3(), R: new THREE.Vector3() },
     B: { L: new THREE.Vector3(), R: new THREE.Vector3() }
   };
-  // Torso freeze (global): prevent torso translation and hip bending (spine rotation)
-  let torsoFreeze = false;
-  let torsoFreezeRefA = null; // { rootPos, spineLocal, shoulderL, shoulderR, neck, head }
-  let torsoFreezeRefB = null;
-  const TORSO_FREEZE_COLOR = 0x2563eb; // torso highlight color when locked (aligned to UI accent)
   const TORSO_NORMAL_COLOR_A = 0x5b8def; // base color for figure A torso (soft blue)
   const TORSO_NORMAL_COLOR_B = 0x60c2a8; // base color for figure B torso (seafoam)
 
@@ -559,10 +538,10 @@
   // Colorblind display modes for figure body colors
   let colorblindMode = 'normal';
   const COLORBLIND_SCHEMES = {
-    normal:      { label: 'Normal',       A: TORSO_NORMAL_COLOR_A, B: TORSO_NORMAL_COLOR_B, lock: TORSO_FREEZE_COLOR },
-    deuteranopia:{ label: 'Deuteranopia', A: 0x4c9bce, B: 0xe3a24c, lock: 0x4b5563 },
-    protanopia:  { label: 'Protanopia',   A: 0x2f9e93, B: 0xb174d6, lock: 0x4b5563 },
-    tritanopia:  { label: 'Tritanopia',   A: 0x3b82f6, B: 0xd97757, lock: 0xffffff }
+    normal:      { label: 'Normal',       A: TORSO_NORMAL_COLOR_A, B: TORSO_NORMAL_COLOR_B },
+    deuteranopia:{ label: 'Deuteranopia', A: 0x4c9bce, B: 0xe3a24c },
+    protanopia:  { label: 'Protanopia',   A: 0x2f9e93, B: 0xb174d6 },
+    tritanopia:  { label: 'Tritanopia',   A: 0x3b82f6, B: 0xd97757 }
   };
 
   let dragTorsoAnchorA = null, dragTorsoAnchorB = null; // per-drag torso anchors
@@ -614,6 +593,104 @@
   const ARM_LENGTH_SCALE = 1.08;
 
   let figureGroupA = null, figureGroupB = null; // top-level groups (assigned after dummies created)
+  let meshyFigureA = null, meshyFigureB = null;
+  let meshyFigureTemplate = null;
+  let meshyRigFigures = [];
+  let pendingMeshyRigPose = null;
+  let meshyRigDrag = null;
+  let meshyFigureDrag = null;
+  let selectedMeshyRig = null;
+  let meshyRigTwistDrag = null;
+  let meshyRigBodyTwistDrag = null;
+  let meshyRigShiftRightModifierActive = false;
+  let mobileCrosshair = {
+    visible: false,
+    active: false,
+    pointerId: null,
+    x: 0,
+    y: 0,
+    dx: 0,
+    dy: 0,
+    lastDx: 0,
+    lastDy: 0,
+    handle: null,
+    rig: null,
+    mode: 'joint'
+  };
+  let lastMobileFigureTap = { rig: null, time: 0, x: 0, y: 0 };
+  const meshyRigRaycaster = new THREE.Raycaster();
+  const meshyRigPointer = new THREE.Vector2();
+  const meshyRigDragPlane = new THREE.Plane();
+  const meshyRigDragTarget = new THREE.Vector3();
+  const meshyRigJointMaterial = new THREE.MeshStandardMaterial({
+    color: 0x38bdf8,
+    emissive: 0x082f49,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0,
+    roughness: 0.35,
+    metalness: 0
+  });
+  const meshyRigJointMarkerMaterial = new THREE.MeshStandardMaterial({
+    color: 0x38bdf8,
+    emissive: 0x082f49,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.88,
+    roughness: 0.45,
+    metalness: 0
+  });
+  const meshyRigJointMarkerMaterialA = new THREE.MeshStandardMaterial({
+    color: 0x34d399,
+    emissive: 0x064e3b,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.88,
+    roughness: 0.45,
+    metalness: 0
+  });
+  const meshyRigJointMarkerMaterialB = meshyRigJointMarkerMaterial;
+  const meshyRigSelectedJointMaterial = new THREE.MeshStandardMaterial({
+    color: 0xfacc15,
+    emissive: 0x5f4300,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.95,
+    roughness: 0.28,
+    metalness: 0
+  });
+  const meshyRigRotationIconTopMaterial = new THREE.MeshBasicMaterial({
+    color: 0x67e8f9,
+    depthTest: false,
+    depthWrite: false,
+    colorWrite: false,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide
+  });
+  const meshyRigRotationIconBottomMaterial = new THREE.MeshBasicMaterial({
+    color: 0x38bdf8,
+    depthTest: false,
+    depthWrite: false,
+    colorWrite: false,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide
+  });
+  const meshyRigRotationIconLineMaterial = new THREE.MeshBasicMaterial({
+    color: 0x082f49,
+    depthTest: false,
+    depthWrite: false,
+    colorWrite: false,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide
+  });
+  const SHOW_MESHY_ROTATION_ICON = false;
 
   // desired bone lengths (per person), recomputed on pose/frame change
 let desiredLengthsA = new Map();
@@ -776,25 +853,20 @@ function isLocked(person, key){
   const desktopShortcuts = [
     { keys: 'Ctrl + Z', desc: 'Undo last move' },
     { keys: 'Ctrl + S', desc: 'Save current frame' },
-    { keys: 'Q', desc: 'Toggle torso lock' },
-    { keys: 'E', desc: 'Toggle Natural / Single-Joint' },
-    { keys: 'Click head rotation handle', desc: 'Rotate upper body only' },
-    { keys: 'Ctrl + click head rotation handle', desc: 'Rotate lower body only' },
-    { keys: 'Shift + click head rotation handle', desc: 'Rotate whole figure' },
-    { keys: 'Ctrl + drag joint', desc: 'Move selected figure along the floor' },
-    { keys: 'Ctrl + Shift + drag joint', desc: 'Move selected figure up/down' },
-    { keys: 'Space', desc: 'Play/pause animation (idle) or nudge joint closer (dragging)' },
-    { keys: 'F', desc: 'Nudge joint farther (while dragging)' }
+    { keys: 'Ctrl + drag', desc: 'Move the whole figure' },
+    { keys: 'Ctrl + Shift + drag', desc: 'Rotate the whole figure' },
+    { keys: 'Right-click + drag joint', desc: 'Twist/rotate the selected joint' }
   ];
   const mobileShortcuts = [
     { keys: 'One finger drag', desc: 'Move the selected joint' },
     { keys: 'Tap a joint or body part', desc: 'Select the figure or joint you want to adjust' },
-    { keys: 'Tap head rotation handle', desc: 'Rotate the upper body' },
+    { keys: 'Joint crosshair up/down', desc: 'Move the selected joint away from or toward the camera' },
+    { keys: 'Joint crosshair left/right', desc: 'Twist/rotate the selected joint' },
+    { keys: 'Double-tap figure', desc: 'Move the whole figure like Ctrl + drag' },
+    { keys: 'Double-tap crosshair', desc: 'Rotate the whole figure like Ctrl + Shift + drag' },
     { keys: 'Two-finger gesture', desc: 'Orbit, pan, and zoom the camera view' },
     { keys: 'Undo button', desc: 'Undo the last move' },
-    { keys: 'Previous / Play / Next', desc: 'Control playback frame by frame' },
-    { keys: 'Save frame button', desc: 'Store the current frame in the playback' },
-    { keys: 'Menu and toolbar buttons', desc: 'Open presets, playbacks, comments, and settings' }
+    { keys: 'Save frame button', desc: 'Store the current frame in the sequence' }
   ];
   function isLandscapeSideRailViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -1451,12 +1523,15 @@ function isLocked(person, key){
   let editingPlaybackIdx = -1;
   let editingPlaybackName = "";
   let editingPlaybackFolder = "";
+  let reopenSavedSequencesAfterPlaybackEdit = false;
   let newPlaybackName = "";
   let draggingPlaybackIdx = null;
   let playbackFolderView = null; // null = folder list; otherwise folder name
   let openPlaybackFolders = [];
   let playbacksMenuEl;
   let playbacksToggleEl;
+  let sequenceMenuEl;
+  let sequenceToggleEl;
   let playbacksMenuVersion = 0;
   let compactToolbar = false;
   let presetsMenuEl;
@@ -1483,6 +1558,7 @@ function isLocked(person, key){
   let playbackSyncQueued = false;
   // User-defined presets (persisted locally)
   let savedPresets = [];
+  let fixedReplacementPresets = [];
   let activeCustomPresetName = "";
   let editingPresetIdx = -1;
   let editingPresetName = "";
@@ -1492,6 +1568,7 @@ function isLocked(person, key){
   // Dropdown menus visibility
   let showSavedPlaybacksMenu = false;
   let showSavedPresetsMenu = false;
+  let showSequenceMenu = false;
   let showAccountMenu = false;
   let showAccountShortcuts = false;
   let showAccountSettings = false;
@@ -1522,7 +1599,6 @@ function isLocked(person, key){
   const SHOW_SAVE_PRESET_BUTTON = false;
   const AVAILABLE_CONTROLS = [
     { key: 'mirror_pose', label: 'Mirror Pose', action: () => { try{ mirrorPoseYZPlane(); }catch(_){} } },
-    { key: 'torso_lock', label: 'Torso Lock (Q)', action: () => { try{ toggleTorsoFreeze(); }catch(_){} } },
     { key: 'movement_mode', label: 'Natural/Single-Joint Mode', action: () => { try{ toggleSingleJointMode(); }catch(_){} } },
     { key: 'control_settings', label: 'Control Settings', action: () => { showControlSettings = !showControlSettings; } }
   ];
@@ -1554,7 +1630,6 @@ function isLocked(person, key){
 
   function isControlActive(key){
     switch(key){
-      case 'torso_lock': return !!torsoFreeze;
       case 'movement_mode': return !!singleJointMode; // highlight when Single-Joint mode is active
       case 'control_settings': return !!showControlSettings;
       default: return false;
@@ -1630,14 +1705,7 @@ function isLocked(person, key){
   });
   let startPosition = "neutral";
   const BUILTIN_PRESETS = [
-    { key: 'neutral', label: 'Neutral' },
-    { key: 'openGuard', label: 'Open Guard' },
-    { key: 'closedGuard', label: 'Closed Guard' },
-    { key: 'halfGuard', label: 'Half Guard' },
-    { key: 'kneeShield', label: 'Knee Shield' },
-    { key: 'mount', label: 'Mount' },
-    { key: 'sideControl', label: 'Side Control' },
-    { key: 'backControl', label: 'Back Control' }
+    { key: 'neutral', label: 'Neutral' }
   ];
   const PRESET_OVERRIDES_STORAGE_KEY = 'presetOverridesV2';
   const BUILTIN_PRESET_OVERRIDES = JSON.parse(`{"openGuard":{"A":{"joints":{"head":[-0.2958210067174233,-0.3012956058998424,0.7520320153959865],"neck":[-0.2342660756558758,-0.3736192115068736,0.6359273792522581],"shoulderL":[-0.35563614452038594,-0.3681248240659721,0.44622273511013455],"shoulderR":[-0.048002821567468185,-0.4146265826451893,0.6866142144943793],"elbowL":[-0.40064980394707,-0.2722879914678913,0.1839460262975412],"elbowR":[0.1712642550961335,-0.3747796062156891,0.5124471465383409],"handL":[-0.484861661154485,-0.08387807401583666,0.03424610323577157],"handR":[0.3714751692958621,-0.2516800429969489,0.41364387150299875],"hipL":[-0.05700857876706525,-0.53,0.06348780702489243],"hipR":[0.10874139989483778,-0.5019549370950512,0.09382624483346524],"kneeL":[-0.33507746075385825,-0.22990296165074503,0.2508896907071373],"kneeR":[0.2405296093223697,-0.21797733404654562,0.4170731920437152],"footL":[-0.09419153616453455,-0.26539386491050393,-0.18582364125011214],"footR":[0.29450660193787503,-0.03142661246694542,-0.04367113446367532]},"rootPos":[0.025866410563886263,-0.5159774685475256,0.07865702592917884]},"B":{"joints":{"head":[0.059935408721780825,0.6890611499512096,-0.45105748213390484],"neck":[0.08267705828282411,0.6169254654664819,-0.5805922666484696],"shoulderL":[-0.08927544175464205,0.586459945819791,-0.6777237424808529],"shoulderR":[0.2922291021151854,0.5427430326504017,-0.5936940855424695],"elbowL":[-0.15473857021076665,0.3201511846032849,-0.6084834159680258],"elbowR":[0.33532735978437966,0.2782366379676998,-0.5032567735964262],"handL":[-0.13187173971200172,0.13168062537299555,-0.4383181628100653],"handR":[0.36361739105845053,0.11527266779094131,-0.3092401776689596],"hipL":[0.09621247059514496,0.23545030836073733,-1.059217501276545],"hipR":[0.31320740255727486,0.22106557065030574,-0.8539352587280199],"kneeL":[0.05503815276821944,-0.21254503379623496,-1.069457079263159],"kneeR":[0.35519326470129836,-0.11331136053006358,-0.5557251729251791],"footL":[0.09632493301607828,-0.44722661837895633,-1.509024998423317],"footR":[0.4490154339047393,-0.5299999999999999,-0.8156635856003335]},"rootPos":[0.2047099365762099,0.22825793950552153,-0.9565763800022824]},"torsoExtras":{"A":{"rotX":0,"rotY":0,"rotZ":0},"B":{"rotX":0,"rotY":0,"rotZ":0}},"toeOffsets":{"A":{"L":[-0.10706504696214816,0.18777074646296502,0.040978317336536944],"R":[0.07802532656461074,0.1990564138240756,-0.051851639607482326]},"B":{"L":[-0.08717869808081127,-0.12424624716111461,0.1592568512413641],"R":[-0.013123638635052304,0,0.21960821958427823]}}},"closedGuard":{"A":{"joints":{"head":[0.019873923405735627,-0.15632160786606558,1.0916730924418017],"neck":[0.010172206752719392,-0.2538327890304719,0.9781061683751185],"shoulderL":[-0.18932981514654695,-0.2910290141791107,0.901473418481249],"shoulderR":[0.20361554700956117,-0.28215813141726204,0.9116708741242195],"elbowL":[-0.2483942537870561,-0.2882096167579453,0.6248808605747805],"elbowR":[0.23116873571815547,-0.2805445426055047,0.6301780356314555],"handL":[-0.21383917786636436,-0.055777258273474156,0.5259811825633056],"handR":[0.17304795206661805,-0.06299763422689322,0.5106150106208588],"hipL":[-0.08687217130257215,-0.53,0.4260891735875798],"hipR":[0.06335197738171487,-0.4718472048025692,0.3692476451841724],"kneeL":[-0.20475011821438716,-0.2274567356250537,0.11452479119408554],"kneeR":[0.2795225428113693,-0.19511503817094045,0.08784118710045369],"footL":[0.020233138053944444,-0.23578084000872962,-0.3319249941947728],"footR":[-0.08370816205023379,-0.3006688261592372,-0.23914791783959993]},"rootPos":[-0.011760096960428623,-0.5009236024012846,0.3976684093858761]},"B":{"joints":{"head":[0.1234280134487952,0.2417323238370756,0.45049120450762586],"neck":[0.08932865278069485,0.12753096198314057,0.35941276275105183],"shoulderL":[0.27357470803450323,0.039939143641966685,0.2981754677563964],"shoulderR":[-0.11467206100928379,0.07916223872914409,0.3455449080571841],"elbowL":[0.2855930632701797,-0.23903992394617365,0.2531616999890019],"elbowR":[-0.21097459744862657,-0.17964594591907485,0.28435548847642755],"handL":[0.2035702188304111,-0.45116590032681025,0.3683792340301415],"handR":[-0.15397032700070645,-0.4135990415970539,0.3681199386562731],"hipL":[0.17019409986210202,-0.3508947091950317,0.09278534445858633],"hipR":[-0.12824438756177248,-0.3642003979815613,0.10663987989160366],"kneeL":[0.4116346423407228,-0.5296668250844347,0.4278181712506106],"kneeR":[-0.4237062241246525,-0.524794912298545,0.40565778087129123],"footL":[0.2299652195421668,-0.5241689144229931,-0.03797791473410567],"footR":[-0.17707107398536018,-0.5299999999999776,-0.029249117049647222]},"rootPos":[0.020974856150164728,-0.35754755358829643,0.09971261217509497]},"torsoExtras":{"A":{"rotX":0,"rotY":0,"rotZ":0},"B":{"rotX":0,"rotY":0,"rotZ":0}},"toeOffsets":{"A":{"L":[-0.15686595963302577,0.15127961080849395,-0.030125571563715155],"R":[0.07878584043452988,0.19958192502482447,-0.04857825182538102]},"B":{"L":[-0.13800119263382749,-0.004514229899022657,-0.17127548732979864],"R":[0.1459211105778353,-2.266187148258905e-14,-0.16464212549566765]}}},"halfGuard":{"A":{"joints":{"head":[0.15171456186280896,-0.2586678306311222,0.7174934432450453],"neck":[0.12442793622792327,-0.32791135024865903,0.5872599028167121],"shoulderL":[-0.07596347875608404,-0.3323648911201947,0.5633885654615297],"shoulderR":[0.3022905452256284,-0.354434013358935,0.45838577746133746],"elbowL":[-0.06744281732189794,-0.26248924872599194,0.2894455185855388],"elbowR":[0.2781138122374386,-0.3902715457842207,0.17886626678048603],"handL":[0.17243106344737746,-0.18212092573636096,0.32109128983279506],"handR":[0.44751757886825577,-0.20180363443665023,0.1508982487845457],"hipL":[-0.038816335884742786,-0.4366133065036297,-0.06625156381594145],"hipR":[0.11468180684893839,-0.432715556813899,0.008602490937926956],"kneeL":[0.006062170652730604,-0.2586798656255911,-0.47713550342821254],"kneeR":[0.31378205544310367,-0.5085385359998649,-0.38776850559832543],"footL":[-0.40961890006874835,-0.53,-0.41714550996640726],"footR":[-0.13800094345566977,-0.2946463542190806,-0.3758404570773277]},"rootPos":[0.0379327354820978,-0.43466443165876434,-0.02882453643900725]},"B":{"joints":{"head":[0.05662119384912535,-0.08074351989916298,0.35562412491437057],"neck":[0.07046631109335187,-0.11600189496467873,0.2104857091992151],"shoulderL":[0.2619518473268179,-0.18232383207711506,0.22614814332177047],"shoulderR":[-0.08040290878907083,-0.09900984300204403,0.051878613785488914],"elbowL":[0.3331500681632251,-0.3814070690235174,0.03827404074185403],"elbowR":[-0.10801919319932753,-0.27035238851302745,-0.1714576192072255],"handL":[0.29985900935741067,-0.53,0.2427541211491068],"handR":[-0.16105838983987456,-0.5157966343214287,-0.1273669539841689],"hipL":[0.3036247587932747,-0.3037643116081296,-0.16987600982613615],"hipR":[0.1338953311366773,-0.28724040220229063,-0.41554530397440825],"kneeL":[0.3595788119842692,-0.48514986553713224,0.2381294126348496],"kneeR":[-0.2489286902389698,-0.4877073358664067,-0.2900113358016424],"footL":[0.5069558728406915,-0.46914038244131495,-0.23938885749165534],"footR":[0.1547740103389595,-0.4868032269148625,-0.5850084751344078]},"rootPos":[0.218760044964976,-0.2955023569052101,-0.2927106569002722]},"torsoExtras":{"A":{"rotX":0,"rotY":0,"rotZ":0},"B":{"rotX":0,"rotY":0,"rotZ":0}},"toeOffsets":{"A":{"L":[0.059407750569438374,0.08167799290861187,-0.1954467309695922],"R":[0.07878584043452988,0.19958192502482447,-0.04857825182538102]},"B":{"L":[-0.003984876772957281,-0.04521408941247745,-0.21526682716039838],"R":[0.2157640834809947,-0.015906819335798718,-0.03991031668910457]}}},"kneeShield":{"A":{"joints":{"head":[0.25965924502799165,-0.16903172053834808,0.6375167531055163],"neck":[0.20408529584423984,-0.2612410466986457,0.5330707079853372],"shoulderL":[0.012299424937585735,-0.22628680890933273,0.38145145946473796],"shoulderR":[0.3422474353953806,-0.35780351592190734,0.5500527775914694],"elbowL":[0.12249525607106548,0.018939226027086004,0.29358183676642435],"elbowR":[0.3944748621417154,-0.4256557446273077,0.28048206153584054],"handL":[0.375944290716593,0.046251411309637044,0.28938276238585176],"handR":[0.4218782971626229,-0.24939890906703263,0.09832120005791953],"hipL":[-0.06669600655993259,-0.4577790875147446,0.03566877968423006],"hipR":[0.051640921295382156,-0.53,-0.06413359049800357],"kneeL":[0.11954045769320858,-0.06517498141922778,0.15262174810513562],"kneeR":[0.43413522067997035,-0.31737593155166827,-0.16896257748541976],"footL":[-0.11488963848041321,-0.1912761388075199,-0.2706337247502185],"footR":[-0.028933774901924836,-0.4327645103406857,-0.31813564167013775]},"rootPos":[-0.0075275426322752165,-0.4938895437573723,-0.014232405406886757]},"B":{"joints":{"head":[0.21180381952974853,0.2092878638176131,0.26697520953400705],"neck":[0.20388658925217307,0.14060225988953254,0.1338602018232349],"shoulderL":[0.015425607256426555,0.0866392889774436,0.036629085795168256],"shoulderR":[0.4024506332435092,0.10537086454264101,0.10280027342324989],"elbowL":[-0.1391709975798162,-0.15017778694260742,0.040819864877779145],"elbowR":[0.455848724625967,-0.12020374973758442,0.26486426468357116],"handL":[-0.17310814809768008,-0.3133036686131937,0.23379259238058403],"handR":[0.35613269930276975,-0.3370746462769624,0.3544396489612346],"hipL":[0.09351864162613963,-0.18414652000176907,-0.34434925941832817],"hipR":[0.3875373545712942,-0.17469612353404293,-0.2905142640465777],"kneeL":[-0.13924998368943325,-0.49716027406053737,-0.11998090862228863],"kneeR":[0.6212136063654021,-0.53,-0.14335936363263752],"footL":[0.09232754229037946,-0.4328448880739598,-0.5584274623854014],"footR":[0.5689402046760929,-0.394215215233572,-0.6217211344538301]},"rootPos":[0.2405279980987169,-0.179421321767906,-0.3174317617324529]},"torsoExtras":{"A":{"rotX":0,"rotY":0,"rotZ":0},"B":{"rotX":0,"rotY":0,"rotZ":0}},"toeOffsets":{"A":{"L":[0.04173882650966807,0.06050999536094201,-0.20735575907848475],"R":[0.01729178479511433,0.12743920332101147,-0.1784943798429109]},"B":{"L":[-0.1839394728656348,-0.1027914619595379,-0.06324702103762109],"R":[0.15386380761605944,-0.15077195318461983,-0.0446513923498815]}}},"mount":{"A":{"joints":{"head":[0.11307427537539508,-0.34866450488321277,0.7588182030613458],"neck":[0.08519291275337518,-0.423652102218892,0.6319344378893496],"shoulderL":[-0.12084753011870569,-0.43329789661653606,0.5813091233741702],"shoulderR":[0.2687618938518845,-0.44621716307545817,0.5300614150348885],"elbowL":[-0.11462998651011486,-0.4217822430175129,0.2987693352439982],"elbowR":[0.18454009129350843,-0.43478387125744467,0.26029120205428485],"handL":[-0.11570808157772544,-0.1689690429083462,0.2658402536458201],"handR":[0.19177031998093436,-0.18260995995136658,0.22346672599871703],"hipL":[-0.0852050293299153,-0.53,0.015597573316641442],"hipR":[0.08561652021354386,-0.53,0.01559757331664145],"kneeL":[-0.09740288394798818,-0.09087723374938045,-0.08198526362794005],"kneeR":[0.0978143747862889,-0.0908772353811792,-0.08198526326531874],"footL":[-0.09740288394798867,-0.5175217063469142,-0.34271244132643297],"footR":[0.09781437478628911,-0.5175181708619748,-0.34271027939247156]},"rootPos":[0.00020574544181427984,-0.53,0.015597573316641446]},"B":{"joints":{"head":[0.005731618774086253,0.42350075851004026,0.27290790619953625],"neck":[-0.007408301842862717,0.2842269129827738,0.2187771530337097],"shoulderL":[0.190103051761384,0.2103660863198792,0.20210645478344366],"shoulderR":[-0.20295083839844957,0.2052599392665286,0.2014465850550409],"elbowL":[0.3884708725331587,0.009496426410724096,0.21947273572592713],"elbowR":[-0.39609081344227204,-0.0006957821049323465,0.21815559186633998],"handL":[0.259345524416678,-0.20344143450090962,0.2741021131718158],"handR":[-0.26166182354327894,-0.21020943572223608,0.27322733201685556],"hipL":[0.1493222789231845,-0.25825523224775687,0.10440242668335849],"hipR":[-0.14973376980681316,-0.25825523224775687,0.10440242668335849],"kneeL":[0.40295072882527916,-0.53,0.35803087658545324],"kneeR":[-0.40336221970885533,-0.529999999999945,0.3580308765854007],"footL":[0.21170621536165105,-0.5299999999999998,-0.10394914028794289],"footR":[-0.23150984272692351,-0.5299999999999933,-0.11150800424033541]},"rootPos":[-0.0002057454418143128,-0.2582552322477568,0.1044024266833585]},"torsoExtras":{"A":{"rotX":0,"rotY":0,"rotZ":0},"B":{"rotX":0,"rotY":0,"rotZ":0}},"toeOffsets":{"A":{"L":[0.0010713748775260153,-0.008395122926952126,-0.21983715351803745],"R":[0.029205839970185644,-0.007111552879410389,-0.21793679066940322]},"B":{"L":[-0.15277753603828584,-2.920105264130765e-16,-0.15830042476907719],"R":[0.14757517723809443,-4.425271866338685e-15,-0.16316116898068922]}}},"sideControl":{"A":{"joints":{"head":[0.056520048720758956,-0.36057317538650085,0.715808588291137],"neck":[0.05221034557523863,-0.4053188429857301,0.5727028522427255],"shoulderL":[-0.16266823915330797,-0.4091801171285966,0.49625492900795215],"shoulderR":[0.23029700092238464,-0.41481786516961067,0.49661846707888807],"elbowL":[-0.20675615919332305,-0.18237447475219667,0.3331124884973314],"elbowR":[0.33485937674855853,-0.22062210701951487,0.31954583486918],"handL":[-0.0014914862566147435,-0.04966979696927809,0.4056099601224788],"handR":[0.4059527888751798,-0.010943105096710842,0.44595961058962297],"hipL":[-0.15284115869169268,-0.4086400181801874,-0.05725827270340864],"hipR":[-0.041278982606590055,-0.53,-0.012652877048245359],"kneeL":[-0.3810434942760549,-0.05717725219798975,-0.22126321081615208],"kneeR":[0.2159097709191544,-0.17804052231509754,-0.12435995464711698],"footL":[-0.5315355286306424,-0.5299995261889934,-0.2828701262173103],"footR":[0.032101404477462875,0.026456544694193312,-0.5419667743628243]},"rootPos":[-0.09706007064914136,-0.46932000909009375,-0.034955574875827]},"B":{"joints":{"head":[-0.08753314776989429,-0.2207761387478583,0.5678627373520956],"neck":[-0.0035876687453115993,-0.23009188023044475,0.4439015599132086],"shoulderL":[0.18168316002078672,-0.24268475565328274,0.5296404174260416],"shoulderR":[-0.08452742503882932,-0.21868172763018207,0.24141542235533864],"elbowL":[0.0806326335178226,-0.5050908638301295,0.5601662390937846],"elbowR":[-0.2779548975705047,-0.40452545509059334,0.33112563285456725],"handL":[-0.17386795700527383,-0.49002515516330974,0.5585137071843115],"handR":[-0.22416895355938635,-0.5189192279422175,0.5525328547334959],"hipL":[0.4383145060611803,-0.17965364575330114,0.14933335800344477],"hipR":[0.29341230587830935,-0.2889064920903725,-0.0883674796715838],"kneeL":[0.31358175787851955,-0.4827830015611061,0.4576421888509336],"kneeR":[-0.0725116122711621,-0.5300000000000002,-0.1907081195468814],"footL":[0.5738713131088313,-0.4551187324251298,0.03163275753343142],"footR":[0.41829836476436566,-0.48239531361188487,-0.10800769416890507]},"rootPos":[0.3658634059697448,-0.23428006892183684,0.030482939165930485]},"torsoExtras":{"A":{"rotX":0,"rotY":0,"rotZ":0},"B":{"rotX":0,"rotY":0,"rotZ":0}},"toeOffsets":{"A":{"L":[-0.107331323574535,-0.044082666156974745,-0.18691363118892956],"R":[0.06799488521045234,0.20915603450803105,0.005518044408370769]},"B":{"L":[0.003824040327704472,-0.03380665245698948,-0.21735336888400056],"R":[0.20865415130188975,-0.0005752424068449218,0.06973603258475111]}}},"backControl":{"A":{"joints":{"head":[-0.16403013608209116,0.20826001899670563,-0.0051836723909827465],"neck":[-0.13319186373937453,0.07787630637923171,0.06226325817714068],"shoulderL":[-0.3067324163900711,0.00629844155288453,0.04260883646658572],"shoulderR":[0.07800497993314318,0.002322511110906063,0.12354131542351825],"elbowL":[-0.34070937310817795,-0.09557419268495931,0.30427185030040665],"elbowR":[0.20748541655792055,-0.12124749905498064,0.3425510620528358],"handL":[-0.14662705816081842,0.0671927587002474,0.33323692262470017],"handR":[-0.010995181230206458,0.004856390014244288,0.305618185928648],"hipL":[-0.06714352898238216,-0.5211508656929787,0.22789498609045827],"hipR":[0.10265974897959484,-0.5026880120884175,0.23033867563142013],"kneeL":[-0.3132926031689173,-0.3799016186410692,0.5771216818733165],"kneeR":[0.3040353713134108,-0.31344145001426227,0.5854915969636498],"footL":[-0.23251550649876668,-0.53,1.0471745552350478],"footR":[0.3993591612350266,-0.5205232768427331,1.0304977923528775]},"rootPos":[0.01775810999860635,-0.5119194388906981,0.2291168308609392]},"B":{"joints":{"head":[-0.016943992595877054,0.17084960587992998,-0.1494587546922966],"neck":[-0.03548519096690858,0.022001425533651364,-0.15012446532013116],"shoulderL":[-0.2268950009702707,-0.01108307460799774,-0.17359577448104585],"shoulderR":[0.1507035114277807,-0.1006168001253347,-0.11097833150121542],"elbowL":[-0.3256365755555294,0.0712217268496485,0.07834870632569313],"elbowR":[0.11294014159670002,-0.17753015508467818,0.15857363707272473],"handL":[-0.1868993843729958,-0.0323306603869211,0.2655094711679504],"handR":[-0.08002158751410918,-0.04962325704323853,0.2653707225784846],"hipL":[-0.20249664027961103,-0.53,-0.11740379964373504],"hipR":[0.0932371247494678,-0.5287966132307822,-0.07296718901682035],"kneeL":[-0.39709171553554745,-0.20100502837949502,0.12007265252523036],"kneeR":[0.2674775477094681,-0.17553003870246547,0.1446172826898381],"footL":[-0.09289721275595875,-0.45368273165166423,0.4260459890564771],"footR":[0.06276594197965069,-0.4696663514257912,0.49329620103516947]},"rootPos":[-0.05462975776507162,-0.5293983066153911,-0.0951854943302777]},"torsoExtras":{"A":{"rotX":0,"rotY":0,"rotZ":0},"B":{"rotX":0,"rotY":0,"rotZ":0}},"toeOffsets":{"A":{"L":[-0.13920313399646123,0.1689348979147572,0.021988354920134984],"R":[0.06799488521045234,0.20915603450803105,0.005518044408370769]},"B":{"L":[-0.0789481055746265,0.19768484398924657,0.05556886793092761],"R":[0.044604126602303486,0.15846439928256484,0.145943502938848]}}}}`);
@@ -1660,7 +1728,6 @@ function isLocked(person, key){
 
   const BONE_PAIRS = [
     ["head","neck"], ["neck","shoulderL"], ["neck","shoulderR"],
-    ["shoulderL","shoulderR"],
     ["shoulderL","elbowL"], ["elbowL","handL"], ["shoulderR","elbowR"], ["elbowR","handR"],
     // no shoulder-to-hip diagonals; torso handled by chest/pelvis visuals
     ["hipL","hipR"],
@@ -2006,6 +2073,10 @@ function isLocked(person, key){
     mount: poseMount()
   };// ---------- Helpers ----------
   function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
+  function flexibleInputWidth(value, minCh = 16, maxCh = 34) {
+    const len = String(value ?? '').length;
+    return `${clamp(len + 3, minCh, maxCh)}ch`;
+  }
   function toRad(deg){ return deg * Math.PI / 180; }
   function pairKey(a,b){ return a < b ? `${a}|${b}` : `${b}|${a}`; }
 
@@ -2111,7 +2182,6 @@ function isLocked(person, key){
     if (Math.abs(hipRY-floorY) <= 0.01) joints.hipR[1] = floorY;
     // Widths within ?1%
     const base = person==='A'? baselineA : baselineB;
-    clampWidthSymmetric(joints,'shoulderL','shoulderR', base.shoulderW, 0.01);
     clampWidthSymmetric(joints,'hipL','hipR', base.hipW, 0.01);
     // Torso length within ?1%
     const curLen = computeTorsoLength(joints);
@@ -2172,7 +2242,67 @@ function isLocked(person, key){
     enforceTorsoLength(joints, targetLen);
     if (person === 'A') jointsA = joints;
     else jointsB = joints;
+    enforceNeckLength(person);
   }
+
+  function clampShoulderAwayFromOther(joints, shoulderKey, target, minSep){
+    const otherKey = shoulderKey === 'shoulderL' ? 'shoulderR' : 'shoulderL';
+    if (!joints?.[otherKey] || !(minSep > 0)) return target.clone();
+    const other = new THREE.Vector3(...joints[otherKey]);
+    let away = target.clone().sub(other);
+    const dist = away.length();
+    if (dist >= minSep) return target.clone();
+    if (dist < 1e-8) {
+      const neck = joints.neck ? new THREE.Vector3(...joints.neck) : null;
+      away = neck ? other.clone().sub(neck) : new THREE.Vector3(shoulderKey === 'shoulderL' ? -1 : 1, 0, 0);
+      if (away.lengthSq() < 1e-8) away.set(shoulderKey === 'shoulderL' ? -1 : 1, 0, 0);
+    }
+    away.normalize();
+    return other.clone().addScaledVector(away, minSep);
+  }
+
+  function clampNaturalShoulderTarget(person, shoulderKey, target){
+    const joints = person === 'A' ? jointsA : jointsB;
+    if (!joints?.neck || !joints?.[shoulderKey]) return target.clone();
+    const base = person === 'A' ? baselineA : baselineB;
+    const neck = new THREE.Vector3(...joints.neck);
+    const frame = torsoFrameFromJoints(joints);
+    const xRight = frame?.xRight?.clone() || new THREE.Vector3(1, 0, 0);
+    const yUp = frame?.yUp?.clone() || new THREE.Vector3(0, 1, 0);
+    const zForward = frame?.zForward?.clone() || new THREE.Vector3(0, 0, 1);
+    const side = shoulderKey === 'shoulderR' ? 1 : -1;
+    let clavicleLen = desiredBoneLength(person, 'neck', shoulderKey);
+    if (!(clavicleLen > 0)) clavicleLen = new THREE.Vector3(...joints[shoulderKey]).distanceTo(neck);
+    if (!(clavicleLen > 0)) return target.clone();
+
+    const v = target.clone().sub(neck);
+    let lateral = side * v.dot(xRight);
+    let vertical = v.dot(yUp);
+    let depth = v.dot(zForward);
+
+    lateral = clamp(lateral, clavicleLen * 0.78, clavicleLen * 1.06);
+    vertical = clamp(vertical, -clavicleLen * 0.24, clavicleLen * 0.14);
+    depth = clamp(depth, -clavicleLen * 0.24, clavicleLen * 0.26);
+
+    let clamped = neck.clone()
+      .addScaledVector(xRight, side * lateral)
+      .addScaledVector(yUp, vertical)
+      .addScaledVector(zForward, depth);
+
+    const fromNeck = clamped.clone().sub(neck);
+    const dist = fromNeck.length();
+    const minLen = clavicleLen * 0.82;
+    const maxLen = clavicleLen * 1.08;
+    if (dist > 1e-8 && (dist < minLen || dist > maxLen)) {
+      fromNeck.multiplyScalar(clamp(dist, minLen, maxLen) / dist);
+      clamped = neck.clone().add(fromNeck);
+    }
+
+    const shoulderRadius = JOINT_BASE_R * SHOULDER_JOINT_SCALE;
+    const minSep = Math.max(shoulderRadius * 2.4, (base?.shoulderW || clavicleLen * 2) * 0.42);
+    return clampShoulderAwayFromOther(joints, shoulderKey, clamped, minSep);
+  }
+
   function desiredBoneLength(person, a, b){
     try{
       const desired = person === 'A' ? desiredLengthsA : desiredLengthsB;
@@ -2476,7 +2606,13 @@ function isLocked(person, key){
     // per-sphere materials to allow individual highlighting
     const bodyMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.55, metalness: 0.05 });
 
-    const makeJointMat = () => new THREE.MeshStandardMaterial({ color: getJointDefaultColor(person), roughness: 0.35, metalness: 0.02 });
+    const makeJointMat = () => new THREE.MeshStandardMaterial({
+      color: getJointDefaultColor(person),
+      roughness: 0.35,
+      metalness: 0.02,
+      depthTest: false,
+      depthWrite: false
+    });
     // joint spheres (head bigger; ONLY shoulders slightly larger)
     for (const key of JOINT_KEYS) {
       const radius = key === "head"
@@ -2487,6 +2623,7 @@ function isLocked(person, key){
       sphere.userData.key = key;
       sphere.userData.person = person;
       sphere.userData.defaultColor = getJointDefaultColor(person);
+      sphere.renderOrder = 20;
       group.add(sphere);
       jointSpheres.push(sphere);
     }
@@ -2519,8 +2656,6 @@ function isLocked(person, key){
     const chestMat = bodyMat.clone();
     const chest = new THREE.Mesh(new THREE.CylinderGeometry(TORSO_BASE_TOP_R, TORSO_BASE_BOTTOM_R, TORSO_BASE_H, 32), chestMat);
     group.add(chest);
-    const shoulderBar = new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,1,20), bodyMat);
-    group.add(shoulderBar);
     // Simple rounded hands/feet (ellipsoids) without extra thumb/finger segments
     const handPickMat = new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0, transparent: true, depthWrite: false });
     const handLBox = new THREE.Mesh(new THREE.SphereGeometry(HAND_SPHERE_R, 18, 14), handPickMat.clone());
@@ -2547,6 +2682,8 @@ function isLocked(person, key){
     toeRJoint.userData.defaultColor = getJointDefaultColor(person);
     toeLJoint.userData.isToeJoint = true; toeLJoint.userData.side = 'L';
     toeRJoint.userData.isToeJoint = true; toeRJoint.userData.side = 'R';
+    toeLJoint.renderOrder = 20;
+    toeRJoint.renderOrder = 20;
     group.add(toeLJoint); group.add(toeRJoint);
     jointSpheres.push(toeLJoint, toeRJoint);
     // extras will be positioned after scene initialization with figure-specific dimensions
@@ -2575,7 +2712,2114 @@ function isLocked(person, key){
     } catch(e) {}
     group.add(handleGroup);
 
-    return { group, jointSpheres, boneList, torso, pelvis, spine, chest, shoulderBar, handLBox, handRBox, footLBox, footRBox, upperHandle: handleGroup, toeLJoint, toeRJoint};}
+    return { group, jointSpheres, boneList, torso, pelvis, spine, chest, handLBox, handRBox, footLBox, footRBox, upperHandle: handleGroup, toeLJoint, toeRJoint};}
+
+  function materialLooksWhite(material) {
+    if (!material || material.map || !material.color) return false;
+    return material.color.r > 0.82 && material.color.g > 0.82 && material.color.b > 0.82;
+  }
+
+  function cloneMeshyMaterial(material) {
+    if (!material) return null;
+    const cloned = material.clone();
+    try {
+      if (cloned.map) {
+        cloned.map.colorSpace = THREE.SRGBColorSpace;
+        cloned.map.needsUpdate = true;
+      }
+      cloned.roughness = cloned.roughness ?? 0.68;
+      cloned.metalness = cloned.metalness ?? 0;
+      cloned.needsUpdate = true;
+    } catch(e) {}
+    return cloned;
+  }
+
+  function extractMeshyTextureMaterial(object) {
+    let found = null;
+    object?.traverse((child) => {
+      if (found || !child.isMesh || !child.material) return;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      found = materials.find((material) => material?.map) || materials[0] || null;
+    });
+    return found;
+  }
+
+  function prepareMeshyFightlabFigure(object, tintHex, textureMaterial = null) {
+    object.position.set(0, 0, 0);
+    object.rotation.set(0, 0, 0);
+    object.scale.setScalar(1);
+    object.updateMatrixWorld(true);
+
+    object.traverse((child) => {
+      if (!child.isMesh) return;
+      if (child.geometry && !child.geometry.attributes.normal) child.geometry.computeVertexNormals();
+      child.castShadow = true;
+      child.receiveShadow = true;
+      const sourceMaterial = textureMaterial || (Array.isArray(child.material) ? child.material.find((m) => m?.map) : child.material);
+      const texturedMaterial = sourceMaterial?.map ? cloneMeshyMaterial(sourceMaterial) : null;
+      if (texturedMaterial) {
+        child.material = texturedMaterial;
+        return;
+      }
+      child.material = new THREE.MeshStandardMaterial({
+        color: tintHex,
+        roughness: 0.68,
+        metalness: 0,
+        envMapIntensity: 0.35
+      });
+    });
+
+    const box = new THREE.Box3().setFromObject(object);
+    const size = box.getSize(new THREE.Vector3());
+    const targetHeight = 2.0625;
+    const scale = targetHeight / Math.max(size.y, 1e-6);
+    object.scale.setScalar(scale);
+    object.updateMatrixWorld(true);
+
+    const scaledBox = new THREE.Box3().setFromObject(object);
+    const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+    object.position.sub(scaledCenter);
+    object.updateMatrixWorld(true);
+  }
+
+  function updateMeshyFightlabFigureFromJoints(object, joints) {
+    if (!object || !joints?.hipL || !joints?.hipR || !joints?.shoulderL || !joints?.shoulderR || !joints?.head) return;
+    const hipL = new THREE.Vector3(...joints.hipL);
+    const hipR = new THREE.Vector3(...joints.hipR);
+    const shoulderL = new THREE.Vector3(...joints.shoulderL);
+    const shoulderR = new THREE.Vector3(...joints.shoulderR);
+    const head = new THREE.Vector3(...joints.head);
+    const hipCenter = hipL.clone().add(hipR).multiplyScalar(0.5);
+    const shoulderCenter = shoulderL.clone().add(shoulderR).multiplyScalar(0.5);
+    const visualCenter = hipCenter.clone().lerp(head, 0.5);
+    const right = hipR.clone().sub(hipL);
+    const up = shoulderCenter.clone().sub(hipCenter);
+    const forward = new THREE.Vector3().crossVectors(right, up);
+    forward.y = 0;
+    if (forward.lengthSq() < 1e-6) forward.set(0, 0, 1);
+    forward.normalize();
+
+    const box = new THREE.Box3().setFromObject(object);
+    const center = box.getCenter(new THREE.Vector3());
+    const bottom = box.min.y;
+    object.position.x += visualCenter.x - center.x;
+    object.position.z += visualCenter.z - center.z;
+    object.position.y += FLOOR_Y + 0.02 - bottom;
+    object.rotation.y = object.userData.meshyFacingYaw ?? Math.atan2(forward.x, forward.z);
+  }
+
+  function setClassicFightlabBodyVisible(visible) {
+    for (const item of [...boneMeshesA, ...boneMeshesB]) {
+      if (item?.mesh) item.mesh.visible = visible;
+    }
+    for (const mesh of [...jointMeshesA, ...jointMeshesB]) {
+      if (mesh) mesh.visible = visible;
+    }
+    for (const mesh of [
+      torsoA, pelvisA, spineA, chestA,
+      torsoB, pelvisB, spineB, chestB,
+      handBoxesA?.L, handBoxesA?.R, handBoxesB?.L, handBoxesB?.R,
+      footBoxesA?.L, footBoxesA?.R, footBoxesB?.L, footBoxesB?.R,
+      toeJointsA?.L, toeJointsA?.R, toeJointsB?.L, toeJointsB?.R,
+      upperHandleA, upperHandleB
+    ]) {
+      if (mesh) mesh.visible = visible;
+    }
+  }
+
+  function collectMeshyRigBones(object) {
+    const bones = [];
+    object.traverse((child) => {
+      if (!child.isBone) return;
+      const name = child.name.toLowerCase();
+      if (name.includes('twist') || name.includes('end') || name.includes('nub')) return;
+      bones.push(child);
+    });
+    return bones;
+  }
+
+  function shouldShowMeshyRigMarker(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    if (isMeshyRigCoreLowerMarkerBone(bone)) return true;
+    if (name.includes('spine')) return true;
+    return name.includes('head') || name.includes('chin') || name.includes('neck');
+  }
+
+  function isMeshyRigCoreLowerMarkerBone(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    return name === 'hips' ||
+      name.includes('pelvis') ||
+      name === 'leftupleg' ||
+      name === 'rightupleg' ||
+      name.endsWith('leftupleg') ||
+      name.endsWith('rightupleg') ||
+      name.includes('hip');
+  }
+
+  function meshyRigHandleRadius(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    if (name.includes('toe')) return 0.085;
+    if (name === 'hips') return 0.105;
+    if (name.includes('shoulder')) return 0.095;
+    if (name.includes('headfront') || name.includes('chin')) return 0.065;
+    if (name.includes('head') || name.includes('neck')) return 0.06;
+    if (name.includes('spine')) return 0.065;
+    if (name.includes('hand') || name.includes('foot')) return 0.085;
+    if (name.includes('arm') || name.includes('leg')) return 0.08;
+    return 0.075;
+  }
+
+  function meshyRigMarkerRadius(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    if (name.includes('toe')) return 0.013;
+    if (name === 'hips' || name.includes('pelvis')) return 0.034;
+    if (isMeshyRigCoreLowerMarkerBone(bone)) return 0.026;
+    if (name.includes('spine02')) return 0.024;
+    if (name.includes('headfront') || name.includes('chin')) return 0.019;
+    if (name.includes('head') || name.includes('neck')) return 0.017;
+    return 0.019;
+  }
+
+  function createMeshyRigRotationIcon(rig) {
+    const group = new THREE.Group();
+    const top = new THREE.Mesh(
+      new THREE.RingGeometry(0.065, 0.105, 32, 1, 0, Math.PI),
+      meshyRigRotationIconTopMaterial.clone()
+    );
+    const bottom = new THREE.Mesh(
+      new THREE.RingGeometry(0.065, 0.105, 32, 1, Math.PI, Math.PI),
+      meshyRigRotationIconBottomMaterial.clone()
+    );
+    const divider = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.19, 0.01),
+      meshyRigRotationIconLineMaterial.clone()
+    );
+    const core = new THREE.Mesh(
+      new THREE.CircleGeometry(0.018, 18),
+      meshyRigRotationIconLineMaterial.clone()
+    );
+    top.userData.meshyRig = rig;
+    top.userData.rotationIconRegion = 'upper';
+    bottom.userData.meshyRig = rig;
+    bottom.userData.rotationIconRegion = 'lower';
+    for (const part of [top, bottom, divider, core]) {
+      part.renderOrder = 1200;
+      part.frustumCulled = false;
+      part.visible = SHOW_MESHY_ROTATION_ICON;
+      part.material.colorWrite = false;
+      part.material.opacity = 0;
+      part.material.transparent = true;
+      part.material.needsUpdate = true;
+    }
+    group.add(top, bottom, divider, core);
+    group.visible = SHOW_MESHY_ROTATION_ICON;
+    scene.add(group);
+    return { group, top, bottom };
+  }
+
+  function createMeshyRigFigure(object, person) {
+    const rig = {
+      object,
+      person,
+      jointGroup: new THREE.Group(),
+      handles: [],
+      rotationIcon: null,
+      rotationIconHandles: [],
+      bindPositions: new Map(),
+      positionOverrides: new Map(),
+      bindQuaternions: new Map(),
+      lastClampDirections: new Map(),
+      rotationFallbackAxes: new Map()
+    };
+
+    object.traverse((child) => {
+      if (!child.isBone) return;
+      rig.bindPositions.set(child, child.position.clone());
+      rig.bindQuaternions.set(child, child.quaternion.clone());
+    });
+
+    for (const bone of collectMeshyRigBones(object)) {
+      const geometry = new THREE.SphereGeometry(meshyRigHandleRadius(bone), 20, 14);
+      const handle = new THREE.Mesh(geometry, meshyRigJointMaterial.clone());
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(meshyRigMarkerRadius(bone), 16, 10),
+        (person === 'A' ? meshyRigJointMarkerMaterialB : meshyRigJointMarkerMaterialA).clone()
+      );
+      handle.userData.meshyRig = rig;
+      handle.userData.bone = bone;
+      handle.userData.baseMaterial = handle.material;
+      handle.userData.marker = marker;
+      handle.userData.markerBaseMaterial = marker.material;
+      handle.renderOrder = 1000;
+      handle.frustumCulled = false;
+      handle.material.depthTest = false;
+      handle.material.depthWrite = false;
+      handle.material.opacity = 0;
+      handle.material.transparent = true;
+      marker.renderOrder = 3;
+      marker.frustumCulled = false;
+      marker.visible = shouldShowMeshyRigMarker(bone);
+      if (isMeshyRigCoreLowerMarkerBone(bone) || (bone?.name?.toLowerCase?.() || '').includes('spine')) marker.renderOrder = 5000;
+      marker.userData.alwaysVisibleMarker = shouldShowMeshyRigMarker(bone);
+      handle.add(marker);
+      rig.jointGroup.add(handle);
+      rig.handles.push(handle);
+    }
+
+    rig.jointGroup.visible = true;
+    scene.add(rig.jointGroup);
+    rig.rotationIcon = createMeshyRigRotationIcon(rig);
+    rig.rotationIconHandles = [rig.rotationIcon.top, rig.rotationIcon.bottom];
+    updateMeshyRigHandles(rig);
+    meshyRigFigures.push(rig);
+    return rig;
+  }
+
+  function updateMeshyRigHandles(rig) {
+    for (const handle of rig.handles) {
+      const bone = handle.userData.bone;
+      if (bone) {
+        bone.getWorldPosition(handle.position);
+        const marker = handle.userData.marker;
+        if (marker) {
+          marker.position.set(0, 0, 0);
+          marker.quaternion.identity();
+          marker.visible = marker.userData.alwaysVisibleMarker || shouldShowMeshyRigMarker(bone);
+          if (marker.visible) {
+            marker.renderOrder = (isMeshyRigCoreLowerMarkerBone(bone) || (bone?.name?.toLowerCase?.() || '').includes('spine')) ? 5000 : 3;
+            marker.frustumCulled = false;
+            marker.material.depthTest = false;
+            marker.material.depthWrite = false;
+            marker.material.transparent = true;
+            marker.material.opacity = marker.material === meshyRigSelectedJointMaterial ? 0.95 : 0.88;
+            marker.material.needsUpdate = true;
+          }
+        }
+      }
+      handle.visible = true;
+    }
+    if (rig.rotationIcon?.group) {
+      const head =
+        findMeshyRigBone(rig, 'Head') ||
+        findMeshyRigBone(rig, 'head') ||
+        findMeshyRigBone(rig, 'neck') ||
+        findMeshyRigBone(rig, 'Neck') ||
+        findMeshyRigBone(rig, 'Spine');
+      const iconPosition = new THREE.Vector3();
+      if (head) head.getWorldPosition(iconPosition);
+      else rig.object.getWorldPosition(iconPosition);
+      iconPosition.y += 0.22;
+      rig.rotationIcon.group.position.copy(iconPosition);
+      if (camera) rig.rotationIcon.group.quaternion.copy(camera.quaternion);
+      rig.rotationIcon.group.visible = SHOW_MESHY_ROTATION_ICON;
+      for (const part of rig.rotationIcon.group.children || []) {
+        part.visible = SHOW_MESHY_ROTATION_ICON;
+        if (part.material) {
+          part.material.colorWrite = false;
+          part.material.opacity = 0;
+          part.material.transparent = true;
+          part.material.needsUpdate = true;
+        }
+      }
+    }
+  }
+
+  function updateAllMeshyRigHandles() {
+    for (const rig of meshyRigFigures) updateMeshyRigHandles(rig);
+  }
+
+  function findMeshyRigBone(rig, name) {
+    let found = null;
+    rig?.object?.traverse((child) => {
+      if (!found && child.isBone && child.name === name) found = child;
+    });
+    return found;
+  }
+
+  function resetMeshyRigToBindPose(rig) {
+    if (!rig) return;
+    rig.positionOverrides?.clear?.();
+    for (const [bone, position] of rig.bindPositions) bone.position.copy(position);
+    for (const [bone, quaternion] of rig.bindQuaternions) bone.quaternion.copy(quaternion);
+    rig.object.updateMatrixWorld(true);
+  }
+
+  function meshyPoseJointVec(joints, key) {
+    const value = joints?.[key];
+    if (!Array.isArray(value) || value.length < 3) return null;
+    return new THREE.Vector3(value[0], value[1], value[2]);
+  }
+
+  function meshyPoseCenter(joints, a, b) {
+    const va = meshyPoseJointVec(joints, a);
+    const vb = meshyPoseJointVec(joints, b);
+    if (!va || !vb) return null;
+    return va.add(vb).multiplyScalar(0.5);
+  }
+
+  function alignMeshyBoneToPoseDirection(rig, boneName, childName, targetStart, targetEnd) {
+    const bone = findMeshyRigBone(rig, boneName);
+    const child = findMeshyRigBone(rig, childName);
+    if (!bone || !child || !targetStart || !targetEnd) return false;
+
+    const bonePos = new THREE.Vector3();
+    const childPos = new THREE.Vector3();
+    bone.getWorldPosition(bonePos);
+    child.getWorldPosition(childPos);
+    const currentDirection = childPos.sub(bonePos);
+    const targetDirection = targetEnd.clone().sub(targetStart);
+    if (currentDirection.lengthSq() < 1e-8 || targetDirection.lengthSq() < 1e-8) return false;
+
+    currentDirection.normalize();
+    targetDirection.normalize();
+    const deltaWorld = stableMeshyRigDeltaFromUnitVectors(rig, currentDirection, targetDirection, bone);
+    applyMeshyRigWorldRotationDelta(rig, bone, deltaWorld);
+    rig.object.updateMatrixWorld(true);
+    return true;
+  }
+
+  function applyJointPoseToMeshyRig(rig, joints) {
+    if (!rig || !joints) return false;
+    resetMeshyRigToBindPose(rig);
+    updateMeshyFightlabFigureFromJoints(rig.object, joints);
+    rig.object.updateMatrixWorld(true);
+
+    const hipCenter = meshyPoseCenter(joints, 'hipL', 'hipR');
+    const shoulderCenter = meshyPoseCenter(joints, 'shoulderL', 'shoulderR');
+    const neck = meshyPoseJointVec(joints, 'neck') || shoulderCenter;
+    const head = meshyPoseJointVec(joints, 'head');
+    const pose = {
+      hipL: meshyPoseJointVec(joints, 'hipL'),
+      hipR: meshyPoseJointVec(joints, 'hipR'),
+      kneeL: meshyPoseJointVec(joints, 'kneeL'),
+      kneeR: meshyPoseJointVec(joints, 'kneeR'),
+      footL: meshyPoseJointVec(joints, 'footL'),
+      footR: meshyPoseJointVec(joints, 'footR'),
+      shoulderL: meshyPoseJointVec(joints, 'shoulderL'),
+      shoulderR: meshyPoseJointVec(joints, 'shoulderR'),
+      elbowL: meshyPoseJointVec(joints, 'elbowL'),
+      elbowR: meshyPoseJointVec(joints, 'elbowR'),
+      handL: meshyPoseJointVec(joints, 'handL'),
+      handR: meshyPoseJointVec(joints, 'handR')
+    };
+
+    const alignments = [
+      ['Spine02', 'Spine01', hipCenter, shoulderCenter],
+      ['Spine01', 'Spine', hipCenter, shoulderCenter],
+      ['Spine', 'neck', shoulderCenter, neck],
+      ['neck', 'Head', neck, head],
+      ['LeftUpLeg', 'LeftLeg', pose.hipL, pose.kneeL],
+      ['LeftLeg', 'LeftFoot', pose.kneeL, pose.footL],
+      ['RightUpLeg', 'RightLeg', pose.hipR, pose.kneeR],
+      ['RightLeg', 'RightFoot', pose.kneeR, pose.footR],
+      ['LeftArm', 'LeftForeArm', pose.shoulderL, pose.elbowL],
+      ['LeftForeArm', 'LeftHand', pose.elbowL, pose.handL],
+      ['RightArm', 'RightForeArm', pose.shoulderR, pose.elbowR],
+      ['RightForeArm', 'RightHand', pose.elbowR, pose.handR]
+    ];
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      for (const item of alignments) alignMeshyBoneToPoseDirection(rig, ...item);
+    }
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function placeMeshyRigFromJoints(rig, joints) {
+    if (!rig || !joints) return false;
+    resetMeshyRigToBindPose(rig);
+    updateMeshyFightlabFigureFromJoints(rig.object, joints);
+    rig.object.updateMatrixWorld(true);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function placeMeshyRigNeutralStanding(rig, person) {
+    if (!rig?.object) return false;
+    resetMeshyRigToBindPose(rig);
+    rig.object.position.set(0, 0, 0);
+    rig.object.rotation.set(0, person === 'A' ? Math.PI / 2 : -Math.PI / 2, 0);
+    rig.object.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(rig.object);
+    const center = box.getCenter(new THREE.Vector3());
+    const targetX = person === 'A' ? -0.55 : 0.55;
+    const targetZ = 0;
+    rig.object.position.set(
+      targetX - center.x,
+      FLOOR_Y + 0.02 - box.min.y,
+      targetZ - center.z
+    );
+    rig.object.updateMatrixWorld(true);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function placeAllMeshyRigsNeutralStanding() {
+    placeMeshyRigNeutralStanding(meshyRigByPerson('A'), 'A');
+    placeMeshyRigNeutralStanding(meshyRigByPerson('B'), 'B');
+  }
+
+  function syncMeshyRigsFromCurrentJoints() {
+    placeMeshyRigFromJoints(meshyRigByPerson('A'), jointsA);
+    placeMeshyRigFromJoints(meshyRigByPerson('B'), jointsB);
+  }
+
+  function meshyRigMeshesForObject(object) {
+    const meshes = [];
+    object?.traverse((child) => {
+      if (child.isMesh) meshes.push(child);
+    });
+    return meshes;
+  }
+
+  function meshyRigByPerson(person) {
+    return meshyRigFigures.find((rig) => rig.person === person) || null;
+  }
+
+  function serializeMeshyRigPose() {
+    const out = {};
+    for (const rig of meshyRigFigures) {
+      if (!rig?.person) continue;
+      const bones = {};
+      const positions = {};
+      rig.object.updateMatrixWorld(true);
+      rig.object.traverse((child) => {
+        if (!child.isBone || !child.name) return;
+        bones[child.name] = [
+          child.quaternion.x,
+          child.quaternion.y,
+          child.quaternion.z,
+          child.quaternion.w
+        ];
+        if (rig.positionOverrides?.has?.(child)) {
+          positions[child.name] = [child.position.x, child.position.y, child.position.z];
+        }
+      });
+      out[rig.person] = {
+        bones,
+        positions,
+        object: {
+          position: [rig.object.position.x, rig.object.position.y, rig.object.position.z],
+          rotation: [rig.object.rotation.x, rig.object.rotation.y, rig.object.rotation.z],
+          scale: [rig.object.scale.x, rig.object.scale.y, rig.object.scale.z]
+        }
+      };
+    }
+    return out;
+  }
+
+  function applyMeshyRigPose(meshyRigPose) {
+    if (!meshyRigPose) return false;
+    if (!meshyRigFigures.length) {
+      pendingMeshyRigPose = meshyRigPose;
+      return false;
+    }
+
+    for (const person of ['A', 'B']) {
+      const rig = meshyRigByPerson(person);
+      const data = meshyRigPose[person];
+      if (!rig || !data) continue;
+      if (Array.isArray(data.object?.position)) {
+        rig.object.position.fromArray(data.object.position);
+      }
+      if (Array.isArray(data.object?.rotation)) {
+        rig.object.rotation.set(data.object.rotation[0] || 0, data.object.rotation[1] || 0, data.object.rotation[2] || 0);
+      }
+      if (Array.isArray(data.object?.scale)) {
+        rig.object.scale.set(data.object.scale[0] || 1, data.object.scale[1] || 1, data.object.scale[2] || 1);
+      }
+      rig.positionOverrides?.clear?.();
+      rig.object.traverse((child) => {
+        const q = data.bones?.[child.name];
+        if (!child.isBone) return;
+        if (Array.isArray(data.positions?.[child.name]) && data.positions[child.name].length >= 3) {
+          const p = data.positions[child.name];
+          child.position.set(p[0] || 0, p[1] || 0, p[2] || 0);
+          rig.positionOverrides?.set?.(child, child.position.clone());
+        }
+        if (!Array.isArray(q) || q.length < 4) return;
+        child.quaternion.set(q[0] || 0, q[1] || 0, q[2] || 0, q[3] ?? 1);
+      });
+      rig.object.updateMatrixWorld(true);
+      updateMeshyRigHandles(rig);
+    }
+    pendingMeshyRigPose = null;
+    return true;
+  }
+
+  function restoreMeshyRigBindOffsets(rig) {
+    for (const [bone, position] of rig.bindPositions) {
+      const override = rig.positionOverrides?.get?.(bone);
+      bone.position.copy(override || position);
+    }
+    rig.object.updateMatrixWorld(true);
+  }
+
+  function meshyRigRotationLimitForBone(bone) {
+    return Infinity;
+  }
+
+  function meshyRigBoneRelativeAngle(rig, bone) {
+    const bind = rig.bindQuaternions.get(bone);
+    if (!bind) return 0;
+    const relative = bind.clone().invert().multiply(bone.quaternion);
+    if (relative.w < 0) {
+      relative.x *= -1;
+      relative.y *= -1;
+      relative.z *= -1;
+      relative.w *= -1;
+    }
+    return 2 * Math.acos(THREE.MathUtils.clamp(relative.w, -1, 1));
+  }
+
+  function clampMeshyRigBoneRotation(rig, bone) {
+    const limit = meshyRigRotationLimitForBone(bone);
+    if (!Number.isFinite(limit)) return;
+    const bind = rig.bindQuaternions.get(bone);
+    if (!bind) return;
+    const relative = bind.clone().invert().multiply(bone.quaternion);
+    if (relative.w < 0) {
+      relative.x *= -1;
+      relative.y *= -1;
+      relative.z *= -1;
+      relative.w *= -1;
+    }
+    const angle = 2 * Math.acos(THREE.MathUtils.clamp(relative.w, -1, 1));
+    if (angle <= limit || angle < 1e-5) return;
+    relative.slerpQuaternions(new THREE.Quaternion(), relative.normalize(), limit / angle);
+    bone.quaternion.copy(bind).multiply(relative);
+  }
+
+  function isMeshyRigSpineLike(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    return name.includes('spine') || name.includes('neck') || name.includes('head');
+  }
+
+  function isMeshyRigSpineBone(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    return name.includes('spine');
+  }
+
+  function isMeshyRigSpineBendControl(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    return name.includes('spine') || name.includes('neck');
+  }
+
+  function isMeshyRigHipsBone(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    return name === 'hips' || name.includes('pelvis');
+  }
+
+  function isMeshyRigKneeBone(bone) {
+    const name = bone?.name || '';
+    return name === 'LeftLeg' || name === 'RightLeg';
+  }
+
+  function meshyRigIkChainForBone(bone) {
+    const targetName = bone?.name?.toLowerCase?.() || '';
+    const side = targetName.includes('left') ? 'left' : targetName.includes('right') ? 'right' : '';
+    const chain = [];
+    let cursor = bone?.parent;
+    while (cursor?.isBone) {
+      const name = cursor.name.toLowerCase();
+      if (name === 'hips') break;
+      chain.push(cursor);
+      if (singleJointMode) break;
+      if (side && name === `${side}shoulder`) break;
+      if (side && name === `${side}upleg`) break;
+      if (!side && name.includes('spine')) {
+        const spineCount = chain.filter((item) => item.name.toLowerCase().includes('spine')).length;
+        if (spineCount >= 3) break;
+      }
+      cursor = cursor.parent;
+    }
+    return chain;
+  }
+
+  function meshyRigPerpendicularAxis(vector) {
+    const helper = Math.abs(vector.x) < Math.abs(vector.y) ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    const axis = new THREE.Vector3().crossVectors(vector, helper);
+    if (axis.lengthSq() < 1e-8) axis.crossVectors(vector, new THREE.Vector3(0, 0, 1));
+    return axis.normalize();
+  }
+
+  function stableMeshyRigDeltaFromUnitVectors(rig, from, to, joint) {
+    const dot = THREE.MathUtils.clamp(from.dot(to), -1, 1);
+    if (dot < -0.9995) {
+      let axis = rig.rotationFallbackAxes.get(joint)?.clone();
+      if (!axis || axis.lengthSq() < 1e-8) axis = meshyRigPerpendicularAxis(from);
+      axis.addScaledVector(from, -axis.dot(from));
+      if (axis.lengthSq() < 1e-8) axis = meshyRigPerpendicularAxis(from);
+      axis.normalize();
+      rig.rotationFallbackAxes.set(joint, axis.clone());
+      return new THREE.Quaternion().setFromAxisAngle(axis, Math.PI);
+    }
+    const axis = new THREE.Vector3().crossVectors(from, to);
+    if (axis.lengthSq() > 1e-8) rig.rotationFallbackAxes.set(joint, axis.normalize().clone());
+    return new THREE.Quaternion().setFromUnitVectors(from, to);
+  }
+
+  function clampMeshyRigDirectionToCone(direction, axis, maxAngle) {
+    if (!Number.isFinite(maxAngle)) return direction.clone().normalize();
+    const dir = direction.clone().normalize();
+    const center = axis.clone().normalize();
+    const dot = THREE.MathUtils.clamp(center.dot(dir), -1, 1);
+    const angle = Math.acos(dot);
+    if (angle <= maxAngle) return dir;
+    let rotationAxis = new THREE.Vector3().crossVectors(center, dir);
+    if (rotationAxis.lengthSq() < 1e-8) rotationAxis = meshyRigPerpendicularAxis(center);
+    rotationAxis.normalize();
+    return center.applyAxisAngle(rotationAxis, maxAngle).normalize();
+  }
+
+  function meshyRigBindDirectionWorld(rig, joint, child) {
+    const bindChildOffset = rig.bindPositions.get(child)?.clone() || child.position.clone();
+    if (bindChildOffset.lengthSq() < 1e-8) return null;
+    const jointBind = rig.bindQuaternions.get(joint)?.clone() || new THREE.Quaternion();
+    const parentWorld = new THREE.Quaternion();
+    joint.parent?.getWorldQuaternion(parentWorld);
+    return bindChildOffset.normalize().applyQuaternion(jointBind).applyQuaternion(parentWorld).normalize();
+  }
+
+  function clampMeshyRigTargetToReach(rig, bone, chain, targetWorld) {
+    if (!chain.length) return targetWorld.clone();
+    const root = chain[chain.length - 1];
+    const rootPos = new THREE.Vector3();
+    const current = new THREE.Vector3();
+    const parent = new THREE.Vector3();
+    root.getWorldPosition(rootPos);
+
+    let maxReach = 0;
+    let largestSegment = 0;
+    let cursor = bone;
+    while (cursor?.isBone && cursor !== root) {
+      cursor.getWorldPosition(current);
+      cursor.parent?.getWorldPosition(parent);
+      const segmentLength = current.distanceTo(parent);
+      maxReach += segmentLength;
+      largestSegment = Math.max(largestSegment, segmentLength);
+      cursor = cursor.parent;
+    }
+
+    if (maxReach <= 1e-6) return targetWorld.clone();
+    const fromRoot = targetWorld.clone().sub(rootPos);
+    const distance = fromRoot.length();
+    const minReach = Math.max(largestSegment - (maxReach - largestSegment), maxReach * 0.08);
+    if (distance < minReach) {
+      const direction = rig.lastClampDirections.get(bone)?.clone() || fromRoot.clone();
+      if (direction.lengthSq() < 1e-8) direction.set(0.2, 0.15, 0.05);
+      direction.normalize();
+      rig.lastClampDirections.set(bone, direction.clone());
+      return rootPos.clone().add(direction.multiplyScalar(minReach));
+    }
+    if (distance > 1e-8) rig.lastClampDirections.set(bone, fromRoot.clone().normalize());
+    if (distance <= maxReach) return targetWorld.clone();
+    return rootPos.clone().add(fromRoot.multiplyScalar(maxReach / distance));
+  }
+
+  function applyMeshyRigWorldRotationDelta(rig, bone, deltaWorld) {
+    const limit = meshyRigRotationLimitForBone(bone);
+    const previousQuaternion = Number.isFinite(limit) ? bone.quaternion.clone() : null;
+    const previousAngle = Number.isFinite(limit) ? meshyRigBoneRelativeAngle(rig, bone) : 0;
+    const parentWorld = new THREE.Quaternion();
+    bone.parent?.getWorldQuaternion(parentWorld);
+    const deltaLocal = parentWorld.clone().invert().multiply(deltaWorld).multiply(parentWorld);
+    bone.quaternion.premultiply(deltaLocal);
+    if (Number.isFinite(limit)) {
+      const attemptedAngle = meshyRigBoneRelativeAngle(rig, bone);
+      const wasAtLimit = previousAngle >= limit - 0.006;
+      const pushedFartherOut = attemptedAngle > previousAngle + 0.002;
+      if (wasAtLimit && pushedFartherOut) {
+        bone.quaternion.copy(previousQuaternion);
+      } else {
+        clampMeshyRigBoneRotation(rig, bone);
+      }
+    }
+    bone.updateMatrixWorld(true);
+  }
+
+  function applyMeshyRigWorldRotationDeltaUnclamped(bone, deltaWorld) {
+    const parentWorld = new THREE.Quaternion();
+    bone.parent?.getWorldQuaternion(parentWorld);
+    const deltaLocal = parentWorld.clone().invert().multiply(deltaWorld).multiply(parentWorld);
+    bone.quaternion.premultiply(deltaLocal);
+    bone.updateMatrixWorld(true);
+  }
+
+  function snapshotMeshyRigBoneRotations(rig) {
+    return Array.from(rig.bindQuaternions.keys()).map((snapshotBone) => ({
+      bone: snapshotBone,
+      quaternion: snapshotBone.quaternion.clone()
+    }));
+  }
+
+  function restoreMeshyRigBoneRotationsExcept(snapshot, allowedBones) {
+    for (const item of snapshot) {
+      if (allowedBones.has(item.bone)) continue;
+      item.bone.quaternion.copy(item.quaternion);
+    }
+  }
+
+  function solveMeshyRigSingleJointToTarget(rig, bone, targetWorld) {
+    const joint = bone?.parent?.isBone ? bone.parent : null;
+    if (!joint || joint.name.toLowerCase() === 'hips') return false;
+
+    restoreMeshyRigBindOffsets(rig);
+    const snapshot = snapshotMeshyRigBoneRotations(rig);
+    const jointPos = new THREE.Vector3();
+    const endPos = new THREE.Vector3();
+    joint.getWorldPosition(jointPos);
+    bone.getWorldPosition(endPos);
+
+    const toEnd = endPos.sub(jointPos);
+    let toTarget = targetWorld.clone().sub(jointPos);
+    const reach = toEnd.length();
+    if (reach < 1e-6) return false;
+    if (toTarget.lengthSq() < 1e-6) {
+      toTarget = rig.lastClampDirections.get(bone)?.clone() || toEnd.clone();
+    }
+    if (toTarget.lengthSq() < 1e-6) return false;
+
+    toEnd.normalize();
+    toTarget.normalize();
+    rig.lastClampDirections.set(bone, toTarget.clone());
+    const deltaWorld = stableMeshyRigDeltaFromUnitVectors(rig, toEnd, toTarget, joint);
+    applyMeshyRigWorldRotationDelta(rig, joint, deltaWorld);
+    restoreMeshyRigBindOffsets(rig);
+    restoreMeshyRigBoneRotationsExcept(snapshot, new Set([joint]));
+    rig.object.updateMatrixWorld(true);
+    return true;
+  }
+
+  function firstUsableMeshyRigChildBone(bone) {
+    return bone.children.find((child) => {
+      if (!child.isBone) return false;
+      const name = child.name.toLowerCase();
+      return !name.includes('twist') && !name.includes('end') && !name.includes('nub');
+    });
+  }
+
+  function meshyRigTwistAxisForBone(bone) {
+    const origin = new THREE.Vector3();
+    const other = new THREE.Vector3();
+    bone.getWorldPosition(origin);
+    const child = firstUsableMeshyRigChildBone(bone);
+    if (child) {
+      child.getWorldPosition(other);
+      const axisToChild = other.sub(origin);
+      if (axisToChild.lengthSq() > 1e-8) return axisToChild.normalize();
+    }
+    if (bone.parent?.isBone) {
+      bone.parent.getWorldPosition(other);
+      const axisFromParent = origin.clone().sub(other);
+      if (axisFromParent.lengthSq() > 1e-8) return axisFromParent.normalize();
+    }
+    return camera.getWorldDirection(new THREE.Vector3()).normalize();
+  }
+
+  function twistMeshyRigJointClockwise(handle) {
+    const rig = handle?.userData?.meshyRig;
+    const bone = handle?.userData?.bone;
+    if (!rig || !bone) return false;
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    const axis = meshyRigTwistAxisForBone(bone);
+    const cameraDirection = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const sign = axis.dot(cameraDirection) >= 0 ? -1 : 1;
+    const deltaWorld = new THREE.Quaternion().setFromAxisAngle(axis, sign * THREE.MathUtils.degToRad(15));
+    applyMeshyRigWorldRotationDelta(rig, bone, deltaWorld);
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    dragSnapshotTaken = false;
+    return true;
+  }
+
+  function applyMeshyRigJointTwist(handle, radians) {
+    const rig = handle?.userData?.meshyRig;
+    const bone = handle?.userData?.bone;
+    if (!rig || !bone || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
+    if (isMeshyRigHipsBone(bone)) {
+      return applyMeshyRigLowerBodyYaw(handle, radians);
+    }
+    const axis = meshyRigTwistAxisForBone(bone);
+    const deltaWorld = new THREE.Quaternion().setFromAxisAngle(axis, radians);
+    applyMeshyRigWorldRotationDelta(rig, bone, deltaWorld);
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function translateMeshyRigUpperBodyFromHips(rig, deltaWorld) {
+    if (!rig || !deltaWorld || deltaWorld.lengthSq() < 1e-10) return false;
+    const hips = findMeshyRigBone(rig, 'Hips');
+    if (!hips) return false;
+    const legPairs = [
+      [findMeshyRigBone(rig, 'LeftUpLeg'), findMeshyRigBone(rig, 'LeftLeg')],
+      [findMeshyRigBone(rig, 'RightUpLeg'), findMeshyRigBone(rig, 'RightLeg')]
+    ];
+    const kneeTargets = legPairs.map(([, knee]) => {
+      const target = new THREE.Vector3();
+      if (knee) knee.getWorldPosition(target);
+      return target;
+    });
+    const parentWorld = new THREE.Quaternion();
+    hips.parent?.getWorldQuaternion(parentWorld);
+    const hipsParentDelta = deltaWorld.clone().applyQuaternion(parentWorld.invert());
+    hips.position.add(hipsParentDelta);
+    rig.positionOverrides?.set?.(hips, hips.position.clone());
+    hips.updateMatrixWorld(true);
+
+    for (let index = 0; index < legPairs.length; index += 1) {
+      const [upperLeg, knee] = legPairs[index];
+      const kneeTarget = kneeTargets[index];
+      if (!upperLeg || !knee) continue;
+      const bindPosition = rig.bindPositions.get(upperLeg);
+      if (bindPosition && rig.positionOverrides?.has?.(upperLeg)) {
+        upperLeg.position.copy(bindPosition);
+        rig.positionOverrides.delete(upperLeg);
+        upperLeg.updateMatrixWorld(true);
+      }
+      const hipWorld = new THREE.Vector3();
+      const currentKneeWorld = new THREE.Vector3();
+      upperLeg.getWorldPosition(hipWorld);
+      knee.getWorldPosition(currentKneeWorld);
+      const currentDirection = currentKneeWorld.sub(hipWorld);
+      const targetDirection = kneeTarget.clone().sub(hipWorld);
+      if (currentDirection.lengthSq() < 1e-8 || targetDirection.lengthSq() < 1e-8) continue;
+      currentDirection.normalize();
+      targetDirection.normalize();
+      const delta = stableMeshyRigDeltaFromUnitVectors(rig, currentDirection, targetDirection, upperLeg);
+      applyMeshyRigWorldRotationDelta(rig, upperLeg, delta);
+    }
+    rig.object.updateMatrixWorld(true);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function meshyRigBodyRegionForBone(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    if (name.includes('hips') || name.includes('pelvis')) return 'lower';
+    if (name.includes('leg') || name.includes('foot') || name.includes('toe')) return 'lower';
+    return 'upper';
+  }
+
+  function isMeshyRigHeadOrChinBone(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    return name.includes('head') || name.includes('chin');
+  }
+
+  function meshyRigShoulderFrame(rig) {
+    const left =
+      findMeshyRigBone(rig, 'LeftShoulder') ||
+      findMeshyRigBone(rig, 'LeftArm') ||
+      findMeshyRigBone(rig, 'LeftUpArm');
+    const right =
+      findMeshyRigBone(rig, 'RightShoulder') ||
+      findMeshyRigBone(rig, 'RightArm') ||
+      findMeshyRigBone(rig, 'RightUpArm');
+    const lower =
+      findMeshyRigBone(rig, 'Spine02') ||
+      findMeshyRigBone(rig, 'Spine01') ||
+      findMeshyRigBone(rig, 'Spine') ||
+      findMeshyRigBone(rig, 'Hips');
+    const upper =
+      findMeshyRigBone(rig, 'neck') ||
+      findMeshyRigBone(rig, 'Neck') ||
+      findMeshyRigBone(rig, 'Head') ||
+      findMeshyRigBone(rig, 'Spine');
+    const leftWorld = new THREE.Vector3();
+    const rightWorld = new THREE.Vector3();
+    const lowerWorld = new THREE.Vector3();
+    const upperWorld = new THREE.Vector3();
+    if (left) left.getWorldPosition(leftWorld);
+    if (right) right.getWorldPosition(rightWorld);
+    if (lower) lower.getWorldPosition(lowerWorld);
+    else rig?.object?.getWorldPosition(lowerWorld);
+    if (upper) upper.getWorldPosition(upperWorld);
+    else upperWorld.copy(lowerWorld).add(new THREE.Vector3(0, 1, 0));
+    const shoulderAxis = left && right
+      ? rightWorld.clone().sub(leftWorld)
+      : new THREE.Vector3(1, 0, 0).applyQuaternion(rig.object.quaternion);
+    if (shoulderAxis.lengthSq() < 1e-8) shoulderAxis.set(1, 0, 0);
+    shoulderAxis.normalize();
+    const spineAxis = upperWorld.clone().sub(lowerWorld);
+    if (spineAxis.lengthSq() < 1e-8) spineAxis.set(0, 1, 0);
+    spineAxis.normalize();
+    const shoulderCenter = left && right
+      ? leftWorld.clone().add(rightWorld).multiplyScalar(0.5)
+      : lowerWorld.clone().lerp(upperWorld, 0.72);
+    const forwardAxis = new THREE.Vector3().crossVectors(shoulderAxis, spineAxis);
+    if (forwardAxis.lengthSq() < 1e-8) forwardAxis.set(0, 0, 1).applyQuaternion(rig.object.quaternion);
+    forwardAxis.normalize();
+    return { shoulderAxis, spineAxis, forwardAxis, shoulderCenter, lowerWorld, upperWorld };
+  }
+
+  function meshyRigPelvisFrame(rig) {
+    const hips = findMeshyRigBone(rig, 'Hips');
+    const spine =
+      findMeshyRigBone(rig, 'Spine02') ||
+      findMeshyRigBone(rig, 'Spine01') ||
+      findMeshyRigBone(rig, 'Spine');
+    const leftLeg = findMeshyRigBone(rig, 'LeftUpLeg') || findMeshyRigBone(rig, 'LeftLeg');
+    const rightLeg = findMeshyRigBone(rig, 'RightUpLeg') || findMeshyRigBone(rig, 'RightLeg');
+    const hipsWorld = new THREE.Vector3();
+    const spineWorld = new THREE.Vector3();
+    const leftWorld = new THREE.Vector3();
+    const rightWorld = new THREE.Vector3();
+    if (hips) hips.getWorldPosition(hipsWorld);
+    else rig?.object?.getWorldPosition(hipsWorld);
+    if (spine) spine.getWorldPosition(spineWorld);
+    else spineWorld.copy(hipsWorld).add(new THREE.Vector3(0, 1, 0).applyQuaternion(rig.object.quaternion));
+    if (leftLeg) leftLeg.getWorldPosition(leftWorld);
+    if (rightLeg) rightLeg.getWorldPosition(rightWorld);
+
+    const pelvisUpAxis = spineWorld.clone().sub(hipsWorld);
+    if (pelvisUpAxis.lengthSq() < 1e-8) pelvisUpAxis.set(0, 1, 0).applyQuaternion(rig.object.quaternion);
+    pelvisUpAxis.normalize();
+
+    const pelvisSideAxis = leftLeg && rightLeg
+      ? rightWorld.clone().sub(leftWorld)
+      : new THREE.Vector3(1, 0, 0).applyQuaternion(rig.object.quaternion);
+    if (pelvisSideAxis.lengthSq() < 1e-8) pelvisSideAxis.set(1, 0, 0).applyQuaternion(rig.object.quaternion);
+    pelvisSideAxis.addScaledVector(pelvisUpAxis, -pelvisSideAxis.dot(pelvisUpAxis));
+    if (pelvisSideAxis.lengthSq() < 1e-8) pelvisSideAxis.copy(meshyRigPerpendicularAxis(pelvisUpAxis));
+    pelvisSideAxis.normalize();
+
+    const pelvisForwardAxis = new THREE.Vector3().crossVectors(pelvisSideAxis, pelvisUpAxis);
+    if (pelvisForwardAxis.lengthSq() < 1e-8) pelvisForwardAxis.copy(meshyRigPerpendicularAxis(pelvisUpAxis));
+    pelvisForwardAxis.normalize();
+    return { pelvisUpAxis, pelvisSideAxis, pelvisForwardAxis, hipsWorld };
+  }
+
+  function applyMeshyRigUpperBodyTwist(handle, radians, unclamped = false) {
+    const rig = handle?.userData?.meshyRig;
+    if (!rig || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
+    const frame = meshyRigShoulderFrame(rig);
+    const spine02 = findMeshyRigBone(rig, 'Spine02');
+    const spine01 = findMeshyRigBone(rig, 'Spine01');
+    const spine = findMeshyRigBone(rig, 'Spine');
+    const weightedSpineBones = [
+      [spine02, 0.35],
+      [spine01, 0.4],
+      [spine, 0.25]
+    ].filter(([bone]) => !!bone);
+    if (!weightedSpineBones.length) return false;
+    for (const [spineBone, weight] of weightedSpineBones) {
+      const deltaWorld = new THREE.Quaternion().setFromAxisAngle(frame.spineAxis, radians * weight);
+      if (unclamped) applyMeshyRigWorldRotationDeltaUnclamped(spineBone, deltaWorld);
+      else applyMeshyRigWorldRotationDelta(rig, spineBone, deltaWorld);
+    }
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function solveMeshyRigSpineJointToTarget(rig, bone, targetWorld) {
+    const joint = bone?.parent?.isBone ? bone.parent : null;
+    if (!rig || !bone || !joint || joint.name.toLowerCase() === 'hips') return false;
+
+    restoreMeshyRigBindOffsets(rig);
+    const jointPos = new THREE.Vector3();
+    const bonePos = new THREE.Vector3();
+    joint.getWorldPosition(jointPos);
+    bone.getWorldPosition(bonePos);
+
+    const currentDir = bonePos.sub(jointPos);
+    const targetDir = targetWorld.clone().sub(jointPos);
+    if (currentDir.lengthSq() < 1e-8 || targetDir.lengthSq() < 1e-8) return false;
+    currentDir.normalize();
+    targetDir.normalize();
+
+    const limit = meshyRigRotationLimitForBone(joint);
+    const bindDirection = meshyRigBindDirectionWorld(rig, joint, bone);
+    const usableTargetDir = bindDirection
+      ? clampMeshyRigDirectionToCone(targetDir, bindDirection, Math.max(0.001, limit - 0.002))
+      : targetDir;
+    const deltaWorld = stableMeshyRigDeltaFromUnitVectors(rig, currentDir, usableTargetDir, joint);
+    applyMeshyRigWorldRotationDeltaUnclamped(joint, deltaWorld);
+    clampMeshyRigBoneRotation(rig, joint);
+    restoreMeshyRigBindOffsets(rig);
+    rig.object.updateMatrixWorld(true);
+    return true;
+  }
+
+  function applyMeshyRigTorsoSideBend(handle, radians) {
+    const rig = handle?.userData?.meshyRig;
+    const bone = handle?.userData?.bone;
+    if (!rig || !bone || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
+    const boneName = bone.name?.toLowerCase?.() || '';
+    const spineRoot =
+      isMeshyRigSpineBendControl(bone) ? bone :
+      findMeshyRigBone(rig, 'Spine02') ||
+      findMeshyRigBone(rig, 'Spine01') ||
+      findMeshyRigBone(rig, 'Spine');
+    if (!spineRoot) return false;
+    const frame = meshyRigShoulderFrame(rig);
+    const deltaWorld = new THREE.Quaternion().setFromAxisAngle(frame.forwardAxis, radians);
+    applyMeshyRigWorldRotationDelta(rig, spineRoot, deltaWorld);
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function applyMeshyRigBodyTwist(handle, radians) {
+    const rig = handle?.userData?.meshyRig;
+    const bone = handle?.userData?.bone;
+    if (!rig || !bone || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
+    const region = handle?.userData?.bodyRegion || meshyRigBodyRegionForBone(bone);
+    if (region === 'lower') {
+      const hips = findMeshyRigBone(rig, 'Hips');
+      const spineRoot = findMeshyRigBone(rig, 'Spine02');
+      if (!hips) return false;
+      const axis = meshyRigPelvisFrame(rig).pelvisUpAxis;
+      const deltaWorld = new THREE.Quaternion().setFromAxisAngle(axis, radians);
+      applyMeshyRigWorldRotationDeltaUnclamped(hips, deltaWorld);
+      if (spineRoot) {
+        applyMeshyRigWorldRotationDeltaUnclamped(spineRoot, deltaWorld.clone().invert());
+      }
+    } else {
+      const axis = new THREE.Vector3(0, 1, 0);
+      const deltaWorld = new THREE.Quaternion().setFromAxisAngle(axis, radians);
+      const spineRoot =
+        findMeshyRigBone(rig, 'Spine02') ||
+        findMeshyRigBone(rig, 'Spine01') ||
+        findMeshyRigBone(rig, 'Spine');
+      if (!spineRoot) return false;
+      applyMeshyRigWorldRotationDelta(rig, spineRoot, deltaWorld);
+    }
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function applyMeshyRigLowerBodyYaw(handle, radians) {
+    const rig = handle?.userData?.meshyRig;
+    const bone = handle?.userData?.bone;
+    if (!rig || !bone || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
+    const hips = findMeshyRigBone(rig, 'Hips');
+    const spineRoot = findMeshyRigBone(rig, 'Spine02');
+    if (!hips) return false;
+    const deltaWorld = new THREE.Quaternion().setFromAxisAngle(meshyRigPelvisFrame(rig).pelvisUpAxis, radians);
+    applyMeshyRigWorldRotationDeltaUnclamped(hips, deltaWorld);
+    if (spineRoot) applyMeshyRigWorldRotationDeltaUnclamped(spineRoot, deltaWorld.clone().invert());
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function applyMeshyRigLowerBodyTilt(handle, radians) {
+    const rig = handle?.userData?.meshyRig;
+    if (!rig || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
+    const hips = findMeshyRigBone(rig, 'Hips');
+    const spineRoot = findMeshyRigBone(rig, 'Spine02');
+    if (!hips) return false;
+    const axis = meshyRigPelvisFrame(rig).pelvisSideAxis;
+    const deltaWorld = new THREE.Quaternion().setFromAxisAngle(axis, radians);
+    applyMeshyRigWorldRotationDeltaUnclamped(hips, deltaWorld);
+    if (spineRoot) applyMeshyRigWorldRotationDeltaUnclamped(spineRoot, deltaWorld.clone().invert());
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function applyMeshyRigPelvisPitch(handle, radians) {
+    const rig = handle?.userData?.meshyRig;
+    if (!rig || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
+    const hips = findMeshyRigBone(rig, 'Hips');
+    if (!hips) return false;
+    const axis = meshyRigPelvisFrame(rig).pelvisSideAxis;
+    const deltaWorld = new THREE.Quaternion().setFromAxisAngle(axis, radians);
+    applyMeshyRigWorldRotationDeltaUnclamped(hips, deltaWorld);
+    const counterDelta = deltaWorld.clone().invert();
+    for (const childRoot of [
+      findMeshyRigBone(rig, 'Spine02'),
+      findMeshyRigBone(rig, 'LeftUpLeg'),
+      findMeshyRigBone(rig, 'RightUpLeg')
+    ]) {
+      if (childRoot?.parent === hips) applyMeshyRigWorldRotationDeltaUnclamped(childRoot, counterDelta);
+    }
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function applyMeshyRigTorsoBend(handle, radians, unclamped = false) {
+    const rig = handle?.userData?.meshyRig;
+    const bone = handle?.userData?.bone;
+    if (!rig || !bone || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
+    if (meshyRigBodyRegionForBone(bone) !== 'upper') return false;
+    const boneName = bone.name?.toLowerCase?.() || '';
+    const spineRoot =
+      isMeshyRigSpineBendControl(bone) ? bone :
+      findMeshyRigBone(rig, 'Spine02') ||
+      findMeshyRigBone(rig, 'Spine01') ||
+      findMeshyRigBone(rig, 'Spine');
+    if (!spineRoot) return false;
+    const axis = meshyRigShoulderFrame(rig).shoulderAxis;
+    const deltaWorld = new THREE.Quaternion().setFromAxisAngle(axis, radians);
+    if (unclamped) applyMeshyRigWorldRotationDeltaUnclamped(spineRoot, deltaWorld);
+    else applyMeshyRigWorldRotationDelta(rig, spineRoot, deltaWorld);
+    restoreMeshyRigBindOffsets(rig);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function applyMeshyRigWholeFigureRotation(handle, yawRadians, pitchRadians) {
+    const rig = handle?.userData?.meshyRig;
+    if (!rig?.object) return false;
+    const hips = findMeshyRigBone(rig, 'Hips');
+    const pivot = new THREE.Vector3();
+    if (hips) hips.getWorldPosition(pivot);
+    else rig.object.getWorldPosition(pivot);
+    const rotateAroundPivot = (axis, radians) => {
+      if (!Number.isFinite(radians) || Math.abs(radians) <= 1e-6) return;
+      const q = new THREE.Quaternion().setFromAxisAngle(axis.clone().normalize(), radians);
+      rig.object.position.sub(pivot).applyQuaternion(q).add(pivot);
+      rig.object.quaternion.premultiply(q);
+      rig.object.updateMatrixWorld(true);
+    };
+    if (Number.isFinite(yawRadians) && Math.abs(yawRadians) > 1e-6) {
+      rotateAroundPivot(new THREE.Vector3(0, 1, 0), yawRadians);
+    }
+    if (Number.isFinite(pitchRadians) && Math.abs(pitchRadians) > 1e-6) {
+      const rightAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(rig.object.quaternion).normalize();
+      rotateAroundPivot(rightAxis, pitchRadians);
+    }
+    rig.object.updateMatrixWorld(true);
+    updateMeshyRigHandles(rig);
+    return true;
+  }
+
+  function startMeshyRigBodyTwistDrag(event, handle, mode = 'body') {
+    const rig = handle?.userData?.meshyRig;
+    const bone = handle?.userData?.bone;
+    if (!rig || !bone) return false;
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    if (handle.userData.marker) handle.userData.marker.material = meshyRigSelectedJointMaterial;
+    meshyRigBodyTwistDrag = {
+      handle,
+      mode,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY
+    };
+    orbitEnabled = false;
+    try { if (controls) { controls.enabled = false; controls.enableZoom = false; } } catch(e) {}
+    try { renderer.domElement.setPointerCapture(event.pointerId); } catch(e) {}
+    try { renderer.domElement.style.cursor = 'ew-resize'; } catch(e) {}
+    return true;
+  }
+
+  function classifyMeshyRigShiftGesture(dx, dy) {
+    if (Math.hypot(dx, dy) < 2) return null;
+    const angle = Math.abs(THREE.MathUtils.radToDeg(Math.atan2(Math.abs(dy), Math.abs(dx))));
+    if (angle < 25) return 'side';
+    if (angle > 65) return 'bend';
+    return 'twist';
+  }
+
+  function meshyRigGestureRadians(deltaPixels) {
+    return THREE.MathUtils.clamp(deltaPixels * 0.012, -0.09, 0.09);
+  }
+
+  function meshyRigSpineDragRadians(deltaPixels) {
+    return THREE.MathUtils.clamp(deltaPixels * 0.006, -0.045, 0.045);
+  }
+
+  function moveMeshyRigBodyTwistDrag(event) {
+    if (!meshyRigBodyTwistDrag) return false;
+    if (event.pointerId != null && meshyRigBodyTwistDrag.pointerId != null && event.pointerId !== meshyRigBodyTwistDrag.pointerId) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = event.clientX - meshyRigBodyTwistDrag.lastX;
+    const dy = event.clientY - meshyRigBodyTwistDrag.lastY;
+    meshyRigBodyTwistDrag.lastX = event.clientX;
+    meshyRigBodyTwistDrag.lastY = event.clientY;
+    if (meshyRigBodyTwistDrag.mode === 'whole') {
+      applyMeshyRigWholeFigureRotation(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx), meshyRigGestureRadians(-dy));
+    } else if (meshyRigBodyTwistDrag.mode === 'icon-upper') {
+      applyMeshyRigUpperBodyTwist(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx), true);
+      applyMeshyRigTorsoBend(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(-dy), true);
+    } else if (meshyRigBodyTwistDrag.mode === 'icon-lower') {
+      applyMeshyRigBodyTwist(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx));
+      applyMeshyRigLowerBodyTilt(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(-dy));
+    } else if (meshyRigBodyTwistDrag.mode === 'lower') {
+      applyMeshyRigBodyTwist(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx));
+    } else if (meshyRigBodyTwistDrag.mode === 'gesture') {
+      const gestureMode = classifyMeshyRigShiftGesture(dx, dy);
+      if (!gestureMode) return true;
+      if (gestureMode === 'side') {
+        applyMeshyRigTorsoSideBend(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx));
+      } else if (gestureMode === 'bend') {
+        applyMeshyRigTorsoBend(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(-dy));
+      } else {
+        applyMeshyRigUpperBodyTwist(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx));
+      }
+    } else if (meshyRigBodyTwistDrag.mode === 'upper-twist') {
+      applyMeshyRigUpperBodyTwist(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx));
+      applyMeshyRigTorsoBend(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(-dy));
+    } else {
+      const bone = meshyRigBodyTwistDrag.handle?.userData?.bone;
+      if (meshyRigBodyRegionForBone(bone) === 'upper') {
+        applyMeshyRigTorsoSideBend(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx));
+        applyMeshyRigTorsoBend(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(-dy));
+      } else {
+        applyMeshyRigTorsoSideBend(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx));
+      }
+    }
+    return true;
+  }
+
+  function moveMeshyRigShiftRightModifierDrag(event) {
+    if (!meshyRigDrag) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = event.clientX - meshyRigDrag.clientX;
+    const dy = event.clientY - meshyRigDrag.clientY;
+    meshyRigDrag.clientX = event.clientX;
+    meshyRigDrag.clientY = event.clientY;
+    if (isMeshyRigHeadOrChinBone(meshyRigDrag.bone)) {
+      applyMeshyRigUpperBodyTwist(meshyRigDrag.handle, dx * 0.012);
+      applyMeshyRigTorsoBend(meshyRigDrag.handle, -dy * 0.012);
+    } else if (meshyRigBodyRegionForBone(meshyRigDrag.bone) === 'upper') {
+      applyMeshyRigTorsoSideBend(meshyRigDrag.handle, dx * 0.012);
+      applyMeshyRigTorsoBend(meshyRigDrag.handle, -dy * 0.012);
+    } else {
+      applyMeshyRigTorsoSideBend(meshyRigDrag.handle, dx * 0.012);
+    }
+    return true;
+  }
+
+  function stopMeshyRigBodyTwistDrag(event) {
+    if (!meshyRigBodyTwistDrag) return false;
+    if (event?.pointerId != null && meshyRigBodyTwistDrag.pointerId != null && event.pointerId !== meshyRigBodyTwistDrag.pointerId) return true;
+    if (meshyRigBodyTwistDrag.handle.userData.marker) {
+      meshyRigBodyTwistDrag.handle.userData.marker.material = meshyRigBodyTwistDrag.handle.userData.markerBaseMaterial;
+    }
+    try {
+      if (renderer?.domElement?.hasPointerCapture(meshyRigBodyTwistDrag.pointerId)) renderer.domElement.releasePointerCapture(meshyRigBodyTwistDrag.pointerId);
+    } catch(e) {}
+    meshyRigBodyTwistDrag = null;
+    dragSnapshotTaken = false;
+    orbitEnabled = true;
+    try { if (controls) { controls.enabled = true; controls.enableZoom = true; } } catch(e) {}
+    try { renderer.domElement.style.cursor = 'grab'; } catch(e) {}
+    return true;
+  }
+
+  function startMeshyRigTwistDrag(event, handle) {
+    const rig = handle?.userData?.meshyRig;
+    const bone = handle?.userData?.bone;
+    if (!rig || !bone) return false;
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    if (handle.userData.marker) handle.userData.marker.material = meshyRigSelectedJointMaterial;
+    meshyRigTwistDrag = {
+      handle,
+      pointerId: event.pointerId,
+      lastX: event.clientX,
+      lastY: event.clientY
+    };
+    try { renderer.domElement.setPointerCapture(event.pointerId); } catch(e) {}
+    try { renderer.domElement.style.cursor = 'ew-resize'; } catch(e) {}
+    return true;
+  }
+
+  function moveMeshyRigTwistDrag(event) {
+    if (!meshyRigTwistDrag) return false;
+    if (event.pointerId != null && meshyRigTwistDrag.pointerId != null && event.pointerId !== meshyRigTwistDrag.pointerId) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = event.clientX - meshyRigTwistDrag.lastX;
+    const dy = event.clientY - meshyRigTwistDrag.lastY;
+    meshyRigTwistDrag.lastX = event.clientX;
+    meshyRigTwistDrag.lastY = event.clientY;
+    const bone = meshyRigTwistDrag.handle?.userData?.bone;
+    const radians = isMeshyRigHipsBone(bone) ? dx * 0.012 : (dx - dy) * 0.012;
+    applyMeshyRigJointTwist(meshyRigTwistDrag.handle, radians);
+    return true;
+  }
+
+  function stopMeshyRigTwistDrag(event) {
+    if (!meshyRigTwistDrag) return false;
+    if (event?.pointerId != null && meshyRigTwistDrag.pointerId != null && event.pointerId !== meshyRigTwistDrag.pointerId) return true;
+    if (meshyRigTwistDrag.handle.userData.marker) {
+      meshyRigTwistDrag.handle.userData.marker.material = meshyRigTwistDrag.handle.userData.markerBaseMaterial;
+    }
+    try {
+      if (renderer?.domElement?.hasPointerCapture(meshyRigTwistDrag.pointerId)) renderer.domElement.releasePointerCapture(meshyRigTwistDrag.pointerId);
+    } catch(e) {}
+    meshyRigTwistDrag = null;
+    dragSnapshotTaken = false;
+    try { renderer.domElement.style.cursor = 'grab'; } catch(e) {}
+    return true;
+  }
+
+  function applyMeshyRigTwistFromPixels(handle, dx, dy = 0) {
+    const bone = handle?.userData?.bone;
+    const radians = isMeshyRigHipsBone(bone) ? dx * 0.012 : (dx - dy) * 0.012;
+    applyMeshyRigJointTwist(handle, radians);
+  }
+
+  function showMobileCrosshairForHandle(handle) {
+    if (!isMobileViewport() || !handle) return;
+    mobileCrosshair = {
+      ...mobileCrosshair,
+      visible: true,
+      active: false,
+      pointerId: null,
+      x: Math.round(Math.max(88, Math.min((typeof window !== 'undefined' ? window.innerWidth : 240) - 88, (typeof window !== 'undefined' ? window.innerWidth : 240) / 2))),
+      y: Math.round(Math.max(112, Math.min((typeof window !== 'undefined' ? window.innerHeight : 420) - 160, (typeof window !== 'undefined' ? window.innerHeight : 420) - 210))),
+      dx: 0,
+      dy: 0,
+      lastDx: 0,
+      lastDy: 0,
+      handle,
+      rig: handle.userData?.meshyRig || null,
+      mode: 'joint'
+    };
+  }
+
+  function showMobileCrosshairForRig(rig) {
+    if (!isMobileViewport() || !rig) return;
+    mobileCrosshair = {
+      ...mobileCrosshair,
+      visible: true,
+      active: false,
+      pointerId: null,
+      x: Math.round(Math.max(88, Math.min((typeof window !== 'undefined' ? window.innerWidth : 240) - 88, (typeof window !== 'undefined' ? window.innerWidth : 240) / 2))),
+      y: Math.round(Math.max(112, Math.min((typeof window !== 'undefined' ? window.innerHeight : 420) - 160, (typeof window !== 'undefined' ? window.innerHeight : 420) - 210))),
+      dx: 0,
+      dy: 0,
+      lastDx: 0,
+      lastDy: 0,
+      handle: null,
+      rig,
+      mode: 'figure'
+    };
+  }
+
+  function hideMobileCrosshair() {
+    mobileCrosshair = {
+      ...mobileCrosshair,
+      visible: false,
+      active: false,
+      pointerId: null,
+      dx: 0,
+      dy: 0,
+      lastDx: 0,
+      lastDy: 0,
+      handle: null,
+      rig: null,
+      mode: 'joint'
+    };
+  }
+
+  function startMobileCrosshair(event) {
+    if (!mobileCrosshair.visible || (!mobileCrosshair.handle && !mobileCrosshair.rig)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget?.getBoundingClientRect?.();
+    const centerX = rect ? rect.left + rect.width / 2 : mobileCrosshair.x;
+    const centerY = rect ? rect.top + rect.height / 2 : mobileCrosshair.y;
+    mobileCrosshair = {
+      ...mobileCrosshair,
+      active: true,
+      pointerId: event.pointerId,
+      x: centerX,
+      y: centerY,
+      dx: 0,
+      dy: 0,
+      lastDx: 0,
+      lastDy: 0
+    };
+  }
+
+  function moveMobileCrosshair(event) {
+    if (!mobileCrosshair.active || event.pointerId !== mobileCrosshair.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rawDx = event.clientX - mobileCrosshair.x;
+    const rawDy = event.clientY - mobileCrosshair.y;
+    const horizontal = Math.abs(rawDx) >= Math.abs(rawDy);
+    const nextDx = horizontal ? THREE.MathUtils.clamp(rawDx, -58, 58) : 0;
+    const nextDy = horizontal ? 0 : THREE.MathUtils.clamp(rawDy, -58, 58);
+    const stepX = nextDx - mobileCrosshair.lastDx;
+    const stepY = nextDy - mobileCrosshair.lastDy;
+    mobileCrosshair.dx = nextDx;
+    mobileCrosshair.dy = nextDy;
+    mobileCrosshair.lastDx = nextDx;
+    mobileCrosshair.lastDy = nextDy;
+    if (mobileCrosshair.mode === 'figure') {
+      if (Math.abs(stepX) > 0.1 || Math.abs(stepY) > 0.1) {
+        applyMobileCrosshairWholeFigureRotation(stepX, stepY);
+      }
+    } else {
+      if (Math.abs(stepX) > 0.1) applyMeshyRigTwistFromPixels(mobileCrosshair.handle, stepX, 0);
+      if (Math.abs(stepY) > 0.1) nudgeMobileCrosshairRigDepth(stepY > 0 ? 1 : -1);
+    }
+  }
+
+  function stopMobileCrosshair(event) {
+    if (!mobileCrosshair.active || event.pointerId !== mobileCrosshair.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    mobileCrosshair = {
+      ...mobileCrosshair,
+      active: false,
+      pointerId: null,
+      dx: 0,
+      dy: 0,
+      lastDx: 0,
+      lastDy: 0
+    };
+  }
+
+  function nudgeMobileCrosshairRigDepth(dir) {
+    const rig = mobileCrosshair.handle?.userData?.meshyRig;
+    if (!rig || !camera || !dir) return false;
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    const depthDirection = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const delta = depthDirection.multiplyScalar(-dir * 0.045);
+    rig.object.position.add(delta);
+    rig.object.updateMatrixWorld(true);
+    updateMeshyRigHandles(rig);
+    selectedMeshyRig = rig;
+    return true;
+  }
+
+  function applyMobileCrosshairWholeFigureRotation(dx, dy) {
+    const rig = mobileCrosshair.rig;
+    if (!rig?.object) return false;
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    const handle = rig.handles?.[0] || rig.jointHandles?.[0] || null;
+    if (handle) return applyMeshyRigWholeFigureRotation(handle, meshyRigGestureRadians(dx), meshyRigGestureRadians(-dy));
+    const hips = findMeshyRigBone(rig, 'Hips');
+    const pivot = new THREE.Vector3();
+    if (hips) hips.getWorldPosition(pivot);
+    else rig.object.getWorldPosition(pivot);
+    const rotateAroundPivot = (axis, radians) => {
+      if (!Number.isFinite(radians) || Math.abs(radians) <= 1e-6) return;
+      const q = new THREE.Quaternion().setFromAxisAngle(axis.clone().normalize(), radians);
+      rig.object.position.sub(pivot).applyQuaternion(q).add(pivot);
+      rig.object.quaternion.premultiply(q);
+      rig.object.updateMatrixWorld(true);
+    };
+    rotateAroundPivot(new THREE.Vector3(0, 1, 0), meshyRigGestureRadians(dx));
+    const rightAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(rig.object.quaternion).normalize();
+    rotateAroundPivot(rightAxis, meshyRigGestureRadians(-dy));
+    updateMeshyRigHandles(rig);
+    selectedMeshyRig = rig;
+    return true;
+  }
+
+  function solveMeshyRigBoneToTarget(rig, bone, targetWorld) {
+    if (isMeshyRigKneeBone(bone) && solveMeshyRigSingleJointToTarget(rig, bone, targetWorld)) return true;
+    if (isMeshyRigSpineBendControl(bone)) return false;
+    if (singleJointMode && solveMeshyRigSingleJointToTarget(rig, bone, targetWorld)) return true;
+    restoreMeshyRigBindOffsets(rig);
+    const chain = meshyRigIkChainForBone(bone);
+    if (!chain.length) return false;
+    const singleJointSnapshot = singleJointMode
+      ? snapshotMeshyRigBoneRotations(rig)
+      : null;
+    const singleJointAllowedBones = singleJointMode ? new Set(chain) : null;
+    const reachableTarget = clampMeshyRigTargetToReach(rig, bone, chain, targetWorld);
+    const endPos = new THREE.Vector3();
+    const jointPos = new THREE.Vector3();
+    const toEnd = new THREE.Vector3();
+    const toTarget = new THREE.Vector3();
+    const deltaWorld = new THREE.Quaternion();
+
+    for (let iteration = 0; iteration < 24; iteration += 1) {
+      bone.getWorldPosition(endPos);
+      if (endPos.distanceTo(reachableTarget) < 0.012) break;
+      for (const joint of chain) {
+        joint.getWorldPosition(jointPos);
+        bone.getWorldPosition(endPos);
+        toEnd.subVectors(endPos, jointPos);
+        toTarget.subVectors(reachableTarget, jointPos);
+        if (toEnd.lengthSq() < 1e-8 || toTarget.lengthSq() < 1e-8) continue;
+        toEnd.normalize();
+        toTarget.normalize();
+        deltaWorld.copy(stableMeshyRigDeltaFromUnitVectors(rig, toEnd, toTarget, joint));
+        const angle = 2 * Math.acos(THREE.MathUtils.clamp(deltaWorld.w, -1, 1));
+        const stepLimit = 0.26;
+        if (angle > stepLimit && angle > 1e-5) {
+          deltaWorld.slerpQuaternions(new THREE.Quaternion(), deltaWorld.normalize(), stepLimit / angle);
+        }
+        applyMeshyRigWorldRotationDelta(rig, joint, deltaWorld);
+      }
+    }
+    restoreMeshyRigBindOffsets(rig);
+    if (singleJointSnapshot) {
+      restoreMeshyRigBoneRotationsExcept(singleJointSnapshot, singleJointAllowedBones);
+      rig.object.updateMatrixWorld(true);
+    }
+    return true;
+  }
+
+  function setMeshyRigPointerFromEvent(event) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    meshyRigPointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    meshyRigPointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+  }
+
+  function pickMeshyRigJoint(event) {
+    const handles = meshyRigFigures.flatMap((rig) => rig.handles);
+    if (!handles.length) return null;
+    setMeshyRigPointerFromEvent(event);
+    meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
+    const hits = meshyRigRaycaster.intersectObjects(handles, false);
+    if (!hits.length) return null;
+    const firstDistance = hits[0].distance;
+    const visibleSpineHit = hits.find((hit) => {
+      const object = hit.object;
+      const marker = object?.userData?.marker;
+      return hit.distance <= firstDistance + 0.08
+        && marker?.visible
+        && isMeshyRigSpineBendControl(object?.userData?.bone);
+    });
+    return visibleSpineHit?.object || hits[0].object;
+  }
+
+  function meshyRigIconProxyHandle(iconPart) {
+    const rig = iconPart?.userData?.meshyRig;
+    const region = iconPart?.userData?.rotationIconRegion;
+    if (!rig || !region) return null;
+    const bone = region === 'lower'
+      ? findMeshyRigBone(rig, 'Hips')
+      : (
+        findMeshyRigBone(rig, 'Head') ||
+        findMeshyRigBone(rig, 'neck') ||
+        findMeshyRigBone(rig, 'Neck') ||
+        findMeshyRigBone(rig, 'Spine')
+      );
+    if (!bone) return null;
+    return {
+      userData: {
+        meshyRig: rig,
+        bone,
+        bodyRegion: region,
+        rotationIconPart: iconPart
+      }
+    };
+  }
+
+  function pickMeshyRigRotationIcon(event) {
+    const handles = meshyRigFigures.flatMap((rig) => rig.rotationIconHandles || []);
+    if (!handles.length) return null;
+    setMeshyRigPointerFromEvent(event);
+    meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
+    const hit = meshyRigRaycaster.intersectObjects(handles, false)[0]?.object || null;
+    return hit ? meshyRigIconProxyHandle(hit) : null;
+  }
+
+  function pickMeshyRigFigure(event) {
+    if (!meshyRigFigures.length) return null;
+    setMeshyRigPointerFromEvent(event);
+    meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
+    const targets = meshyRigFigures.flatMap((rig) =>
+      meshyRigMeshesForObject(rig.object).map((mesh) => {
+        mesh.userData.meshyRig = rig;
+        return mesh;
+      })
+    );
+    const hit = meshyRigRaycaster.intersectObjects(targets, true)[0];
+    const rig = hit?.object?.userData?.meshyRig;
+    return rig && hit ? { rig, hit } : null;
+  }
+
+  function startMeshyRigJointDrag(event, handle) {
+    const rig = handle.userData.meshyRig;
+    const bone = handle.userData.bone;
+    if (!rig || !bone) return false;
+    selectedMeshyRig = rig;
+    const world = handle.position.clone();
+    const normal = camera.getWorldDirection(new THREE.Vector3()).negate();
+    meshyRigDragPlane.setFromNormalAndCoplanarPoint(normal, world);
+    setMeshyRigPointerFromEvent(event);
+    meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
+    const offset = new THREE.Vector3();
+    if (meshyRigRaycaster.ray.intersectPlane(meshyRigDragPlane, meshyRigDragTarget)) {
+      offset.copy(world).sub(meshyRigDragTarget);
+    }
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    meshyRigDrag = {
+      rig,
+      handle,
+      bone,
+      offset,
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      lastTarget: world.clone(),
+      mode: isMeshyRigHipsBone(bone) ? 'pelvis-pitch' : (isMeshyRigSpineBendControl(bone) ? 'spine-bend' : 'target')
+    };
+    if (handle.userData.marker) handle.userData.marker.material = meshyRigSelectedJointMaterial;
+    orbitEnabled = false;
+    try { if (controls) { controls.enabled = false; controls.enableZoom = false; } } catch(e) {}
+    try { renderer.domElement.setPointerCapture(event.pointerId); } catch(e) {}
+    try { renderer.domElement.style.cursor = 'grabbing'; } catch(e) {}
+    return true;
+  }
+
+  function moveMeshyRigJointDrag(event) {
+    if (!meshyRigDrag) return false;
+    if (event.pointerId != null && meshyRigDrag.pointerId != null && event.pointerId !== meshyRigDrag.pointerId) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    if (meshyRigDrag.mode === 'spine-bend') {
+      const dx = event.clientX - meshyRigDrag.clientX;
+      const dy = event.clientY - meshyRigDrag.clientY;
+      meshyRigDrag.clientX = event.clientX;
+      meshyRigDrag.clientY = event.clientY;
+      applyMeshyRigTorsoSideBend(meshyRigDrag.handle, meshyRigSpineDragRadians(dx));
+      applyMeshyRigTorsoBend(meshyRigDrag.handle, meshyRigSpineDragRadians(-dy));
+      updateMeshyRigHandles(meshyRigDrag.rig);
+      return true;
+    }
+    if (meshyRigDrag.mode === 'pelvis-pitch') {
+      const dy = event.clientY - meshyRigDrag.clientY;
+      meshyRigDrag.clientX = event.clientX;
+      meshyRigDrag.clientY = event.clientY;
+      applyMeshyRigPelvisPitch(meshyRigDrag.handle, meshyRigGestureRadians(-dy));
+      updateMeshyRigHandles(meshyRigDrag.rig);
+      return true;
+    }
+    meshyRigDrag.clientX = event.clientX;
+    meshyRigDrag.clientY = event.clientY;
+    setMeshyRigPointerFromEvent(event);
+    meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
+    if (!meshyRigRaycaster.ray.intersectPlane(meshyRigDragPlane, meshyRigDragTarget)) return true;
+    const targetWorld = meshyRigDragTarget.clone().add(meshyRigDrag.offset);
+    solveMeshyRigBoneToTarget(meshyRigDrag.rig, meshyRigDrag.bone, targetWorld);
+    updateMeshyRigHandles(meshyRigDrag.rig);
+    return true;
+  }
+
+  function nudgeMeshyRigDragDepth(dir) {
+    if (!meshyRigDrag || dir === 0) return false;
+    if (meshyRigDrag.mode === 'spine-bend' || meshyRigDrag.mode === 'pelvis-pitch') return true;
+    meshyRigDragPlane.constant -= 0.045 * dir;
+    const replayEvent = {
+      clientX: meshyRigDrag.clientX,
+      clientY: meshyRigDrag.clientY,
+      pointerId: meshyRigDrag.pointerId,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+      stopImmediatePropagation: () => {}
+    };
+    return moveMeshyRigJointDrag(replayEvent);
+  }
+
+  const MESHY_DEPTH_NUDGE_MS = 16;
+  let meshyDepthNudgeDir = 0;
+  let meshyDepthNudgeTimer = null;
+  function nudgeActiveMeshyDepth(dir) {
+    if (meshyRigDrag) return nudgeMeshyRigDragDepth(dir);
+    if (meshyFigureDrag) {
+      return nudgeMeshyFigureAtPointerDepth({
+        clientX: meshyFigureDrag.clientX,
+        clientY: meshyFigureDrag.clientY,
+        pointerId: meshyFigureDrag.pointerId,
+        ctrlKey: true,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+        stopImmediatePropagation: () => {}
+      }, dir);
+    }
+    return false;
+  }
+  function startMeshyRigDepthNudge(dir) {
+    if ((!meshyRigDrag && !meshyFigureDrag) || dir === 0) return false;
+    meshyDepthNudgeDir = dir;
+    if (meshyDepthNudgeTimer) return true;
+    meshyDepthNudgeTimer = setInterval(() => {
+      if (!meshyRigDrag && !meshyFigureDrag) {
+        stopMeshyRigDepthNudge();
+        return;
+      }
+      nudgeActiveMeshyDepth(meshyDepthNudgeDir);
+    }, MESHY_DEPTH_NUDGE_MS);
+    return true;
+  }
+
+  function clearPendingMeshyRigPose() {
+    pendingMeshyRigPose = null;
+  }
+
+  function resetAllMeshyRigsToStanding() {
+    for (const rig of meshyRigFigures) {
+      resetMeshyRigToBindPose(rig);
+      updateMeshyRigHandles(rig);
+    }
+  }
+
+  function stopMeshyRigDepthNudge() {
+    meshyDepthNudgeDir = 0;
+    if (meshyDepthNudgeTimer) {
+      try { clearInterval(meshyDepthNudgeTimer); } catch(e) {}
+      meshyDepthNudgeTimer = null;
+    }
+  }
+
+  function startMeshyFigureDrag(event, rig, hit) {
+    if (!rig || !hit) return false;
+    selectedMeshyRig = rig;
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    const normal = camera.getWorldDirection(new THREE.Vector3()).negate();
+    meshyRigDragPlane.setFromNormalAndCoplanarPoint(normal, hit.point);
+    const offset = rig.object.position.clone().sub(hit.point);
+    meshyFigureDrag = {
+      rig,
+      offset,
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY
+    };
+    orbitEnabled = false;
+    try { if (controls) { controls.enabled = false; controls.enableZoom = false; } } catch(e) {}
+    try { renderer.domElement.setPointerCapture(event.pointerId); } catch(e) {}
+    try { renderer.domElement.style.cursor = 'grabbing'; } catch(e) {}
+    return true;
+  }
+
+  function moveMeshyFigureDrag(event) {
+    if (!meshyFigureDrag) return false;
+    if (event.pointerId != null && meshyFigureDrag.pointerId != null && event.pointerId !== meshyFigureDrag.pointerId) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    meshyFigureDrag.clientX = event.clientX;
+    meshyFigureDrag.clientY = event.clientY;
+    setMeshyRigPointerFromEvent(event);
+    meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
+    if (!meshyRigRaycaster.ray.intersectPlane(meshyRigDragPlane, meshyRigDragTarget)) return true;
+    meshyFigureDrag.rig.object.position.copy(meshyRigDragTarget).add(meshyFigureDrag.offset);
+    meshyFigureDrag.rig.object.updateMatrixWorld(true);
+    updateMeshyRigHandles(meshyFigureDrag.rig);
+    return true;
+  }
+
+  function stopMeshyFigureDrag(event) {
+    if (!meshyFigureDrag) return false;
+    if (event?.pointerId != null && meshyFigureDrag.pointerId != null && event.pointerId !== meshyFigureDrag.pointerId) return true;
+    try {
+      if (renderer?.domElement?.hasPointerCapture(meshyFigureDrag.pointerId)) renderer.domElement.releasePointerCapture(meshyFigureDrag.pointerId);
+    } catch(e) {}
+    meshyFigureDrag = null;
+    dragSnapshotTaken = false;
+    hideMobileCrosshair();
+    stopMeshyRigDepthNudge();
+    orbitEnabled = true;
+    try { if (controls) { controls.enabled = true; controls.enableZoom = true; } } catch(e) {}
+    try { renderer.domElement.style.cursor = 'grab'; } catch(e) {}
+    return true;
+  }
+
+  function reanchorMeshyRigJointDrag() {
+    if (!meshyRigDrag) return;
+    setMeshyRigPointerFromEvent({
+      clientX: meshyRigDrag.clientX,
+      clientY: meshyRigDrag.clientY
+    });
+    meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
+    if (!meshyRigRaycaster.ray.intersectPlane(meshyRigDragPlane, meshyRigDragTarget)) return;
+    const actual = new THREE.Vector3();
+    meshyRigDrag.bone.getWorldPosition(actual);
+    meshyRigDrag.offset.copy(actual).sub(meshyRigDragTarget);
+  }
+
+  function reanchorMeshyFigureDrag() {
+    if (!meshyFigureDrag) return;
+    setMeshyRigPointerFromEvent({
+      clientX: meshyFigureDrag.clientX,
+      clientY: meshyFigureDrag.clientY
+    });
+    meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
+    if (!meshyRigRaycaster.ray.intersectPlane(meshyRigDragPlane, meshyRigDragTarget)) return;
+    meshyFigureDrag.offset.copy(meshyFigureDrag.rig.object.position).sub(meshyRigDragTarget);
+  }
+
+  function nudgeMeshyFigureAtPointerDepth(event, dir) {
+    if (!dir) return false;
+    const picked = pickMeshyRigFigure(event);
+    const jointHandle = picked?.rig ? null : pickMeshyRigJoint(event);
+    const rig = meshyFigureDrag?.rig || meshyRigDrag?.rig || picked?.rig || jointHandle?.userData?.meshyRig;
+    if (!rig) return false;
+    if (!dragSnapshotTaken) {
+      pushUndoSnapshot();
+      dragSnapshotTaken = false;
+    }
+    setMeshyRigPointerFromEvent(event);
+    meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
+    const depthDirection = meshyRigRaycaster.ray.direction.clone().normalize();
+    const delta = depthDirection.multiplyScalar(-dir * 0.12);
+    rig.object.position.add(delta);
+    if (meshyFigureDrag?.rig === rig || meshyRigDrag?.rig === rig) {
+      meshyRigDragPlane.constant -= meshyRigDragPlane.normal.dot(delta);
+    }
+    rig.object.updateMatrixWorld(true);
+    updateMeshyRigHandles(rig);
+    if (meshyRigDrag?.rig === rig) reanchorMeshyRigJointDrag();
+    if (meshyFigureDrag?.rig === rig) reanchorMeshyFigureDrag();
+    return true;
+  }
+
+  function activeClickedMeshyRig() {
+    return meshyRigDrag?.rig || meshyFigureDrag?.rig || selectedMeshyRig || null;
+  }
+
+  function dropActiveMeshyRigToFloor() {
+    const rig = activeClickedMeshyRig();
+    if (!rig?.object) return false;
+    rig.object.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(rig.object);
+    if (!Number.isFinite(box.min.y)) return false;
+    const deltaY = (FLOOR_Y + 0.02) - box.min.y;
+    if (Math.abs(deltaY) < 1e-5) return true;
+    if (!dragSnapshotTaken) pushUndoSnapshot();
+    rig.object.position.y += deltaY;
+    rig.object.updateMatrixWorld(true);
+    updateMeshyRigHandles(rig);
+    if (meshyRigDrag?.rig === rig) reanchorMeshyRigJointDrag();
+    if (meshyFigureDrag?.rig === rig) reanchorMeshyFigureDrag();
+    return true;
+  }
+
+  function stopMeshyRigJointDrag(event) {
+    if (!meshyRigDrag) return false;
+    if (event?.pointerId != null && meshyRigDrag.pointerId != null && event.pointerId !== meshyRigDrag.pointerId) return true;
+    if (meshyRigDrag.handle.userData.marker) {
+      meshyRigDrag.handle.userData.marker.material = meshyRigDrag.handle.userData.markerBaseMaterial;
+    }
+    try {
+      if (renderer?.domElement?.hasPointerCapture(meshyRigDrag.pointerId)) renderer.domElement.releasePointerCapture(meshyRigDrag.pointerId);
+    } catch(e) {}
+    meshyRigDrag = null;
+    meshyRigShiftRightModifierActive = false;
+    dragSnapshotTaken = false;
+    hideMobileCrosshair();
+    stopMeshyRigDepthNudge();
+    orbitEnabled = true;
+    try { if (controls) { controls.enabled = true; controls.enableZoom = true; } } catch(e) {}
+    try { renderer.domElement.style.cursor = 'grab'; } catch(e) {}
+    return true;
+  }
+
+  function handleMeshyRigPointerDown(event) {
+    if (!renderer || !camera || !meshyRigFigures.length) return;
+    const isMobilePointer = event.pointerType === 'touch' || (isMobileViewport() && event.pointerType !== 'mouse');
+    if (isMobilePointer && event.button !== 2 && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      const figureHit = pickMeshyRigFigure(event);
+      const jointHandle = figureHit ? null : pickMeshyRigJoint(event);
+      const tapRig = figureHit?.rig || jointHandle?.userData?.meshyRig || null;
+      const now = Date.now();
+      const isDoubleTap = !!tapRig
+        && lastMobileFigureTap.rig === tapRig
+        && now - lastMobileFigureTap.time < 360
+        && Math.hypot(event.clientX - lastMobileFigureTap.x, event.clientY - lastMobileFigureTap.y) < 34;
+      lastMobileFigureTap = { rig: tapRig, time: now, x: event.clientX, y: event.clientY };
+      if (isDoubleTap) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        const hit = figureHit?.hit || { point: jointHandle?.position?.clone?.() || tapRig.object.position.clone() };
+        hideMobileCrosshair();
+        startMeshyFigureDrag(event, tapRig, hit);
+        showMobileCrosshairForRig(tapRig);
+        return;
+      }
+    }
+    if (meshyRigDrag && event.button === 2) {
+      if (event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        meshyRigShiftRightModifierActive = true;
+        meshyRigDrag.clientX = event.clientX;
+        meshyRigDrag.clientY = event.clientY;
+      }
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
+      const handle = pickMeshyRigJoint(event);
+      if (handle) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        startMeshyRigBodyTwistDrag(event, handle, 'whole');
+      }
+      return;
+    }
+    if (event.ctrlKey || event.metaKey) {
+      const figureHit = pickMeshyRigFigure(event);
+      const jointHandle = figureHit ? null : pickMeshyRigJoint(event);
+      const jointRig = jointHandle?.userData?.meshyRig;
+      if (figureHit) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        startMeshyFigureDrag(event, figureHit.rig, figureHit.hit);
+      } else if (jointRig) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        startMeshyFigureDrag(event, jointRig, { point: jointHandle.position.clone() });
+      }
+      return;
+    }
+    const handle = pickMeshyRigJoint(event);
+    if (!handle) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    if (event.button === 2) {
+      startMeshyRigTwistDrag(event, handle);
+      return;
+    }
+    startMeshyRigJointDrag(event, handle);
+    if (isMobilePointer) showMobileCrosshairForHandle(handle);
+  }
+
+  function handleMeshyRigPointerMove(event) {
+    if (meshyRigBodyTwistDrag) {
+      moveMeshyRigBodyTwistDrag(event);
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    if (meshyRigTwistDrag) {
+      moveMeshyRigTwistDrag(event);
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    if (meshyFigureDrag) {
+      moveMeshyFigureDrag(event);
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    if (!meshyRigDrag) return;
+    meshyRigShiftRightModifierActive = false;
+    moveMeshyRigJointDrag(event);
+    event.stopImmediatePropagation?.();
+  }
+
+  function handleMeshyRigPointerUp(event) {
+    if (meshyRigBodyTwistDrag) {
+      stopMeshyRigBodyTwistDrag(event);
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    if (meshyRigTwistDrag) {
+      stopMeshyRigTwistDrag(event);
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    if (meshyFigureDrag) {
+      stopMeshyFigureDrag(event);
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    if (!meshyRigDrag) return;
+    if (event.button === 0 && meshyRigShiftRightModifierActive) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    if (event.button === 2 && meshyRigShiftRightModifierActive) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      meshyRigShiftRightModifierActive = false;
+      if (event.buttons === 0) stopMeshyRigJointDrag(event);
+      return;
+    }
+    stopMeshyRigJointDrag(event);
+    event.stopImmediatePropagation?.();
+  }
+
+  function handleMeshyRigMouseButtonModifier(event) {
+    if (!meshyRigDrag || event.button !== 2) return;
+    if (event.type === 'mousedown' && event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      meshyRigShiftRightModifierActive = true;
+      meshyRigDrag.clientX = event.clientX;
+      meshyRigDrag.clientY = event.clientY;
+      return;
+    }
+    if (event.type === 'mouseup') {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      meshyRigShiftRightModifierActive = false;
+      if (event.buttons === 0) stopMeshyRigJointDrag(event);
+    }
+  }
+
+  function handleMeshyRigContextMenuModifier(event) {
+    if (!meshyRigDrag) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    if (event.shiftKey) {
+      meshyRigShiftRightModifierActive = true;
+      meshyRigDrag.clientX = event.clientX;
+      meshyRigDrag.clientY = event.clientY;
+    }
+  }
+
+  function handleMeshyRigMouseMoveModifier(event) {
+    if (!meshyRigDrag) return;
+    if (event.shiftKey && (meshyRigShiftRightModifierActive || (event.buttons & 2))) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      meshyRigShiftRightModifierActive = true;
+      moveMeshyRigShiftRightModifierDrag(event);
+    }
+  }
+
+  async function addMeshyFightlabFigures() {
+    if (!scene || meshyFigureA || meshyFigureB) return;
+    try {
+      const loader = new GLTFLoader();
+      const gltf = await loader.loadAsync(MESHY_FIGURE_URL);
+      let textureMaterial = null;
+      try {
+        const textured = await loader.loadAsync(MESHY_TEXTURE_URL);
+        textureMaterial = extractMeshyTextureMaterial(textured.scene);
+      } catch (textureError) {
+        console.warn('Could not load Meshy texture material, using fallback color', textureError);
+      }
+      meshyFigureTemplate = gltf.scene;
+
+      meshyFigureA = cloneSkeleton(meshyFigureTemplate);
+      meshyFigureB = cloneSkeleton(meshyFigureTemplate);
+      prepareMeshyFightlabFigure(meshyFigureA, TORSO_NORMAL_COLOR_A, textureMaterial);
+      prepareMeshyFightlabFigure(meshyFigureB, TORSO_NORMAL_COLOR_B, textureMaterial);
+      meshyFigureA.userData.isMeshyFightlabFigure = true;
+      meshyFigureB.userData.isMeshyFightlabFigure = true;
+      meshyFigureA.userData.meshyFacingYaw = Math.PI / 2;
+      meshyFigureB.userData.meshyFacingYaw = -Math.PI / 2;
+      scene.add(meshyFigureA);
+      scene.add(meshyFigureB);
+      updateMeshyFightlabFigureFromJoints(meshyFigureA, jointsA);
+      updateMeshyFightlabFigureFromJoints(meshyFigureB, jointsB);
+      setClassicFightlabBodyVisible(false);
+      createMeshyRigFigure(meshyFigureA, 'A');
+      createMeshyRigFigure(meshyFigureB, 'B');
+      clearPendingMeshyRigPose();
+      if (startPosition === 'neutral') placeAllMeshyRigsNeutralStanding();
+      else syncMeshyRigsFromCurrentJoints();
+      updateAllMeshyRigHandles();
+    } catch (error) {
+      console.error('Could not load Meshy FightLab figures', error);
+    }
+  }
 
   // align cylinder from start to end (use quaternion from Y axis)
   function alignCylinder(mesh, start, end) {
@@ -2642,37 +4886,6 @@ function isLocked(person, key){
     }
     // Apply any additional manual Euler rotation for the torso (when enabled)
     applyManualTorsoRotationIfAny(torsoMesh);
-  }
-
-  function enforceTorsoFreezeForSkeleton(skel, ref){
-    if (!torsoFreeze || !skel || !ref) return false;
-    let changed = false;
-    // Keep torso center fixed
-    if (skel.rootPos.distanceTo(ref.rootPos) > 1e-6){
-      skel.rootPos.copy(ref.rootPos);
-      changed = true;
-    }
-    // Disallow bending at the hip: lock spine local rotation
-    if (!skel.angleRot[IDX.spine].equals(ref.spineLocal)){
-      skel.angleRot[IDX.spine].copy(ref.spineLocal);
-      changed = true;
-    }
-    // Lock shoulders and head/neck local rotations
-    try{
-      if (ref.shoulderL && !skel.angleRot[IDX.shoulderL].equals(ref.shoulderL)) { skel.angleRot[IDX.shoulderL].copy(ref.shoulderL); changed = true; }
-      if (ref.shoulderR && !skel.angleRot[IDX.shoulderR].equals(ref.shoulderR)) { skel.angleRot[IDX.shoulderR].copy(ref.shoulderR); changed = true; }
-      if (ref.neck && !skel.angleRot[IDX.neck].equals(ref.neck)) { skel.angleRot[IDX.neck].copy(ref.neck); changed = true; }
-      if (ref.head && !skel.angleRot[IDX.head].equals(ref.head)) { skel.angleRot[IDX.head].copy(ref.head); changed = true; }
-    }catch(e){}
-    if (changed) computeFK(skel);
-    return changed;
-  }
-
-  function enforceTorsoFreeze(){
-    let changed = false;
-    try { changed = enforceTorsoFreezeForSkeleton(skeletonA, torsoFreezeRefA) || changed; } catch(e){}
-    try { changed = enforceTorsoFreezeForSkeleton(skeletonB, torsoFreezeRefB) || changed; } catch(e){}
-    return changed;
   }
 
   function enforceDragRootFreeze(){
@@ -2792,50 +5005,13 @@ function isLocked(person, key){
   function updateTorsoColors(){
     try{
       const scheme = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
-      const lockCol = scheme.lock ?? TORSO_FREEZE_COLOR;
-      const colA = torsoFreeze ? lockCol : scheme.A;
-      const colB = torsoFreeze ? lockCol : scheme.B;
-      if (chestA) chestA.material.color.setHex(colA);
-      if (chestB) chestB.material.color.setHex(colB);
+      if (chestA) chestA.material.color.setHex(scheme.A);
+      if (chestB) chestB.material.color.setHex(scheme.B);
     }catch(e){}
-  }
-
-  function captureTorsoFreezeRefs(){
-    try{
-      if (skeletonA){
-        computeFK(skeletonA);
-        torsoFreezeRefA = {
-          rootPos: skeletonA.rootPos.clone(),
-          spineLocal: skeletonA.angleRot[IDX.spine].clone(),
-          shoulderL: skeletonA.angleRot[IDX.shoulderL].clone(),
-          shoulderR: skeletonA.angleRot[IDX.shoulderR].clone(),
-          neck: skeletonA.angleRot[IDX.neck].clone(),
-          head: skeletonA.angleRot[IDX.head].clone()
-        };
-      }
-      if (skeletonB){
-        computeFK(skeletonB);
-        torsoFreezeRefB = {
-          rootPos: skeletonB.rootPos.clone(),
-          spineLocal: skeletonB.angleRot[IDX.spine].clone(),
-          shoulderL: skeletonB.angleRot[IDX.shoulderL].clone(),
-          shoulderR: skeletonB.angleRot[IDX.shoulderR].clone(),
-          neck: skeletonB.angleRot[IDX.neck].clone(),
-          head: skeletonB.angleRot[IDX.head].clone()
-        };
-      }
-    }catch(e){}
-  }
-
-  function toggleTorsoFreeze(){
-    torsoFreeze = !torsoFreeze;
-    if (torsoFreeze){ captureTorsoFreezeRefs(); }
-    updateTorsoColors();
-    try{ if (enforceTorsoFreeze()) updateMeshesFromJoints(); }catch(e){}
   }
 
   function updateBodyExtras(parts, joints, dims){
-    const { torso, pelvis, spine, chest, shoulderBar, handLBox, handRBox, footLBox, footRBox, upperHandle, toeLJoint, toeRJoint, person } = parts;
+    const { torso, pelvis, spine, chest, handLBox, handRBox, footLBox, footRBox, upperHandle, toeLJoint, toeRJoint, person } = parts;
     const pelvisDraggingThisFigure = bridgeDrag.active && bridgeDrag.person === person;
     // Update invisible torso anchor (for limits/clamping elsewhere)
     updateTorsoFromJoints(torso, joints, dims);
@@ -2896,7 +5072,6 @@ function isLocked(person, key){
     chest.setRotationFromMatrix(torsoBasis);
 
     // ---- Shoulder bar (kept slim, aligns to shoulders)
-    alignCylinder(shoulderBar, sL, sR);
 
     // ---- Upper-body control handle: floats above shoulder center along torso up
     if (upperHandle){
@@ -3125,9 +5300,10 @@ function isLocked(person, key){
     boneMeshesB.forEach(b => { const s=new THREE.Vector3(...jointsB[b.a]); const e=new THREE.Vector3(...jointsB[b.b]); alignCylinder(b.mesh, s, e); });
     // body parts
     updateTorsoFromJoints(torsoA, jointsA, skeletonA?.dims ?? {torsoWidth:0.5, torsoHeight:0.6, torsoDepth:0.28});
-    updateBodyExtras({torso:torsoA, pelvis:pelvisA, spine:spineA, chest:chestA, shoulderBar:shoulderBarA, handLBox:handBoxesA.L, handRBox:handBoxesA.R, footLBox:footBoxesA.L, footRBox:footBoxesA.R, upperHandle: upperHandleA, toeLJoint: toeJointsA.L, toeRJoint: toeJointsA.R, person: 'A'}, jointsA, skeletonA?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    updateBodyExtras({torso:torsoA, pelvis:pelvisA, spine:spineA, chest:chestA, handLBox:handBoxesA.L, handRBox:handBoxesA.R, footLBox:footBoxesA.L, footRBox:footBoxesA.R, upperHandle: upperHandleA, toeLJoint: toeJointsA.L, toeRJoint: toeJointsA.R, person: 'A'}, jointsA, skeletonA?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
     updateTorsoFromJoints(torsoB, jointsB, skeletonB?.dims ?? {torsoWidth:0.5, torsoHeight:0.6, torsoDepth:0.28});
-    updateBodyExtras({torso:torsoB, pelvis:pelvisB, spine:spineB, chest:chestB, shoulderBar:shoulderBarB, handLBox:handBoxesB.L, handRBox:handBoxesB.R, footLBox:footBoxesB.L, footRBox:footBoxesB.R, upperHandle: upperHandleB, toeLJoint: toeJointsB.L, toeRJoint: toeJointsB.R, person: 'B'}, jointsB, skeletonB?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    updateBodyExtras({torso:torsoB, pelvis:pelvisB, spine:spineB, chest:chestB, handLBox:handBoxesB.L, handRBox:handBoxesB.R, footLBox:footBoxesB.L, footRBox:footBoxesB.R, upperHandle: upperHandleB, toeLJoint: toeJointsB.L, toeRJoint: toeJointsB.R, person: 'B'}, jointsB, skeletonB?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    if (meshyFigureA || meshyFigureB) setClassicFightlabBodyVisible(false);
 
   }
 
@@ -3141,9 +5317,10 @@ function isLocked(person, key){
     boneMeshesB.forEach(b => { const s=new THREE.Vector3(...jointsB[b.a]); const e=new THREE.Vector3(...jointsB[b.b]); alignCylinder(b.mesh, s, e); });
     // body parts
     updateTorsoFromJoints(torsoA, jointsA, skeletonA?.dims ?? {torsoWidth:0.5, torsoHeight:0.6, torsoDepth:0.28});
-    updateBodyExtras({torso:torsoA, pelvis:pelvisA, spine:spineA, chest:chestA, shoulderBar:shoulderBarA, handLBox:handBoxesA.L, handRBox:handBoxesA.R, footLBox:footBoxesA.L, footRBox:footBoxesA.R, upperHandle: upperHandleA, toeLJoint: toeJointsA.L, toeRJoint: toeJointsA.R, person: 'A'}, jointsA, skeletonA?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    updateBodyExtras({torso:torsoA, pelvis:pelvisA, spine:spineA, chest:chestA, handLBox:handBoxesA.L, handRBox:handBoxesA.R, footLBox:footBoxesA.L, footRBox:footBoxesA.R, upperHandle: upperHandleA, toeLJoint: toeJointsA.L, toeRJoint: toeJointsA.R, person: 'A'}, jointsA, skeletonA?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
     updateTorsoFromJoints(torsoB, jointsB, skeletonB?.dims ?? {torsoWidth:0.5, torsoHeight:0.6, torsoDepth:0.28});
-    updateBodyExtras({torso:torsoB, pelvis:pelvisB, spine:spineB, chest:chestB, shoulderBar:shoulderBarB, handLBox:handBoxesB.L, handRBox:handBoxesB.R, footLBox:footBoxesB.L, footRBox:footBoxesB.R, upperHandle: upperHandleB, toeLJoint: toeJointsB.L, toeRJoint: toeJointsB.R, person: 'B'}, jointsB, skeletonB?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    updateBodyExtras({torso:torsoB, pelvis:pelvisB, spine:spineB, chest:chestB, handLBox:handBoxesB.L, handRBox:handBoxesB.R, footLBox:footBoxesB.L, footRBox:footBoxesB.R, upperHandle: upperHandleB, toeLJoint: toeJointsB.L, toeRJoint: toeJointsB.R, person: 'B'}, jointsB, skeletonB?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    if (meshyFigureA || meshyFigureB) setClassicFightlabBodyVisible(false);
   }
 
   // Compute base radius for a given joint key
@@ -4095,14 +6272,17 @@ function clampToDragLengths(person, jointKey, target){
       const scheme0 = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
       const dA = createDummy(jointsA, scheme0.A, 'A');
       const dB = createDummy(jointsB, scheme0.B, 'B');
-      scene.add(dA.group); scene.add(dB.group);
+      dA.group.visible = false;
+      dB.group.visible = false;
+      // Keep the classic dummy objects as off-scene helpers for legacy pose math,
+      // but never render them. This prevents the old figures flashing while Meshy loads.
       figureGroupA = dA.group; figureGroupB = dB.group;
       jointMeshesA = dA.jointSpheres; boneMeshesA = dA.boneList;
-      torsoA = dA.torso; pelvisA = dA.pelvis; spineA = dA.spine; chestA = dA.chest; shoulderBarA = dA.shoulderBar;
+      torsoA = dA.torso; pelvisA = dA.pelvis; spineA = dA.spine; chestA = dA.chest;
       handBoxesA = { L: dA.handLBox, R: dA.handRBox }; footBoxesA = { L: dA.footLBox, R: dA.footRBox };
       toeJointsA = { L: dA.toeLJoint, R: dA.toeRJoint };
       jointMeshesB = dB.jointSpheres; boneMeshesB = dB.boneList;
-      torsoB = dB.torso; pelvisB = dB.pelvis; spineB = dB.spine; chestB = dB.chest; shoulderBarB = dB.shoulderBar;
+      torsoB = dB.torso; pelvisB = dB.pelvis; spineB = dB.spine; chestB = dB.chest;
       handBoxesB = { L: dB.handLBox, R: dB.handRBox }; footBoxesB = { L: dB.footLBox, R: dB.footRBox };
       toeJointsB = { L: dB.toeLJoint, R: dB.toeRJoint };
       if (handBoxesA?.L){ handBoxesA.L.userData.person = 'A'; handBoxesA.R.userData.person = 'A'; }
@@ -4122,6 +6302,7 @@ function clampToDragLengths(person, jointKey, target){
       // Make the head handle icon smaller via scale
       if (upperHandleA){ setHandleVisual(upperHandleA, ROT_GREEN, ROT_EMISS, 0.75); upperHandleA.userData.defaultColor = ROT_GREEN; upperHandleA.userData.person='A'; }
       if (upperHandleB){ setHandleVisual(upperHandleB, ROT_GREEN, ROT_EMISS, 0.75); upperHandleB.userData.defaultColor = ROT_GREEN; upperHandleB.userData.person='B'; }
+      addMeshyFightlabFigures();
 
       // Ensure torso colors and body colors reflect current mode/lock state
       applyColorblindScheme();
@@ -4151,11 +6332,41 @@ function clampToDragLengths(person, jointKey, target){
         }
       }catch(e){}
       // Intercept wheel for ortho zoom when in 4-view
-      renderer.domElement.addEventListener('wheel', wheelHandler, { passive: false });
+      renderer.domElement.addEventListener('wheel', wheelHandler, { passive: false, capture: true });
+      const meshyWheelCapture = (e)=>{
+        const dir = Math.sign(e.deltaY || 0);
+        if (!dir) return;
+        if (meshyRigDrag || e.ctrlKey || e.metaKey) wheelHandler(e);
+      };
+      window.addEventListener('wheel', meshyWheelCapture, { passive: false, capture: true });
       // Key listeners
+      const meshyDepthKeyCapture = (e)=>{
+        if (!meshyRigDrag && !meshyFigureDrag) return;
+        if (e.code === 'Space' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation?.();
+          startMeshyRigDepthNudge(-1);
+          return;
+        }
+        if (e.code === 'KeyC' || e.key === 'c' || e.key === 'C') {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation?.();
+          startMeshyRigDepthNudge(1);
+        }
+      };
       const kd = (e)=>{
         // Ignore single-key shortcuts while typing in inputs (allow Ctrl/Cmd combos)
         if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+          if (dropActiveMeshyRigToFloor()) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation?.();
+          }
+          return;
+        }
         if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undoLastFigureMove(); return; }
         if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); try{ saveCurrentFrame(); }catch(_){} return; }
         if (e.key === 'Escape') {
@@ -4165,24 +6376,37 @@ function clampToDragLengths(person, jointKey, target){
         if (e.key === 'ArrowRight') { e.preventDefault(); nextFrame(); return; }
         if (e.key === 'ArrowLeft') { e.preventDefault(); prevFrame(); return; }
         if (e.key === 'Control') { armRotateSyncOnCtrlTap(e); return; }
+        if ((meshyRigDrag || meshyFigureDrag) && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); nudgeActiveMeshyDepth(-1); return; }
+        if ((meshyRigDrag || meshyFigureDrag) && (e.key === 'c' || e.key === 'C' || e.code === 'KeyC')) { e.preventDefault(); nudgeActiveMeshyDepth(1); return; }
         if (dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); startDepthNudge(-1); return; }
         if (!dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); togglePlayback(); return; }
-        if (dragging && (e.key === 'f' || e.key === 'F' || e.code === 'KeyF')) { e.preventDefault(); startDepthNudge(1); return; }
+        if (dragging && (e.key === 'c' || e.key === 'C' || e.code === 'KeyC')) { e.preventDefault(); startDepthNudge(1); return; }
         if (e.key === 'h' || e.key === 'H') { e.preventDefault(); toggleUI(); return; }
-        if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); toggleTorsoFreeze(); return; }
         if (e.key === 'e' || e.key === 'E') { e.preventDefault(); toggleSingleJointMode(); return; }
         handleWASDKeyDown(e);
       };
       const ku = (e)=>{
         if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
-        if (e.code === 'Space' || e.key === ' ' || e.key === 'f' || e.key === 'F' || e.code === 'KeyF') { stopDepthNudge(); }
+        if (e.code === 'Space' || e.key === ' ' || e.key === 'c' || e.key === 'C' || e.code === 'KeyC') { stopMeshyRigDepthNudge(); }
+        if (e.code === 'Space' || e.key === ' ' || e.key === 'c' || e.key === 'C' || e.code === 'KeyC') { stopDepthNudge(); }
         handleWASDKeyUp(e);
       };
+      const stopAllDepthNudges = () => {
+        stopMeshyRigDepthNudge();
+        stopDepthNudge();
+      };
+      window.addEventListener('keydown', meshyDepthKeyCapture, true);
       window.addEventListener('keydown', kd);
       window.addEventListener('keyup', ku);
+      window.addEventListener('blur', stopAllDepthNudges);
       const handleGlobalPointer = (e)=>{
         const t = e.target;
-        if (showSavedPlaybacksMenu && !clickInside(t, playbacksMenuEl, playbacksToggleEl)) showSavedPlaybacksMenu = false;
+        if (showSequenceMenu && !clickInside(t, sequenceMenuEl, playbacksMenuEl, sequenceToggleEl, playbacksToggleEl)) {
+          showSequenceMenu = false;
+          showSavedPlaybacksMenu = false;
+        } else if (showSavedPlaybacksMenu && !clickInside(t, playbacksMenuEl, playbacksToggleEl, sequenceMenuEl, sequenceToggleEl)) {
+          showSavedPlaybacksMenu = false;
+        }
         if (showSavedPresetsMenu && !clickInside(t, presetsMenuEl, presetsToggleEl)) showSavedPresetsMenu = false;
         if (showAccountMenu && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllMenus();
         if ((showAccountAuth || showAccountSettings || showAccountShortcuts) && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllSettingTabs();
@@ -4191,8 +6415,11 @@ function clampToDragLengths(person, jointKey, target){
       // Pointer lock disabled to keep OS cursor visible while dragging
       onDestroy(()=>{
         window.removeEventListener('resize', onResize);
+        window.removeEventListener('keydown', meshyDepthKeyCapture, true);
         window.removeEventListener('keydown', kd);
         window.removeEventListener('keyup', ku);
+        window.removeEventListener('blur', stopAllDepthNudges);
+        window.removeEventListener('wheel', meshyWheelCapture, true);
         window.removeEventListener('pointerdown', handleGlobalPointer, true);
         try{ window.visualViewport?.removeEventListener('resize', onResize); }catch(e){}
         try{ toolbarResizeObserver?.disconnect(); }catch(e){}
@@ -4273,8 +6500,6 @@ function clampToDragLengths(person, jointKey, target){
     let snapped = bypassPresetConstraints ? false : updateSnaps();
     const wasdActive = (moveKeys.w || moveKeys.a || moveKeys.s || moveKeys.d);
     const ikChanged = false;
-    // enforce torso freeze early (prevents torso translation/hip bending during drag/IK)
-    const freezeChanged = bypassPresetConstraints ? false : enforceTorsoFreeze();
     // While dragging a joint, hold roots fixed to avoid creeping from collision correction elsewhere
     const dragRootChanged = bypassPresetConstraints ? false : enforceDragRootFreeze();
     // While dragging, update drag target against current camera so WASD works concurrently,
@@ -4287,6 +6512,7 @@ function clampToDragLengths(person, jointKey, target){
     if (dragging && !wasdActive && lastWASDActive){
       try { reanchorDragOffset(); } catch(e){}
     }
+    try { updateAllMeshyRigHandles(); } catch(e){}
     if (!(dragging && wasdActive)){
       // Keep scene/root from drifting while lower-body handle rotation is active
       if (!lowerHandleDrag.active){
@@ -4303,9 +6529,7 @@ function clampToDragLengths(person, jointKey, target){
       // Enforce world-locked joints last
       try { changedLock = enforceLockedJoints(); } catch(e){}
     }
-    // enforce freeze again after other constraints so it wins
-    const freezeChanged2 = bypassPresetConstraints ? false : (enforceTorsoFreeze() || freezeChanged || dragRootChanged);
-    if (snapped || ikChanged || changedLimits || changedCollide || changedLock || freezeChanged2) {
+    if (snapped || ikChanged || changedLimits || changedCollide || changedLock || dragRootChanged) {
       try { updateMeshesFromJoints(); } catch(e){}
     }
     // update highlight visuals
@@ -4475,8 +6699,8 @@ function clampToDragLengths(person, jointKey, target){
         const selMeshes = sel==='A' ? jointMeshesA : jointMeshesB;
         const minY = Math.min(...selMeshes.map(m=> m.position.y));
         if (delta.y < 0){ const minAllowedDy = (FLOOR_Y + 0.02) - minY; if (delta.y < minAllowedDy) delta.y = minAllowedDy; }
-        if (sel==='A') { skeletonA.rootPos.add(delta); if (torsoFreeze && torsoFreezeRefA) torsoFreezeRefA.rootPos.add(delta); groundSkeleton(skeletonA); jointsA = jointsFromSkeleton(skeletonA); }
-        else { skeletonB.rootPos.add(delta); if (torsoFreeze && torsoFreezeRefB) torsoFreezeRefB.rootPos.add(delta); groundSkeleton(skeletonB); jointsB = jointsFromSkeleton(skeletonB); }
+        if (sel==='A') { skeletonA.rootPos.add(delta); groundSkeleton(skeletonA); jointsA = jointsFromSkeleton(skeletonA); }
+        else { skeletonB.rootPos.add(delta); groundSkeleton(skeletonB); jointsB = jointsFromSkeleton(skeletonB); }
         updateMeshesFromJoints();
       } else if (bridgeDrag.active && dragging && !shiftDragging && !ctrlDragging) {
         const person = bridgeDrag.person || activePerson;
@@ -4626,8 +6850,9 @@ function clampToDragLengths(person, jointKey, target){
     // Reset editing state and force reapply even if selecting the same preset twice
     editingPresetIdx = -1; editingPresetName = "";
     editingPlaybackIdx = -1; editingPlaybackName = "";
-    // If this pose was imported from JSON, apply it directly
-    if (importedPoses[poseKey]){
+    // If this pose was imported from JSON, apply it directly.
+    // Neutral is Meshy-specific now and must always reset to the clean standing bind pose.
+    if (poseKey !== 'neutral' && importedPoses[poseKey]){
       applyImportedPose(poseKey);
       return;
     }
@@ -4650,8 +6875,12 @@ function clampToDragLengths(person, jointKey, target){
     groundSkeleton(skeletonA);
     groundSkeleton(skeletonB);
     refreshHeadPreferencesFromCurrentSkeletons();
-    if (torsoFreeze) captureTorsoFreezeRefs();
     updateMeshesFromJoints();
+    if (poseKey === 'neutral') {
+      clearPendingMeshyRigPose();
+      placeAllMeshyRigsNeutralStanding();
+    }
+    else syncMeshyRigsFromCurrentJoints();
     // refresh GUI state to reflect new pose
     refreshGuiFromSkeletons();
   }
@@ -4847,6 +7076,8 @@ function clampToDragLengths(person, jointKey, target){
     groundSkeleton(skeletonA);
     groundSkeleton(skeletonB);
     updateMeshesFromJoints();
+    if (startPosition === 'neutral') placeAllMeshyRigsNeutralStanding();
+    else syncMeshyRigsFromCurrentJoints();
     refreshGuiFromSkeletons();
   }
 
@@ -4873,7 +7104,8 @@ function clampToDragLengths(person, jointKey, target){
       toeOffsets: {
         A: { L: vecToArr(toeOffsets.A?.L), R: vecToArr(toeOffsets.A?.R) },
         B: { L: vecToArr(toeOffsets.B?.L), R: vecToArr(toeOffsets.B?.R) }
-      }
+      },
+      meshyRig: serializeMeshyRigPose()
     };
   }
 
@@ -4913,6 +7145,15 @@ function clampToDragLengths(person, jointKey, target){
     stopPlayback();
     commitLivePoseToCurrentFrame();
     applyFrame(nextIdx);
+  }
+  function updatePlaybackEditFrameText(value){
+    if (editingPlaybackIdx < 0 || !poses || !poses[currentFrame]) return;
+    const text = String(value ?? '');
+    poses[currentFrame] = { ...poses[currentFrame], comment: text };
+    if (commentVisible || showFrameComments) {
+      commentText = text.trim();
+      commentVisible = commentText.length > 0;
+    }
   }
   function restartPlaybackTimer(){
     if (!playing) return;
@@ -4960,17 +7201,35 @@ function clampToDragLengths(person, jointKey, target){
   const closeAllMenus = ()=>{
     showSavedPlaybacksMenu = false;
     showSavedPresetsMenu = false;
+    showSequenceMenu = false;
     showAccountMenu = false;
     closeAllSettingTabs();
   };
   function toggleSavedPlaybacksMenu(){
     const next = !showSavedPlaybacksMenu;
     showSavedPlaybacksMenu = next;
+    if (next) showSequenceMenu = true;
     showSavedPresetsMenu = false;
     if (next){
       playbackFolderView = null;
       playbacksMenuVersion += 1;
     }
+  }
+  function openSavedSequencesMenu(event){
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    showSequenceMenu = true;
+    showSavedPlaybacksMenu = true;
+    showSavedPresetsMenu = false;
+    playbackFolderView = null;
+    playbacksMenuVersion += 1;
+  }
+  function toggleSequenceMenu(){
+    const next = !showSequenceMenu;
+    showSequenceMenu = next;
+    showSavedPresetsMenu = false;
+    showAccountMenu = false;
+    if (!next) showSavedPlaybacksMenu = false;
   }
   function toggleAccountSetting(panel){
     const next = (panel === 'account') ? !showAccountAuth : (panel === 'settings') ? !showAccountSettings : (panel === 'shortcuts') ? !showAccountShortcuts : false;
@@ -4980,6 +7239,8 @@ function clampToDragLengths(person, jointKey, target){
       else if (panel === 'settings') showAccountSettings = true;
       else if (panel === 'shortcuts') showAccountShortcuts = true;
       showAccountMenu = true;
+      showSequenceMenu = false;
+      showSavedPlaybacksMenu = false;
     }
   }
   const clickInside = (target, ...nodes)=> nodes.filter(Boolean).some(node => node.contains(target));
@@ -5075,6 +7336,133 @@ function clampToDragLengths(person, jointKey, target){
   function writeSavedPresetsToLocalStorage(){
     try{ localStorage.setItem('savedPresets', JSON.stringify(savedPresets)); }catch(e){}
   }
+  function writeFixedReplacementPresetsToLocalStorage(){
+    try{ localStorage.setItem('fixedReplacementPresetsV1', JSON.stringify(fixedReplacementPresets)); }catch(e){}
+  }
+
+  function cleanPresetDisplayName(name, fallback = 'Preset'){
+    return String(name || fallback)
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/\s+([,.:;!?])/g, '$1')
+      .trim() || fallback;
+  }
+
+  function normalizeSavedPreset(preset, index = 0){
+    if (!preset || typeof preset !== 'object') return null;
+    return {
+      ...preset,
+      name: cleanPresetDisplayName(preset.name, `Preset ${index + 1}`)
+    };
+  }
+
+  $: fixedCustomPresets = Array.isArray(fixedReplacementPresets)
+    ? fixedReplacementPresets.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean)
+    : [];
+
+  function restoreFixedReplacementPresets(){
+    try{
+      const raw = localStorage.getItem('fixedReplacementPresetsV1');
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) fixedReplacementPresets = parsed.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean);
+    }catch(e){}
+  }
+
+  function promoteCurrentCustomPresetsToFixedReplacements(){
+    if (fixedReplacementPresets.length || !savedPresets.length) return false;
+    fixedReplacementPresets = savedPresets.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean);
+    savedPresets = [];
+    writeFixedReplacementPresetsToLocalStorage();
+    writeSavedPresetsToLocalStorage();
+    return true;
+  }
+
+  function canonicalPresetName(name) {
+    return String(name || '').replace(/[\s_-]+/g, '').toLowerCase();
+  }
+
+  function findSavedPresetByCanonicalName(name) {
+    const target = canonicalPresetName(name);
+    return (savedPresets || []).find((preset, i) => canonicalPresetName(preset?.name || `Preset ${i + 1}`) === target) || null;
+  }
+
+  function cloneJson(value) {
+    try { return JSON.parse(JSON.stringify(value)); } catch(e) { return value; }
+  }
+
+  function lerpArray(a, b, t) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return cloneJson(a ?? b);
+    const length = Math.min(a.length, b.length);
+    return Array.from({ length }, (_, i) => {
+      const av = Number(a[i]) || 0;
+      const bv = Number(b[i]) || 0;
+      return av + (bv - av) * t;
+    });
+  }
+
+  function blendMeshyRigPose(openRig, closedRig, t = 0.5) {
+    if (!openRig || !closedRig) return cloneJson(openRig || closedRig || null);
+    const out = {};
+    for (const person of ['A', 'B']) {
+      const openPart = openRig?.[person];
+      const closedPart = closedRig?.[person];
+      if (!openPart && !closedPart) continue;
+      const bones = {};
+      const names = new Set([
+        ...Object.keys(openPart?.bones || {}),
+        ...Object.keys(closedPart?.bones || {})
+      ]);
+      for (const name of names) {
+        const qa = openPart?.bones?.[name];
+        const qb = closedPart?.bones?.[name];
+        if (Array.isArray(qa) && Array.isArray(qb) && qa.length >= 4 && qb.length >= 4) {
+          const a = new THREE.Quaternion(qa[0] || 0, qa[1] || 0, qa[2] || 0, qa[3] ?? 1);
+          const b = new THREE.Quaternion(qb[0] || 0, qb[1] || 0, qb[2] || 0, qb[3] ?? 1);
+          a.slerp(b, t);
+          bones[name] = [a.x, a.y, a.z, a.w];
+        } else {
+          bones[name] = cloneJson(qa || qb);
+        }
+      }
+      out[person] = {
+        bones,
+        object: {
+          position: lerpArray(openPart?.object?.position, closedPart?.object?.position, t),
+          rotation: lerpArray(openPart?.object?.rotation, closedPart?.object?.rotation, t),
+          scale: lerpArray(openPart?.object?.scale, closedPart?.object?.scale, t)
+        }
+      };
+    }
+    return out;
+  }
+
+  function buildGeneratedHalfGuardPresetData(openData, closedData) {
+    const base = cloneJson(BUILTIN_PRESET_OVERRIDES?.halfGuard || {
+      preset: 'halfGuard',
+      A: { joints: cloneJoints(POSES.halfGuard?.A || {}) },
+      B: { joints: cloneJoints(POSES.halfGuard?.B || {}) }
+    });
+    base.preset = 'halfGuard';
+    const blendedRig = blendMeshyRigPose(openData?.meshyRig, closedData?.meshyRig, 0.5);
+    if (blendedRig) base.meshyRig = blendedRig;
+    return base;
+  }
+
+  function ensureGeneratedHalfGuardCustomPreset() {
+    if (!Array.isArray(savedPresets)) savedPresets = [];
+    if (findSavedPresetByCanonicalName('Half Guard')) return false;
+    const openPreset = findSavedPresetByCanonicalName('Open Guard');
+    const closedPreset = findSavedPresetByCanonicalName('Closed Guard');
+    if (!openPreset?.data || !closedPreset?.data) return false;
+    savedPresets = [
+      ...savedPresets,
+      { name: 'Half Guard', data: buildGeneratedHalfGuardPresetData(openPreset.data, closedPreset.data) }
+    ];
+    writeSavedPresetsToLocalStorage();
+    return true;
+  }
+
   async function flushPlaybackSync(){
     if (!playbackSyncUserId || !isSupabaseConfigured()) return;
     if (playbackSyncInFlight){
@@ -5132,7 +7520,7 @@ function clampToDragLengths(person, jointKey, target){
         const raw = localStorage.getItem('savedPresets');
         if (!raw) return [];
         const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed : [];
+        return Array.isArray(parsed) ? parsed.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean) : [];
       }catch(e){
         return [];
       }
@@ -5160,7 +7548,7 @@ function clampToDragLengths(person, jointKey, target){
           ? data.playback_folders.map(folderKey).filter(Boolean)
           : [];
         const remoteSavedPresets = Array.isArray(data.saved_presets)
-          ? data.saved_presets
+          ? data.saved_presets.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean)
           : [];
         const remoteLibraryRecordExists = !!data;
         const remoteHasSavedPresets = remoteSavedPresets.length > 0;
@@ -5196,6 +7584,7 @@ function clampToDragLengths(person, jointKey, target){
     if (!Array.isArray(savedPlaybacks)) savedPlaybacks = [];
     if (!Array.isArray(playbackFolders)) playbackFolders = [];
     if (!Array.isArray(savedPresets)) savedPresets = [];
+    savedPresets = savedPresets.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean);
     playbackGroups = groupPlaybacks(savedPlaybacks);
     syncOpenPlaybackFolders();
     if (
@@ -5358,10 +7747,15 @@ function clampToDragLengths(person, jointKey, target){
     queuePlaybackSync();
   }
   function restoreSavedPresets(){
+    restoreFixedReplacementPresets();
     try{
       const s = localStorage.getItem('savedPresets');
-      if (s){ const arr = JSON.parse(s); if (Array.isArray(arr)) savedPresets = arr; }
+      if (s){
+        const arr = JSON.parse(s);
+        if (Array.isArray(arr)) savedPresets = arr.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean);
+      }
     }catch(e){}
+    if (promoteCurrentCustomPresetsToFixedReplacements()) queuePlaybackSync();
   }
   function persistPresetOverrides(){
     try{ localStorage.setItem(PRESET_OVERRIDES_STORAGE_KEY, JSON.stringify(presetOverrides)); }catch(e){}
@@ -5415,6 +7809,10 @@ function clampToDragLengths(person, jointKey, target){
     try{
       const raw = readSelectedPreset();
       if (!raw) return;
+      if (raw === 'neutral') {
+        setPosition(raw);
+        return;
+      }
       if (presetOverrides[raw]){
         startPosition = raw;
         applyPresetOverrideToPose(raw, presetOverrides[raw], { applyToScene: true });
@@ -5425,7 +7823,7 @@ function clampToDragLengths(person, jointKey, target){
   }
   function saveCurrentPreset(){
     const nameRaw = (newPresetName||"").trim();
-    const name = nameRaw || `Preset ${savedPresets.length+1}`;
+    const name = cleanPresetDisplayName(nameRaw || `Preset ${savedPresets.length+1}`);
     const data = buildPoseSnapshot();
     const idx = savedPresets.findIndex(p=> String(p?.name||"").toLowerCase() === name.toLowerCase());
     if (idx >= 0) {
@@ -5439,17 +7837,17 @@ function clampToDragLengths(person, jointKey, target){
     persistSavedPresets();
   }
   function promptSaveCustomPreset(){
-    const suggested = (newPresetName||"").trim() || `Preset ${savedPresets.length+1}`;
+    const suggested = cleanPresetDisplayName((newPresetName||"").trim() || `Preset ${savedPresets.length+1}`);
     try{
       const val = typeof prompt === 'function' ? prompt('Name this preset', suggested) : suggested;
       if (!val || !String(val).trim()) return;
-      newPresetName = String(val).trim();
+      newPresetName = cleanPresetDisplayName(val);
       saveCurrentPreset();
     }catch(e){}
   }
   function savePresetEdits(){
     if (editingPresetIdx < 0 || editingPresetIdx >= savedPresets.length) return;
-    const name = (editingPresetName||"").trim() || savedPresets[editingPresetIdx].name || `Preset ${editingPresetIdx+1}`;
+    const name = cleanPresetDisplayName((editingPresetName||"").trim() || savedPresets[editingPresetIdx].name || `Preset ${editingPresetIdx+1}`);
     const data = buildPoseSnapshot();
     savedPresets = savedPresets.map((p,i)=> i===editingPresetIdx ? { name, data } : p);
     activeCustomPresetName = name;
@@ -5481,12 +7879,27 @@ function clampToDragLengths(person, jointKey, target){
     commentVisible = false;
     applyLoadedPose(pr.data);
   }
+  function loadFixedReplacementPreset(idx){
+    const i = idx|0; if (i<0 || i>=fixedReplacementPresets.length) return;
+    const pr = fixedReplacementPresets[i];
+    activeCustomPresetName = pr?.name || `Preset ${i + 1}`;
+    showFrameComments = false;
+    comment = '';
+    commentText = '';
+    commentVisible = false;
+    applyLoadedPose(pr.data);
+  }
   function reloadCurrentPreset(){
     const activeName = String(activeCustomPresetName || '').trim().toLowerCase();
     if (activeName){
       const idx = savedPresets.findIndex((preset, i) => String(preset?.name || `Preset ${i + 1}`).trim().toLowerCase() === activeName);
       if (idx >= 0){
         loadSavedPreset(idx);
+        return;
+      }
+      const fixedIdx = fixedReplacementPresets.findIndex((preset, i) => String(preset?.name || `Preset ${i + 1}`).trim().toLowerCase() === activeName);
+      if (fixedIdx >= 0){
+        loadFixedReplacementPreset(fixedIdx);
         return;
       }
     }
@@ -5671,6 +8084,16 @@ function clampToDragLengths(person, jointKey, target){
     const key = folderKey(name);
     return savedPlaybacks.map((pb,i)=> ({ ...pb, _idx:i })).filter(pb => folderKey(pb.folder || '') === key);
   }
+  function reopenSavedSequencesAfterEdit(folder = null){
+    if (!reopenSavedSequencesAfterPlaybackEdit) return;
+    reopenSavedSequencesAfterPlaybackEdit = false;
+    showSequenceMenu = true;
+    showSavedPlaybacksMenu = true;
+    showSavedPresetsMenu = false;
+    const nextFolder = folderKey(folder ?? playbackFolderView);
+    playbackFolderView = nextFolder || null;
+    playbacksMenuVersion += 1;
+  }
   function saveEditsToPlayback(){
     if (editingPlaybackIdx < 0 || editingPlaybackIdx >= savedPlaybacks.length) return;
     if (!poses || poses.length === 0) return;
@@ -5687,19 +8110,29 @@ function clampToDragLengths(person, jointKey, target){
     try{ applyFrame(currentFrame); }catch(_) {}
     // refresh dropdown grouping
     playbackGroups = groupPlaybacks(savedPlaybacks);
+    editingPlaybackIdx = -1;
+    editingPlaybackName = "";
+    editingPlaybackFolder = "";
+    reopenSavedSequencesAfterEdit(folder);
   }
   function cancelPlaybackEdit(){
+    const folder = editingPlaybackIdx >= 0 && editingPlaybackIdx < savedPlaybacks.length
+      ? folderKey(savedPlaybacks[editingPlaybackIdx].folder)
+      : playbackFolderView;
     editingPlaybackIdx = -1;
     editingPlaybackName = "";
     editingPlaybackFolder = "";
     showSavedPlaybacksMenu = false;
+    reopenSavedSequencesAfterEdit(folder);
   }
   function startPlaybackEdit(idx){
     if (idx<0 || idx>=savedPlaybacks.length) return;
+    reopenSavedSequencesAfterPlaybackEdit = true;
     editingPlaybackIdx = idx;
     editingPlaybackName = savedPlaybacks[idx].name || `Playback ${idx+1}`;
     editingPlaybackFolder = folderKey(savedPlaybacks[idx].folder) || "";
     showSavedPlaybacksMenu = false;
+    showSequenceMenu = false;
     showSavedPresetsMenu = false;
     try{
       const frames = deepCopyFrames(savedPlaybacks[idx].frames);
@@ -5709,7 +8142,10 @@ function clampToDragLengths(person, jointKey, target){
     }catch(e){}
   }
   function saveCurrentPlayback(){
-    if (!poses || poses.length === 0) return;
+    if (!poses || poses.length === 0) {
+      poses = [{ data: buildPoseSnapshot(), comment: (comment || '') }];
+      currentFrame = 0;
+    }
     commitLivePoseToCurrentFrame();
     const name = (newPlaybackName||"").trim() || `Playback ${savedPlaybacks.length+1}`;
     const folder = folderKey(playbackFolderView);
@@ -5725,6 +8161,7 @@ function clampToDragLengths(person, jointKey, target){
     playbackGroups = groupPlaybacks(savedPlaybacks);
     playbackFolderView = folder || null;
     syncOpenPlaybackFolders();
+    playbacksMenuVersion += 1;
   }
   function loadSavedPlayback(idx){
     const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
@@ -5735,6 +8172,8 @@ function clampToDragLengths(person, jointKey, target){
     currentFrame = 0;
     playbackFolderView = folderKey(pb.folder) || playbackFolderView;
     try{ applyFrame(0); }catch(e){}
+    showSavedPlaybacksMenu = false;
+    showSequenceMenu = false;
   }
   function deleteSavedPlayback(idx){
     const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
@@ -5843,7 +8282,7 @@ function clampToDragLengths(person, jointKey, target){
       headPreferredB = skeletonB?.angleRot?.[IDX.head]?.clone() || null;
     }catch(e){ headPreferredB = null; }
     syncMeshesNoSolve();
-    if (torsoFreeze) captureTorsoFreezeRefs();
+    syncMeshyRigsFromCurrentJoints();
     refreshGuiFromSkeletons();
   }
 
@@ -5881,6 +8320,8 @@ function clampToDragLengths(person, jointKey, target){
       setToe(toeOffsets.B, data.toeOffsets.B);
     }
     updateMeshesFromJoints();
+    if (data.meshyRig) applyMeshyRigPose(data.meshyRig);
+    else syncMeshyRigsFromCurrentJoints();
     refreshGuiFromSkeletons();
   }
 
@@ -5909,6 +8350,7 @@ function clampToDragLengths(person, jointKey, target){
     mirrorOne(skeletonA);
     mirrorOne(skeletonB);
     updateMeshesFromJoints();
+    syncMeshyRigsFromCurrentJoints();
     refreshGuiFromSkeletons();
   }
 
@@ -5918,15 +8360,29 @@ function clampToDragLengths(person, jointKey, target){
     const el = renderer.domElement;
     el.style.touchAction = 'none';
     // Capture pointerdown before OrbitControls so we can block camera motion on handle drags.
+    el.addEventListener('pointerdown', handleMeshyRigPointerDown, { capture: true });
     el.addEventListener('pointerdown', pointerDownHandler, { capture: true });
+    el.addEventListener('pointermove', handleMeshyRigPointerMove, { capture: true });
     el.addEventListener('pointermove', pointerMoveHandler);
+    el.addEventListener('pointerup', handleMeshyRigPointerUp, { capture: true });
     el.addEventListener('pointerup', pointerUpHandler);
+    el.addEventListener('pointercancel', handleMeshyRigPointerUp, { capture: true });
     el.addEventListener('pointercancel', pointerUpHandler);
+    el.addEventListener('pointerleave', handleMeshyRigPointerUp, { capture: true });
     el.addEventListener('pointerleave', pointerUpHandler);
-    el.addEventListener('contextmenu', (e)=> e.preventDefault());
+    el.addEventListener('mousedown', handleMeshyRigMouseButtonModifier, { capture: true });
+    el.addEventListener('mouseup', handleMeshyRigMouseButtonModifier, { capture: true });
+    window.addEventListener('mousedown', handleMeshyRigMouseButtonModifier, true);
+    window.addEventListener('mousemove', handleMeshyRigMouseMoveModifier, true);
+    window.addEventListener('mouseup', handleMeshyRigMouseButtonModifier, true);
+    el.addEventListener('contextmenu', handleMeshyRigContextMenuModifier, { capture: true });
+    window.addEventListener('contextmenu', handleMeshyRigContextMenuModifier, true);
   }
 
-  function toggleSingleJointMode(){ singleJointMode = !singleJointMode; }
+  function toggleSingleJointMode(){
+    singleJointMode = !singleJointMode;
+    try { updateAllMeshyRigHandles(); } catch(e) {}
+  }
 
   function armRotateSyncOnCtrlTap(e){
     if (e?.repeat) return;
@@ -5945,6 +8401,14 @@ function clampToDragLengths(person, jointKey, target){
   }
 
   function pointerDownHandler(event){
+    if (event.shiftKey && meshyRigFigures.length && (meshyRigDrag || pickMeshyRigJoint(event) || pickMeshyRigFigure(event))) {
+      try {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+      } catch(e) {}
+      return;
+    }
     const el = renderer.domElement;
     const rect = el.getBoundingClientRect();
     const view = viewAtEvent(event);
@@ -6006,9 +8470,9 @@ function clampToDragLengths(person, jointKey, target){
     mouse.x = ndc.x; mouse.y = ndc.y;
     virtCursorX = event.clientX; virtCursorY = event.clientY;
     mouseLockedToJoint = false;
-    if (!dragging && (isCtrlLike || event.shiftKey)){
+    if (!dragging && isCtrlLike && event.shiftKey){
       const modifierHandlePerson = (edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event);
-      if (modifierHandlePerson && startUpperHandleDrag(event, modifierHandlePerson, view, cam, ctrlOnly, handleWholeFigure)) return;
+      if (modifierHandlePerson && startUpperHandleDrag(event, modifierHandlePerson, view, cam, false, true)) return;
     }
     // Prefer joints and body hits before the rotation handle so hidden handles cannot steal the click.
     let hit = edgeJointHit || pickJoint(event, { allowFallback: false });
@@ -6020,7 +8484,7 @@ function clampToDragLengths(person, jointKey, target){
     }
     if (!dragging && !hit && !hitBody){
       const handlePerson = (edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event);
-      if (handlePerson && startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, handleWholeFigure)) return;
+      if (handlePerson && isCtrlLike && event.shiftKey && startUpperHandleDrag(event, handlePerson, view, cam, false, true)) return;
     }
     // Lock selection mode: clicking toggles lock state and exits without starting a drag
     if (lockState === 'select' && hit){ toggleLockForMesh(hit.object); return; }
@@ -6039,9 +8503,7 @@ function clampToDragLengths(person, jointKey, target){
         activePerson = person;
         selectedPerson = person;
         activeJointIdx = null;
-        const isUpper =
-          hit.object.userData?.key && upperBodyKeys().includes(hit.object.userData.key);
-        const keysOverride = isUpper ? upperBodyKeys() : lowerBodyKeys();
+        const keysOverride = Object.keys(joints || {});
         if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
         upperDrag.active = true;
         upperDrag.person = person;
@@ -6053,45 +8515,9 @@ function clampToDragLengths(person, jointKey, target){
         upperDrag.camera = cam;
         upperDrag.accumQ.identity();
         upperDrag.baseRelOther.clear(); upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.pivotOther.set(0,0,0);
-        upperDrag.wholeBody = false;
+        upperDrag.wholeBody = true;
         upperDrag.keysOverride = keysOverride;
         upperDrag.mode = 'yawOnly';
-        const hL = joints.hipL ? new THREE.Vector3(...joints.hipL) : null;
-        const hR = joints.hipR ? new THREE.Vector3(...joints.hipR) : null;
-        upperDrag.pivot = (hL && hR) ? hL.clone().add(hR).multiplyScalar(0.5) : (skeletonA && person === 'A' ? skeletonA.rootPos.clone() : (skeletonB && person === 'B' ? skeletonB.rootPos.clone() : new THREE.Vector3()));
-        upperDrag.baseRel.clear();
-        for (const k of keysOverride){
-          const p = joints[k]; if (!p) continue;
-          upperDrag.baseRel.set(k, new THREE.Vector3(p[0]-upperDrag.pivot.x, p[1]-upperDrag.pivot.y, p[2]-upperDrag.pivot.z));
-        }
-        dragCamera = cam; dragView = view;
-        controls.enabled = false; orbitEnabled = false;
-        return;
-      }
-      if (event.shiftKey && !isCtrlLike){
-        const person = jointMeshesA.includes(hit.object) ? 'A' : 'B';
-        const joints = person === 'A' ? jointsA : jointsB;
-        if (!joints) return;
-        activePerson = person;
-        selectedPerson = person;
-        activeJointIdx = null;
-        const isUpper =
-          hit.object.userData?.key && upperBodyKeys().includes(hit.object.userData.key);
-        const keysOverride = isUpper ? upperBodyKeys() : lowerBodyKeys();
-        if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
-        upperDrag.active = true;
-        upperDrag.person = person;
-        upperDrag.startX = event.clientX;
-        upperDrag.startY = event.clientY;
-        upperDrag.lastX = event.clientX;
-        upperDrag.lastY = event.clientY;
-        upperDrag.view = view;
-        upperDrag.camera = cam;
-        upperDrag.accumQ.identity();
-        upperDrag.baseRelOther.clear(); upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.pivotOther.set(0,0,0);
-        upperDrag.wholeBody = false;
-        upperDrag.keysOverride = keysOverride;
-        upperDrag.mode = 'pitchOnly';
         const hL = joints.hipL ? new THREE.Vector3(...joints.hipL) : null;
         const hR = joints.hipR ? new THREE.Vector3(...joints.hipR) : null;
         upperDrag.pivot = (hL && hR) ? hL.clone().add(hR).multiplyScalar(0.5) : (skeletonA && person === 'A' ? skeletonA.rootPos.clone() : (skeletonB && person === 'B' ? skeletonB.rootPos.clone() : new THREE.Vector3()));
@@ -6112,6 +8538,14 @@ function clampToDragLengths(person, jointKey, target){
       activePerson = jointMeshesA.includes(dragging) ? 'A' : 'B';
       selectedPerson = activePerson;
       activeJointIdx = NAME_TO_IDX[dragging.userData.key] ?? null;
+      if (activeJointIdx === IDX.neck){
+        dragging = null;
+        activeJointIdx = null;
+        activePerson = null;
+        controls.enabled = (view === 'persp');
+        orbitEnabled = (view === 'persp');
+        return;
+      }
       const figureMinYAtDragStart = figureMinYFromJoints(activePerson);
       if (activePerson === 'A') {
         naturalDragBelowFloorA = (activeJointIdx != null && !singleJointMode && !shiftDragging && !ctrlDragging && figureMinYAtDragStart < (FLOOR_Y + 0.02 - 1e-6));
@@ -6427,15 +8861,11 @@ function clampToDragLengths(person, jointKey, target){
 
   function applyJointDragTarget(target, ds){
     if (activeJointIdx == null) return;
-    // Prevent moving head/neck/shoulders when torso lock is active
-    if (torsoFreeze) {
-      const blocked = new Set([IDX.head, IDX.neck, IDX.shoulderL, IDX.shoulderR]);
-      if (blocked.has(activeJointIdx)) return;
-    }
     // Skip if target joint is locked
     const jointKey = Object.keys(NAME_TO_IDX).find(k => NAME_TO_IDX[k]===activeJointIdx);
     if (jointKey && isLocked(activePerson, jointKey)) return;
-    const isHeadDrag = (activeJointIdx === IDX.head || activeJointIdx === IDX.neck);
+    if (activeJointIdx === IDX.neck) return;
+    const isHeadDrag = (activeJointIdx === IDX.head);
     const isHipDrag = (activeJointIdx === IDX.hipL || activeJointIdx === IDX.hipR);
     const translateUpperBody = (person, delta)=>{
       if (!delta || delta.lengthSq() < 1e-12) return;
@@ -6561,7 +8991,8 @@ function clampToDragLengths(person, jointKey, target){
           const s = new THREE.Vector3(...(joints[shoulderKey] || [0,0,0]));
           const e = new THREE.Vector3(...(joints[elbowKey] || [0,0,0]));
           const h = new THREE.Vector3(...(joints[handKey] || [0,0,0]));
-          const delta = target.clone().sub(s);
+          const shoulderTarget = clampNaturalShoulderTarget(activePerson, shoulderKey, target.clone());
+          const delta = shoulderTarget.clone().sub(s);
           const newS = s.clone().add(delta);
           const newE = e.clone().add(delta);
           const newH = h.clone().add(delta);
@@ -6569,6 +9000,7 @@ function clampToDragLengths(person, jointKey, target){
           joints[elbowKey] = [newE.x, newE.y, newE.z];
           joints[handKey] = [newH.x, newH.y, newH.z];
           if (activePerson === 'A') { jointsA = joints; } else { jointsB = joints; }
+          clampHeadLength(activePerson);
           // Update meshes immediately; solvers are bypassed via armTranslateDrag flag
           syncMeshesNoSolve();
         } else {
@@ -6873,8 +9305,8 @@ function clampToDragLengths(person, jointKey, target){
         const selMeshes = sel==='A' ? jointMeshesA : jointMeshesB;
         const minY = Math.min(...selMeshes.map(m=> m.position.y));
         if (delta.y < 0){ const minAllowedDy = (FLOOR_Y + 0.02) - minY; if (delta.y < minAllowedDy) delta.y = minAllowedDy; }
-        if (sel==='A') { skeletonA.rootPos.add(delta); if (torsoFreeze && torsoFreezeRefA) torsoFreezeRefA.rootPos.add(delta); groundSkeleton(skeletonA); jointsA = jointsFromSkeleton(skeletonA); }
-        else { skeletonB.rootPos.add(delta); if (torsoFreeze && torsoFreezeRefB) torsoFreezeRefB.rootPos.add(delta); groundSkeleton(skeletonB); jointsB = jointsFromSkeleton(skeletonB); }
+        if (sel==='A') { skeletonA.rootPos.add(delta); groundSkeleton(skeletonA); jointsA = jointsFromSkeleton(skeletonA); }
+        else { skeletonB.rootPos.add(delta); groundSkeleton(skeletonB); jointsB = jointsFromSkeleton(skeletonB); }
         updateMeshesFromJoints();
       } else if (dragging && dragging.userData?.isToeJoint) {
         const person = activePerson;
@@ -6985,6 +9417,25 @@ function clampToDragLengths(person, jointKey, target){
 
   function wheelHandler(event){
     const dir = Math.sign(event.deltaY || 0);
+    if (dir !== 0 && (event.ctrlKey || event.metaKey) && nudgeMeshyFigureAtPointerDepth(event, dir)) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    if (dir !== 0 && meshyRigDrag) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      nudgeMeshyRigDragDepth(dir);
+      return;
+    }
+    if (dir !== 0 && !event.ctrlKey && !event.metaKey && pickMeshyRigJoint(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      return;
+    }
     if (dir !== 0){
       if (applyDepthNudge(dir, event)) return;
     }
@@ -7158,7 +9609,7 @@ function clampToDragLengths(person, jointKey, target){
     return false;
   }
 
-  // Allow keyboard nudges (space = away, F = toward) using the same depth logic as scroll
+  // Allow keyboard nudges (space = away, C = toward) using the same depth logic as scroll
   function nudgeDepthFromKey(dir){
     startDepthNudge(dir);
   }
@@ -7222,7 +9673,7 @@ function clampToDragLengths(person, jointKey, target){
 
   <div class="scene-gradient" aria-hidden="true"></div>
   <div class="account-anchor">
-    <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
+    <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; showSequenceMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
       <svg class="icon account-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span class="account-label">Menu</span>
     </button>
@@ -7287,6 +9738,18 @@ function clampToDragLengths(person, jointKey, target){
             </div>
           </div>
           <div style="display:flex; flex-direction:column; gap:6px; width:100%;">
+            <span class="name">Playback speed</span>
+            <div class="speed-inline speed-inline--settings">
+              <div class="speed-track">
+                <div class="speed-markers">
+                  <span>-</span>
+                  <span>+</span>
+                </div>
+                <input class="slim" id="playback-speed" type="range" min="0" max="100" step="1" value={playbackSpeedPct} on:input={(e)=> setPlaybackSpeedPct(+e.currentTarget.value)} />
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:6px; width:100%;">
             <span class="name">Colorblind mode</span>
             <select bind:value={colorblindMode} on:change={applyColorblindScheme} style="width:100%; font-size:12px; padding:6px; border-radius:6px;">
               <option value="normal">Normal</option>
@@ -7321,7 +9784,25 @@ function clampToDragLengths(person, jointKey, target){
     </div>
     {/if}
   </div>
-  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu} class:toolbar-compact={compactToolbar} bind:this={toolbarEl}>
+  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu || showSequenceMenu} class:toolbar-compact={compactToolbar} class:toolbar-crosshair-active={mobileCrosshair.visible} bind:this={toolbarEl}>
+      {#if mobileCrosshair.visible}
+        <div
+          class="mobile-crosshair mobile-crosshair--toolbar"
+          on:pointerdown={startMobileCrosshair}
+          on:pointermove={moveMobileCrosshair}
+          on:pointerup={stopMobileCrosshair}
+          on:pointercancel={stopMobileCrosshair}
+          aria-label="Mobile joint depth and twist control"
+          role="button"
+          tabindex="0">
+          <div class="mobile-crosshair__line mobile-crosshair__line--h"></div>
+          <div class="mobile-crosshair__line mobile-crosshair__line--v"></div>
+          <div
+            class="mobile-crosshair__ball"
+            style={`transform:translate(calc(-50% + ${mobileCrosshair.dx}px), calc(-50% + ${mobileCrosshair.dy}px));`}>
+          </div>
+        </div>
+      {/if}
       <button
         type="button"
         class="toolbar-collapse-toggle"
@@ -7350,17 +9831,17 @@ function clampToDragLengths(person, jointKey, target){
               <button class="icon-btn" on:click={prevFrame} title="Previous frame">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause playback">
+              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause sequence">
                 {#if playing}
                   <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
                 {:else}
                   <svg class="icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
                 {/if}
+                <span class="play-count-badge">{poses.length ? currentFrame + 1 : 0}/{poses.length}</span>
               </button>
               <button class="icon-btn" on:click={nextFrame} title="Next frame">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <span class="counter counter--compact">{poses.length ? (currentFrame + 1) : 0}/{poses.length}</span>
             </div>
           </div>
         </div>
@@ -7375,8 +9856,8 @@ function clampToDragLengths(person, jointKey, target){
                     aria-haspopup="true"
                     aria-expanded={showSavedPresetsMenu}
                     bind:this={presetsToggleEl}
-                    on:click={()=>{ showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; }}
-                    on:keydown={(e)=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; } }}>
+                    on:click={()=>{ showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; showSequenceMenu = false; }}
+                    on:keydown={(e)=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; showSequenceMenu = false; } }}>
                     <span class="preset-trigger__label">
                       {#if activeCustomPresetName}
                         {activeCustomPresetName}
@@ -7394,7 +9875,7 @@ function clampToDragLengths(person, jointKey, target){
                   {#if showSavedPresetsMenu}
                     <div class="menu-popup preset-menu" bind:this={presetsMenuEl} style="left:0; right:auto; bottom:calc(100% + 8px); top:auto; position:absolute;">
                       <div class="preset-menu-col">
-                        <div class="menu-section-title">Built-in presets</div>
+                        <div class="menu-section-title">Presets</div>
                         {#each BUILTIN_PRESETS as preset (preset.key)}
                           <div class="menu-item">
                             <button type="button" class="menu-row-btn" on:click={() => { setPosition(preset.key); showSavedPresetsMenu=false; }}>
@@ -7402,28 +9883,37 @@ function clampToDragLengths(person, jointKey, target){
                             </button>
                           </div>
                         {/each}
+                        {#if fixedCustomPresets.length}
+                          {#each fixedCustomPresets as pr, i (pr?.name || i)}
+                            <div class="menu-item">
+                              <button type="button" class="menu-row-btn" on:click={() => { loadFixedReplacementPreset(i); showSavedPresetsMenu=false; }}>
+                                <span class="name">{pr?.name || `Preset ${i + 1}`}</span>
+                              </button>
+                            </div>
+                          {/each}
+                        {/if}
                       </div>
                       <div class="preset-menu-col">
-            <div class="menu-section-title preset-menu-title">
-              <span>Custom presets</span>
-              <button type="button" class="add-preset-action" on:click|stopPropagation={promptSaveCustomPreset} title="Add custom preset">
-                <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-              </button>
-            </div>
-            <div class="menu-item" style="cursor:default; gap:6px; align-items:flex-start;">
-              <span class="name" style="white-space:normal; color:#555; font-size:12px;">Tip: Click the + to save your current pose as a preset. It will appear below and stay saved in your browser.</span>
-            </div>
+                        <div class="menu-section-title preset-menu-title">
+                          <span>Custom presets</span>
+                          <button type="button" class="add-preset-action" on:click|stopPropagation={promptSaveCustomPreset} title="Add custom preset">
+                            <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                          </button>
+                        </div>
+                        <div class="menu-item" style="cursor:default; gap:6px; align-items:flex-start;">
+                          <span class="name" style="white-space:normal; color:#555; font-size:12px;">Tip: Click the + to save your current pose as a preset. It will appear below and stay saved in your browser.</span>
+                        </div>
                         {#if savedPresets.length}
                           {#each savedPresets as pr, i (pr?.name || i)}
                             <div class="menu-item">
                               <button type="button" class="menu-row-btn" on:click={() => { loadSavedPreset(i); showSavedPresetsMenu=false; }}>
-                                <span class="name">{pr?.name || `Preset ${i + 1}`}</span>
+                                <span class="name">{cleanPresetDisplayName(pr?.name, `Preset ${i + 1}`)}</span>
                               </button>
                               <div style="display:flex; gap:4px;">
                                 <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => startPresetEdit(i)} title="Edit preset">
                                   <svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.5 3.5l4 4-10 10H6.5v-4.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                                 </button>
-                                <button type="button" class="inline-action small danger-action" on:click|stopPropagation={() => deleteSavedPreset(i)} title="Delete">
+                                <button type="button" class="inline-action small danger-action" on:click|stopPropagation={() => deleteSavedPreset(i)} title="Delete preset">
                                   <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                                 </button>
                               </div>
@@ -7438,23 +9928,29 @@ function clampToDragLengths(person, jointKey, target){
                 </div>
               </div>
             {/if}
+            <div class="toolbar-actions wrap-tight">
+              <button class="btn btn--toggle" class:is-active={!singleJointMode}
+                on:click={toggleSingleJointMode}
+                title="Toggle movement mode">{singleJointMode ? 'Single' : 'Multiple'}</button>
+            </div>
           </div>
           <div class="row-center">
             <div class="controls-row controls-row--expanded">
               <button class="icon-btn" on:click={prevFrame} title="Previous frame">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause playback">
+              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause sequence">
                 {#if playing}
                   <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
                 {:else}
                   <svg class="icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
                 {/if}
+                <span class="play-count-badge">{poses.length ? currentFrame + 1 : 0}/{poses.length}</span>
               </button>
               <button class="icon-btn" on:click={nextFrame} title="Next frame">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="icon-btn" on:click={clearPlaybackQueue} title="Clear playback queue">
+              <button class="icon-btn" on:click={clearPlaybackQueue} title="Clear sequence queue">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               </button>
               <button class="icon-btn mobile-only-control mobile-undo-control" on:click={undoLastFigureMove} title="Undo (mobile)" aria-label="Undo">
@@ -7463,36 +9959,70 @@ function clampToDragLengths(person, jointKey, target){
             </div>
           </div>
           <div class="row-right playback-save-row">
-            <div class="playback-stack">
-              <div class="playback-dropdown">
-                <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
-                  <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Name playback" />
-                  <div class="input-actions playback-input-actions">
-                    <button class="inline-action save-action" on:click={saveCurrentPlayback} title="Save playback">
-                      <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-                    </button>
-                    <button class="inline-action" title="Select custom playbacks" bind:this={playbacksToggleEl} on:click={toggleSavedPlaybacksMenu}>
-                      <svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </button>
+            <div class="sequence-dropdown">
+              <button
+                type="button"
+                class="btn btn--primary sequence-trigger"
+                bind:this={sequenceToggleEl}
+                aria-haspopup="true"
+                aria-expanded={showSequenceMenu}
+                on:click={toggleSequenceMenu}>
+                Sequence
+                <svg class="icon" viewBox="0 0 24 24" style={`transform: rotate(${showSequenceMenu ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              {#if showSequenceMenu && !showSavedPlaybacksMenu}
+                <div class="menu-popup sequence-menu" bind:this={sequenceMenuEl}>
+                  <div class="sequence-section">
+                    <span class="menu-section-title sequence-title-row">
+                      <span>Frame</span>
+                      <span class="sequence-frame-count">{poses.length ? currentFrame + 1 : 0}/{poses.length}</span>
+                    </span>
+                    <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
+                      <input class="input" type="text" bind:value={comment} placeholder="Frame note" />
+                      <button class="inline-action save-action" on:click={saveCurrentFrame} title="Save frame">
+                        <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="sequence-section">
+                    <span class="menu-section-title">Sequence</span>
+                    <span class="sequence-helper">Save each frame first, then save the whole sequence.</span>
+                    <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
+                      <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Sequence name" />
+                      <div class="input-actions playback-input-actions">
+                        <button class="inline-action save-action" on:click={saveCurrentPlayback} title="Save sequence" disabled={!poses.length}>
+                          <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                        </button>
+                        <button class="inline-action" title="Saved sequences" bind:this={playbacksToggleEl} on:pointerdown|stopPropagation on:click={openSavedSequencesMenu}>
+                          <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                {#if showSavedPlaybacksMenu}
+              {:else if showSequenceMenu && showSavedPlaybacksMenu}
                   {#key playbacksMenuVersion}
                   <div
-                    class="menu-popup"
+                    class="menu-popup sequence-file-menu sequence-file-menu--standalone"
                     role="menu"
                     aria-label="Playback folders"
                     tabindex="-1"
                     bind:this={playbacksMenuEl}
                     >
                   {#if playbackFolderView === null}
-                    <div class="menu-item" style="justify-content:flex-start; gap:6px; cursor:default;">
+                    <div class="menu-item back-breadcrumb">
+                      <button
+                        class="back-breadcrumb__btn"
+                        on:click={()=> showSavedPlaybacksMenu = false}>
+                        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        <span>Back</span>
+                      </button>
+                      <span class="name" style="flex:none; color:#555;">Saved sequences</span>
                       <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => {
                         const val = prompt('New folder name'); if (val && val.trim()) { addPlaybackFolder(val); playbackGroups = groupPlaybacks(savedPlaybacks); persistPlaybackFolders(); }
                       }} title="Add folder">
                         <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                       </button>
-                      <span class="name" style="flex:none; color:#555;">Folders</span>
                     </div>
                     {#if childFolders('').length || playbacksInFolder('').length}
                       {#each childFolders('') as folderName (folderName)}
@@ -7624,48 +10154,22 @@ function clampToDragLengths(person, jointKey, target){
                     {/if}
                   </div>
                   {/key}
-                {/if}
-              </div>
-              <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
-                <input class="input" type="text" bind:value={comment} placeholder="Frame comment" />
-                <button class="inline-action save-action" on:click={saveCurrentFrame} title="Save frame">
-                  <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="toolbar-row">
-          <div class="row-left">
-            <div class="toolbar-actions wrap-tight">
-              <button class="btn btn--toggle" class:is-active={!singleJointMode}
-                on:click={toggleSingleJointMode}
-                title="Toggle movement mode (E)">{singleJointMode ? 'Single Joint Mode' : 'Natural Mode'}</button>
-              <button class="btn" class:is-active={torsoFreeze} on:click={toggleTorsoFreeze} title="Torso Lock (Q)">Torso Lock</button>
-            </div>
-          </div>
-          <div class="row-center">
-            <div class="controls-row info-row controls-row--expanded">
-              <span class="counter">{poses.length? (currentFrame+1) : 0}/{poses.length}</span>
-              <div class="speed-inline">
-                <label for="playback-speed" class="speed-label">Speed</label>
-                <div class="speed-track">
-                  <div class="speed-markers">
-                    <span>-</span>
-                    <span>+</span>
-                  </div>
-                  <input class="slim" id="playback-speed" type="range" min="0" max="100" step="1" value={playbackSpeedPct} on:input={(e)=> setPlaybackSpeedPct(+e.currentTarget.value)} style="width:clamp(90px,16vw,130px);" />
-                </div>
+              {/if}
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
     {#if editingPlaybackIdx >= 0}
       <div class="editing-bar collapse-hide">
-        <span class="meta-label" style="font-size:12px; color:#444;">Editing playback {editingPlaybackIdx + 1}</span>
+        <span class="meta-label" style="font-size:12px; color:#444;">Editing sequence</span>
+        <input
+          class="input edit-flex-input"
+          type="text"
+          bind:value={editingPlaybackName}
+          placeholder="Sequence name"
+          style={`width:${flexibleInputWidth(editingPlaybackName || 'Sequence name', 16, 34)};`}
+        />
         <label class="frame-edit-field">
           <span class="meta-label">Frame</span>
           <input
@@ -7686,13 +10190,14 @@ function clampToDragLengths(person, jointKey, target){
           />
           <span class="meta-label">/ {poses.length}</span>
         </label>
-        <input class="input" type="text" bind:value={editingPlaybackName} placeholder="Playback name" style="width:clamp(140px,24vw,220px);" />
-        <select class="input" bind:value={editingPlaybackFolder} style="width:clamp(140px,20vw,200px);">
-          <option value="">No folder</option>
-          {#each playbackFolders as f}
-            <option value={f}>{f}</option>
-          {/each}
-        </select>
+        <input
+          class="input"
+          type="text"
+          value={poses?.[currentFrame]?.comment || ''}
+          placeholder="Frame text"
+          style={`width:${flexibleInputWidth(poses?.[currentFrame]?.comment || 'Frame text', 14, 42)};`}
+          on:input={(e) => updatePlaybackEditFrameText(e.currentTarget.value)}
+        />
         <button class="btn btn--primary" on:click={saveEditsToPlayback}>Save edits</button>
         <button class="btn" on:click={cancelPlaybackEdit}>Cancel</button>
       </div>
@@ -7780,6 +10285,9 @@ function clampToDragLengths(person, jointKey, target){
   .preset-ui { backdrop-filter: saturate(180%) blur(10px); box-sizing: border-box; }
   .preset-ui.bottom { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); right: auto; z-index: 10; background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)); border:1px solid rgba(212,228,255,0.9); border-radius:14px; padding:8px 48px 8px 14px; box-shadow:0 10px 28px rgba(15, 23, 42, 0.12); display:flex; gap:6px; align-items:flex-start; flex-wrap:wrap; width: fit-content; max-width: calc(100vw - 80px); justify-content: center; }
   .preset-ui.bottom.toolbar-compact { width: auto; min-width: 0; padding: 12px 14px 10px; }
+  .preset-ui.bottom.toolbar-crosshair-active { padding: 10px 14px; align-items: center; justify-content: center; overflow: visible; }
+  .preset-ui.bottom.toolbar-crosshair-active .toolbar-collapse-toggle,
+  .preset-ui.bottom.toolbar-crosshair-active .toolbar-layout { display: none !important; }
   .preset-ui.bottom.toolbar-menu-open,
   .preset-ui.bottom.toolbar-menu-open .toolbar-layout,
   .preset-ui.bottom.toolbar-menu-open .row-left,
@@ -7802,6 +10310,48 @@ function clampToDragLengths(person, jointKey, target){
   .row-center--compact { width:100%; justify-content:center; }
   .row-right { justify-content:flex-end; }
   .playback-save-row { align-items:flex-start; justify-content:flex-end; }
+  .sequence-dropdown { position:relative; display:inline-flex; justify-content:flex-end; }
+  .sequence-trigger { display:inline-flex; align-items:center; gap:5px; min-height:32px; }
+  .sequence-trigger .icon { width:14px; height:14px; transition:transform .15s ease; }
+  .sequence-menu {
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    width:min(300px, calc(100vw - 24px));
+    max-height:min(70vh, 520px);
+    overflow:auto;
+    padding:8px;
+  }
+  .sequence-section { display:flex; flex-direction:column; gap:6px; }
+  .sequence-helper { font:11px/1.25 system-ui, sans-serif; color:#64748b; padding:0 8px; max-width:260px; }
+  .sequence-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .sequence-frame-count {
+    min-width:18px;
+    height:16px;
+    padding:0 5px;
+    border-radius:999px;
+    background:#eef5ff;
+    color:#0b5bd3;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    font-size:10px;
+    font-weight:700;
+    line-height:1;
+  }
+  .sequence-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .sequence-action { width:100%; justify-content:center; }
+  .sequence-file-menu {
+    position:relative;
+    inset:auto;
+    right:auto;
+    bottom:auto;
+    width:100%;
+    max-width:100%;
+    max-height:260px;
+    box-shadow:none;
+    border-color:rgba(15,23,42,0.1);
+  }
   .playback-stack { display:flex; flex-direction:column; align-items:stretch; gap:0; width:clamp(180px, 20vw, 230px); max-width:min(100%, 230px); margin-left:auto; }
   .playback-stack > * { width:100%; max-width:100%; }
   .toolbar-actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
@@ -7811,6 +10361,7 @@ function clampToDragLengths(person, jointKey, target){
   .controls-row--compact { justify-content:center; }
   .counter--compact { min-width: 44px; text-align:center; }
   .speed-inline { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; }
+  .speed-inline--settings { width:100%; padding-top:4px; }
   .speed-inline label { font-size:12px; color:#444; white-space:nowrap; }
   .speed-label { font-size:12px; color:#444; white-space:nowrap; }
   .speed-track { position:relative; display:flex; align-items:center; flex:1; }
@@ -7846,6 +10397,27 @@ function clampToDragLengths(person, jointKey, target){
   .icon-btn { position:relative; z-index:1; display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9999px; border:1px solid #d0d7de; background:#fff; color:#111; cursor:pointer; transition: background .15s, border-color .15s, box-shadow .15s; }
   .icon-btn:hover { background:#f7f8fa; border-color:#c4cbd3; }
   .icon-btn--primary { border-color:#3b82f6; background:#eef5ff; color:#0b5bd3; }
+  .play-count-badge {
+    position:absolute;
+    right:1px;
+    top:-6px;
+    min-width:18px;
+    height:11px;
+    padding:0 3px;
+    border-radius:999px;
+    border:1px solid rgba(15,23,42,0.16);
+    background:#0f172a;
+    color:#fff;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    font:700 7px/1 system-ui, -apple-system, Segoe UI, sans-serif;
+    letter-spacing:0;
+    box-shadow:0 2px 5px rgba(15,23,42,0.18);
+    pointer-events:none;
+    white-space:nowrap;
+  }
+  .icon-btn--primary.is-active .play-count-badge { background:#2563eb; border-color:rgba(255,255,255,0.45); }
   .input-with-icon { position:relative; display:flex; align-items:center; z-index:0; width: 100%; box-sizing: border-box; min-width:0; overflow: hidden; }
   .input-with-icon .input { padding-right: 34px; width: 100%; box-sizing: border-box; }
   /* When the input has two inline action buttons (save + dropdown), add extra padding */
@@ -7897,6 +10469,30 @@ function clampToDragLengths(person, jointKey, target){
   input[type="range"].slim::-moz-range-track { height: 6px; background: #fff; border-radius: 9999px; border: 1px solid #000; box-shadow: inset 0 1px 0 rgba(0,0,0,0.08); }
   input[type="range"].slim::-moz-range-thumb { width: 14px; height: 14px; background: #3b82f6; border: 0; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.18); }
   .menu-popup { position:absolute; bottom: 110%; right:0; background:linear-gradient(135deg, #ffffff 0%, #f6f7fb 100%); border:1px solid #d0d7de; border-radius:12px; box-shadow:0 10px 28px rgba(0,0,0,0.14); padding:6px; min-width: 200px; max-height: 240px; max-width: min(100vw - 18px, 420px); width: min(420px, 100%); overflow:auto; z-index: 12; box-sizing: border-box; }
+  .menu-popup.sequence-file-menu {
+    position:relative;
+    inset:auto;
+    right:auto;
+    bottom:auto;
+    width:100%;
+    max-width:100%;
+    max-height:260px;
+    box-shadow:none;
+    border-color:rgba(15,23,42,0.1);
+  }
+  .menu-popup.sequence-file-menu.sequence-file-menu--standalone {
+    position:fixed;
+    inset:auto;
+    bottom:76px;
+    right:max(12px, calc((100vw - 960px) / 2));
+    width:min(360px, calc(100vw - 24px));
+    max-width:min(360px, calc(100vw - 24px));
+    height:auto;
+    max-height:min(70vh, 520px);
+    overflow:auto;
+    box-shadow:0 10px 28px rgba(0,0,0,0.14);
+    z-index:30;
+  }
   .preset-menu { display:grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap:8px 12px; min-width: 420px; width: min(100vw - 18px, 760px); max-width: calc(100vw - 18px); }
   .preset-menu-col { display:flex; flex-direction:column; gap:4px; }
   .menu-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px; cursor:pointer; border-radius:6px; }
@@ -7943,6 +10539,7 @@ function clampToDragLengths(person, jointKey, target){
   .save-action:hover { background:#e5f0ff; border-color:#3b82f6; color:#0b5bd3; }
   .btn--primary:hover { background:#dbe8ff; border-color:#2f6fe0; }
   .mobile-only-control { display: none; }
+  .mobile-crosshair { display:none; }
   .mobile-undo-control { color:#1f2937; background: transparent; border-color: #cbd5e1; }
   .mobile-undo-control:hover { background: #f3f4f6; color:#1f2937; }
   .mobile-undo-symbol { display:flex; align-items:center; justify-content:center; width:100%; height:100%; font-size: 18px; line-height: 1; font-family: "Segoe UI Symbol", Arial, sans-serif; transform: none; }
@@ -8162,6 +10759,40 @@ function clampToDragLengths(person, jointKey, target){
   }
   @media (pointer: coarse), (max-width: 768px){
     .mobile-only-control { display: inline-flex; }
+    .mobile-crosshair {
+      position: relative;
+      z-index: 12;
+      width: 124px;
+      height: 124px;
+      display: block;
+      touch-action: none;
+      pointer-events: auto;
+      border-radius: 10px;
+      background: transparent;
+    }
+    .mobile-crosshair__line {
+      position:absolute;
+      left:50%;
+      top:50%;
+      background:rgba(15,23,42,0.58);
+      border-radius:999px;
+      transform:translate(-50%, -50%);
+      pointer-events:none;
+    }
+    .mobile-crosshair__line--h { width:104px; height:3px; }
+    .mobile-crosshair__line--v { width:3px; height:104px; }
+    .mobile-crosshair__ball {
+      position:absolute;
+      left:50%;
+      top:50%;
+      width:30px;
+      height:30px;
+      border-radius:999px;
+      background:#2563eb;
+      border:3px solid #fff;
+      box-shadow:0 5px 14px rgba(37,99,235,0.42);
+      pointer-events:none;
+    }
     .account-menu {
       max-height: calc(100dvh - 76px);
       overflow-y: auto;
