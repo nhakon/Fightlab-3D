@@ -56,8 +56,6 @@
   // Preferred head local rotation per figure; updated when user explicitly drags the head/neck
   let headPreferredA = null, headPreferredB = null;
   let headDragPerson = null; // 'A' | 'B' while head is being dragged
-  let hoverUpperHandlePerson = null;
-  let lastHandleHover = { person: null, time: 0 };
 
   // Upper-body rotation drag state
   const upperDrag = {
@@ -131,234 +129,6 @@
     activeJointIdx = null;
     controls.enabled = false; orbitEnabled = false;
     try{ const el2 = renderer?.domElement; if (el2) el2.style.cursor = 'grabbing'; }catch(e){}
-  }
-
-  function startUpperHandleDrag(event, handlePerson, view, cam, ctrlOnly, wholeFigure){
-    if (!handlePerson) return false;
-    const el = renderer?.domElement;
-    const floorLimit = FLOOR_Y + 0.02;
-    if (handlePerson === 'A') naturalDragBelowFloorA = figureMinYFromJoints(handlePerson) < (floorLimit - 1e-6);
-    else naturalDragBelowFloorB = figureMinYFromJoints(handlePerson) < (floorLimit - 1e-6);
-    dragging = (handlePerson==='A') ? upperHandleA : upperHandleB;
-    activePerson = handlePerson;
-    selectedPerson = handlePerson;
-    activeJointIdx = null;
-    const joints = (handlePerson==='A') ? jointsA : jointsB;
-    dragCamera = cam; dragView = view;
-    try{ if (el?.setPointerCapture) el.setPointerCapture(event.pointerId); }catch(e){}
-    if (ctrlOnly){
-      if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
-      startLowerHandleDrag(event, handlePerson, joints, view, cam);
-      return true;
-    }
-    if (wholeFigure){
-      if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
-      upperDrag.wholeBody = true;
-    }
-    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
-    upperDrag.active = true; upperDrag.person = handlePerson; upperDrag.startX = event.clientX; upperDrag.startY = event.clientY; upperDrag.lastX = event.clientX; upperDrag.lastY = event.clientY; upperDrag.view = view; upperDrag.camera = cam; upperDrag.accumQ.identity(); upperDrag.mode = 'yawPitch';
-    upperDrag.baseRelOther.clear(); upperDrag.syncBoth = false; upperDrag.otherPerson = null; upperDrag.pivotOther.set(0,0,0);
-    // Shift rotates the whole figure; otherwise just the upper body.
-    upperDrag.wholeBody = wholeFigure;
-    const hL = new THREE.Vector3(...joints.hipL); const hR = new THREE.Vector3(...joints.hipR); upperDrag.pivot = hL.clone().add(hR).multiplyScalar(0.5);
-    upperDrag.baseRel.clear();
-    const keys = upperDrag.wholeBody ? Object.keys(joints||{}) : upperBodyKeys();
-    for (const k of keys){
-      const p = joints[k]; if (!p) continue;
-      upperDrag.baseRel.set(k, new THREE.Vector3(p[0]-upperDrag.pivot.x, p[1]-upperDrag.pivot.y, p[2]-upperDrag.pivot.z));
-    }
-    // Optionally arm synced rotation when Control was double-tapped
-    const syncBoth = consumeRotateSyncArm();
-    if (syncBoth){
-      upperDrag.syncBoth = true;
-      upperDrag.otherPerson = handlePerson === 'A' ? 'B' : 'A';
-      const otherJoints = upperDrag.otherPerson === 'A' ? jointsA : jointsB;
-      try{
-        const ohL = new THREE.Vector3(...otherJoints.hipL);
-        const ohR = new THREE.Vector3(...otherJoints.hipR);
-        upperDrag.pivotOther = ohL.clone().add(ohR).multiplyScalar(0.5);
-        const otherKeys = upperDrag.wholeBody ? Object.keys(otherJoints||{}) : upperBodyKeys();
-        upperDrag.baseRelOther.clear();
-        for (const k of otherKeys){
-          const p = otherJoints[k]; if (!p) continue;
-          upperDrag.baseRelOther.set(k, new THREE.Vector3(p[0]-upperDrag.pivotOther.x, p[1]-upperDrag.pivotOther.y, p[2]-upperDrag.pivotOther.z));
-        }
-      } catch(e){
-        upperDrag.syncBoth = false;
-        upperDrag.otherPerson = null;
-        upperDrag.baseRelOther.clear();
-      }
-    }
-    // Baseline torso direction from hips to shoulders at drag start
-    try{
-      const sL = joints.shoulderL ? new THREE.Vector3(...joints.shoulderL) : null;
-      const sR = joints.shoulderR ? new THREE.Vector3(...joints.shoulderR) : null;
-      if (sL && sR){
-        const shoulderCenter = sL.clone().add(sR).multiplyScalar(0.5);
-        upperDrag.baseDir.copy(shoulderCenter.clone().sub(upperDrag.pivot).normalize());
-      } else {
-        upperDrag.baseDir.set(0,1,0);
-      }
-    }catch(e){ upperDrag.baseDir.set(0,1,0); }
-    orbitEnabled = false; controls.enabled = false;
-    try{ if (el) el.style.cursor = 'grabbing'; }catch(e){}
-    return true;
-  }
-
-  function upperHandleRootForObject(obj){
-    let root = obj;
-    if (root?.userData?.handleRoot) root = root.userData.handleRoot;
-    while (root && !root.userData?.person && !root.userData?.isUpperHandle) root = root.parent;
-    return root || null;
-  }
-
-  function upperHandlePersonForObject(obj){
-    const root = upperHandleRootForObject(obj);
-    if (!root) return null;
-    if (root?.userData?.person) return root.userData.person;
-    if (root === upperHandleA) return 'A';
-    if (root === upperHandleB) return 'B';
-    return null;
-  }
-
-  function upperHandleOccluderTargets(ignoreHandle = null){
-    const ignoreRoot = ignoreHandle ? upperHandleRootForObject(ignoreHandle) : null;
-    return [
-      ...jointMeshesA,
-      ...jointMeshesB,
-      ...boneMeshesA,
-      ...boneMeshesB,
-      pelvisA, pelvisB, chestA, chestB, torsoA, torsoB, spineA, spineB
-    ].filter((obj) => obj && obj !== ignoreRoot && !ignoreRoot?.children?.includes(obj));
-  }
-
-  function isUpperHandleOccluded(world, cam, ndc, ignoreHandle = null){
-    try{
-      raycaster.setFromCamera(ndc, cam);
-      const toHandle = world.clone().sub(raycaster.ray.origin);
-      const handleDistance = toHandle.dot(raycaster.ray.direction);
-      if (handleDistance <= 0) return true;
-      const occluders = upperHandleOccluderTargets(ignoreHandle);
-      if (!occluders.length) return false;
-      const hits = raycaster.intersectObjects(occluders, true);
-      if (!hits?.length) return false;
-      return hits[0].distance < handleDistance - UPPER_HANDLE_OCCLUSION_EPS;
-    }catch(e){}
-    return false;
-  }
-
-  function pickUpperHandle(event, opts = {}){
-    try{
-      const allowScreenFallback = opts.allowScreenFallback !== false;
-      const el = renderer.domElement; const rect = el.getBoundingClientRect();
-      const view = viewAtEvent(event);
-      const cam = cameraForView(view) || camera;
-      const ndc = ndcForEventInView(event, view);
-      raycaster.setFromCamera(ndc, cam);
-      const objs = [upperHandleA, upperHandleB].filter(Boolean);
-      const hits = raycaster.intersectObjects(objs, true);
-      if (hits && hits.length){
-        for (const hit of hits){
-          const person = upperHandlePersonForObject(hit.object);
-          if (!person) continue;
-          const root = upperHandleRootForObject(hit.object);
-          const world = new THREE.Vector3();
-          (root || hit.object).getWorldPosition(world);
-          if (!isUpperHandleOccluded(world, cam, ndc, hit.object)) return person;
-        }
-      }
-      if (!allowScreenFallback) return null;
-      const vps = getViewports();
-      const r = (!fourViewMode || !vps) ? { x: 0, y: 0, w: rect.width, h: rect.height } : (vps[view]?.dom || { x: 0, y: 0, w: rect.width, h: rect.height });
-      const screenDistForWorld = (world)=>{
-        const proj = world.project(cam);
-        const sx = (proj.x * 0.5 + 0.5) * r.w + rect.left + r.x;
-        const sy = (-proj.y * 0.5 + 0.5) * r.h + rect.top + r.y;
-        const dx = event.clientX - sx;
-        const dy = event.clientY - sy;
-        return Math.hypot(dx, dy);
-      };
-      const pickRadius = UPPER_HANDLE_PICK_RADIUS_PX;
-      // Fallback: screen-space hit around the handle center
-      const hitByScreen = (handle, person)=>{
-        if (!handle) return null;
-        const world = new THREE.Vector3();
-        handle.getWorldPosition(world);
-        const dist = screenDistForWorld(world);
-        if (dist <= pickRadius && !isUpperHandleOccluded(world, cam, ndc, handle)) return person;
-        return null;
-      };
-      const screenHitA = hitByScreen(upperHandleA, 'A');
-      if (screenHitA) return screenHitA;
-      const screenHitB = hitByScreen(upperHandleB, 'B');
-      if (screenHitB) return screenHitB;
-      // Legacy fallback: compute handle position from joints if the handle mesh isn't hit
-      const hitByJoints = (joints, person)=>{
-        if (!joints?.head) return null;
-        const world = new THREE.Vector3(joints.head[0], joints.head[1] + HEAD_HANDLE_OFFSET, joints.head[2]);
-        const dist = screenDistForWorld(world);
-        const ignoreHandle = person === 'A' ? upperHandleA : upperHandleB;
-        if (dist <= pickRadius && !isUpperHandleOccluded(world, cam, ndc, ignoreHandle)) return person;
-        return null;
-      };
-      const jointHitA = hitByJoints(jointsA, 'A');
-      if (jointHitA) return jointHitA;
-      const jointHitB = hitByJoints(jointsB, 'B');
-      if (jointHitB) return jointHitB;
-    }catch(e){}
-    return null;
-  }
-
-  let reloadHandleTexture = null;
-  function getReloadHandleTexture(){
-    if (reloadHandleTexture) return reloadHandleTexture;
-    if (typeof document === 'undefined') return null;
-    try{
-      const size = 128;
-      const canvas = document.createElement('canvas');
-      canvas.width = size; canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return null;
-      ctx.clearRect(0, 0, size, size);
-      const scale = size / 24;
-      ctx.save();
-      ctx.scale(scale, scale);
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      const cx = 12;
-      const cy = 12;
-      const r = 6.2;
-      const start = Math.PI * 0.08;
-      const end = Math.PI * 1.78;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, start, end, false);
-      ctx.stroke();
-      const tipX = cx + Math.cos(end) * r;
-      const tipY = cy + Math.sin(end) * r;
-      const headLen = 2.6;
-      const headAngle = Math.PI / 7;
-      const forwardAngle = end + Math.PI / 2;
-      const backAngle = forwardAngle + Math.PI;
-      const left = backAngle + headAngle;
-      const right = backAngle - headAngle;
-      ctx.beginPath();
-      ctx.moveTo(tipX, tipY);
-      ctx.lineTo(tipX + Math.cos(left) * headLen, tipY + Math.sin(left) * headLen);
-      ctx.moveTo(tipX, tipY);
-      ctx.lineTo(tipX + Math.cos(right) * headLen, tipY + Math.sin(right) * headLen);
-      ctx.stroke();
-      ctx.restore();
-      const tex = new THREE.CanvasTexture(canvas);
-      tex.minFilter = THREE.LinearFilter;
-      tex.magFilter = THREE.LinearFilter;
-      tex.generateMipmaps = false;
-      reloadHandleTexture = tex;
-      return reloadHandleTexture;
-    }catch(e){
-      return null;
-    }
   }
 
   // Preserve bone lengths for the actively dragged joint (no IK). We snapshot
@@ -511,14 +281,9 @@
   let pelvisA = null, pelvisB = null;
   let spineA = null, spineB = null;
   let chestA = null, chestB = null; // visible chest ellipsoid
-  let upperHandleA = null, upperHandleB = null; // 3D control icons for upper-body rotation
   const HANDLE_COLOR_A = 0x4f7bff;
   const HANDLE_COLOR_B = 0x2fb6a7;
   const HANDLE_COLOR_HOVER = 0x5cd47a;
-  const HEAD_HANDLE_OFFSET = 0.30; // height above head joint (0.25?0.35m)
-  const UPPER_HANDLE_PICK_RADIUS_PX = 26;
-  const UPPER_HANDLE_HIT_RADIUS_SCALE = 0.72;
-  const UPPER_HANDLE_OCCLUSION_EPS = 0.025;
   const UPPER_HANDLE_ROT_SENS_YAW = 0.005;  // radians per pixel (horizontal move)
   const UPPER_HANDLE_ROT_SENS_PITCH = 0.004; // radians per pixel (vertical move)
   let handBoxesA = { L: null, R: null }, handBoxesB = { L: null, R: null };
@@ -617,7 +382,10 @@
     rig: null,
     mode: 'joint'
   };
-  let lastMobileFigureTap = { rig: null, time: 0, x: 0, y: 0 };
+  let mobileJointMode = 'normal'; // 'normal' | 'rotate'
+  let mobileSelectedRigHandle = null;
+  let mobileDepthHoldTimer = null;
+  let lastMobileFigureTap = { rig: null, time: 0, x: 0, y: 0, count: 0 };
   const meshyRigRaycaster = new THREE.Raycaster();
   const meshyRigPointer = new THREE.Vector2();
   const meshyRigDragPlane = new THREE.Plane();
@@ -760,13 +528,10 @@ let shoulderCenterToNeckLenB = 0;
   // Active snap animations for constraints (linear root translation)
   let activeSnaps = []; // { follower:'A'|'B', initialRoot:THREE.Vector3, delta:THREE.Vector3, t0:number, dur:number }
   // Camera WASD navigation
-  const CAM_MOVE_SPEED = 0.9; // meters per second (legacy free-fly, unused for orbit)
   const CAM_ORBIT_SPEED = 3.5; // radians per second for WASD orbit
   let lastWASDActive = false; // track transitions to avoid snap on release
   let mouseLockedToJoint = false; // lock pointer mapping to the dragged joint while WASD held
   const moveKeys = { w:false, a:false, s:false, d:false };
-  let pointerLocked = false; // browser pointer lock state during drag (disabled)
-  let virtCursorX = 0, virtCursorY = 0; // legacy virtual cursor (unused when not locked)
   let lockCursorEl; // overlay element to draw a crosshair at joint
   let lastAnimTimeMs = (typeof performance!=='undefined'? performance.now() : Date.now());
 
@@ -853,20 +618,19 @@ function isLocked(person, key){
   const desktopShortcuts = [
     { keys: 'Ctrl + Z', desc: 'Undo last move' },
     { keys: 'Ctrl + S', desc: 'Save current frame' },
+    { keys: 'W A S D', desc: 'Orbit the camera' },
     { keys: 'Ctrl + drag', desc: 'Move the whole figure' },
     { keys: 'Ctrl + Shift + drag', desc: 'Rotate the whole figure' },
-    { keys: 'Right-click + drag joint', desc: 'Twist/rotate the selected joint' }
+    { keys: 'Right-click + drag', desc: 'Twist/rotate the selected joint' },
+    { keys: 'Mouse wheel or Space / C while dragging', desc: 'Move the selected joint toward or away from the camera' },
+    { keys: 'Ctrl + F', desc: 'Drop the figure to the floor' }
   ];
   const mobileShortcuts = [
-    { keys: 'One finger drag', desc: 'Move the selected joint' },
-    { keys: 'Tap a joint or body part', desc: 'Select the figure or joint you want to adjust' },
-    { keys: 'Joint crosshair up/down', desc: 'Move the selected joint away from or toward the camera' },
-    { keys: 'Joint crosshair left/right', desc: 'Twist/rotate the selected joint' },
+    { keys: 'Rotate button', desc: 'Make joint drags twist like right-click drag' },
+    { keys: 'Toward / Away buttons', desc: 'Move the selected joint toward or away from the camera' },
     { keys: 'Double-tap figure', desc: 'Move the whole figure like Ctrl + drag' },
-    { keys: 'Double-tap crosshair', desc: 'Rotate the whole figure like Ctrl + Shift + drag' },
-    { keys: 'Two-finger gesture', desc: 'Orbit, pan, and zoom the camera view' },
-    { keys: 'Undo button', desc: 'Undo the last move' },
-    { keys: 'Save frame button', desc: 'Store the current frame in the sequence' }
+    { keys: 'Triple-tap joint', desc: 'Rotate the whole figure like Ctrl + Shift + drag' },
+    { keys: 'Two-finger gesture', desc: 'Orbit, pan, and zoom the camera view' }
   ];
   function isLandscapeSideRailViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -909,11 +673,18 @@ function isLocked(person, key){
       return;
     }
     mobileViewportLeftInset = 0;
+    if (isMobileViewport() && compactToolbar) {
+      mobileViewportBottomInset = 0;
+      return;
+    }
     const toolbarTop = toolbarEl?.getBoundingClientRect?.().top;
     mobileViewportBottomInset = (isMobileViewport() && Number.isFinite(toolbarTop))
       ? Math.max(0, window.innerHeight - toolbarTop)
       : 0;
   }
+  $: mobileFloatingToolsOffset = isMobileViewport()
+    ? Math.max(54, (mobileViewportBottomInset || toolbarEl?.offsetHeight || (compactToolbar ? 42 : 0)) + 12)
+    : 0;
   function viewAtEvent(event){
     if (!fourViewMode) return 'persp';
     const el = renderer?.domElement; if (!el) return 'persp';
@@ -1507,6 +1278,7 @@ function isLocked(person, key){
   }
 
   let poses = []; // saved frames
+  let sequenceDraftActive = false;
   let comment = "";
   let currentFrame = 0;
   let playing = false;
@@ -1520,6 +1292,44 @@ function isLocked(person, key){
   // Saved playbacks (multiple sequences)
   let savedPlaybacks = [];
   let playbackFolders = [];
+  let saveConfirmation = "";
+  let saveConfirmationTimer = null;
+  let memoryReviewStats = { current_streak: 0, best_streak: 0, last_review_date: null };
+  let activeReviewPlaybackIdx = -1;
+  let activeReviewFrameCount = 0;
+  let trainingReminderTime = "";
+  let trainingReminderEmail = "";
+  let trainingReminderLeadMins = 30;
+  let trainingReminderDays = [];
+  let trainingReminderConfigs = {};
+  let trainingReminderEnabled = false;
+  let trainingReminderNotice = "";
+  let trainingReminderTimer = null;
+  const TRAINING_REMINDER_LEAD_MINS = 30;
+  const TRAINING_REMINDER_DAYS = [
+    { value: 1, label: "M", name: "Monday" },
+    { value: 2, label: "T", name: "Tuesday" },
+    { value: 3, label: "W", name: "Wednesday" },
+    { value: 4, label: "T", name: "Thursday" },
+    { value: 5, label: "F", name: "Friday" },
+    { value: 6, label: "S", name: "Saturday" },
+    { value: 0, label: "S", name: "Sunday" }
+  ];
+  const SAVE_CONFIRMATIONS = [
+    "Technique secured.",
+    "Technique locked in.",
+    "Saved to Your memory."
+  ];
+  const REVIEW_CONFIRMATIONS = [
+    "Review logged. Your memory strengthened.",
+    "Technique refreshed.",
+    "Your memory updated."
+  ];
+  const REVIEW_START_CONFIRMATIONS = [
+    "Play it once to strengthen memory.",
+    "Review started.",
+    "Watch the full sequence to lock it in."
+  ];
   let editingPlaybackIdx = -1;
   let editingPlaybackName = "";
   let editingPlaybackFolder = "";
@@ -1532,8 +1342,13 @@ function isLocked(person, key){
   let playbacksToggleEl;
   let sequenceMenuEl;
   let sequenceToggleEl;
+  let sequenceWindowOffset = { x: 0, y: 0 };
+  let sequenceWindowDrag = null;
+  let memoryMenuEl;
+  let memoryToggleEl;
   let playbacksMenuVersion = 0;
   let compactToolbar = false;
+  let toolbarCompactTouched = false;
   let presetsMenuEl;
   let presetsToggleEl;
   let accountMenuEl;
@@ -1569,6 +1384,11 @@ function isLocked(person, key){
   let showSavedPlaybacksMenu = false;
   let showSavedPresetsMenu = false;
   let showSequenceMenu = false;
+  let showMemoryMenu = false;
+  let showMemoryDescriptions = false;
+  let openMemoryStatus = null;
+  let memoryReviewSessionIndices = [];
+  let memoryReviewSessionStarted = false;
   let showAccountMenu = false;
   let showAccountShortcuts = false;
   let showAccountSettings = false;
@@ -1712,6 +1532,11 @@ function isLocked(person, key){
 
   // floor
   const FLOOR_Y = -0.55; // floor plane y
+  const SUBFLOOR_OUTLINE_CAMERA_CLEARANCE = 0.12;
+  const SUBFLOOR_OUTLINE_DEPTH_THRESHOLD = 0.05;
+  const SUBFLOOR_OUTLINE_EDIT_DEPTH_THRESHOLD = 0.08;
+  const SUBFLOOR_OUTLINE_HYSTERESIS = 0.015;
+  const subfloorOutlineClipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), FLOOR_Y);
   // edge rotation threshold as fraction of canvas dimension
   const EDGE_THRESHOLD = 0.12;
 
@@ -2688,31 +2513,7 @@ function isLocked(person, key){
     jointSpheres.push(toeLJoint, toeRJoint);
     // extras will be positioned after scene initialization with figure-specific dimensions
 
-    // Upper-body control handle: match the reload preset icon
-    const handleGroup = new THREE.Group();
-    handleGroup.userData.isUpperHandle = true;
-    if (person) handleGroup.userData.person = person;
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false, side: THREE.DoubleSide });
-    const iconTex = getReloadHandleTexture();
-    const iconSize = 0.28;
-    const iconGeom = new THREE.PlaneGeometry(iconSize, iconSize);
-    const iconMat = ringMat.clone();
-    if (iconTex) iconMat.map = iconTex;
-    const iconMesh = new THREE.Mesh(iconGeom, iconMat);
-    iconMesh.userData.handleRoot = handleGroup;
-    handleGroup.add(iconMesh);
-    // Invisible hit proxy to allow clicking inside the icon area
-    try {
-      const hitRadius = iconSize * UPPER_HANDLE_HIT_RADIUS_SCALE;
-      const hitGeom = new THREE.SphereGeometry(hitRadius, 16, 12);
-      const hitMat = new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0, transparent: true, depthWrite: false, depthTest: false });
-      const hitMesh = new THREE.Mesh(hitGeom, hitMat);
-      hitMesh.userData.handleRoot = handleGroup;
-      handleGroup.add(hitMesh);
-    } catch(e) {}
-    group.add(handleGroup);
-
-    return { group, jointSpheres, boneList, torso, pelvis, spine, chest, handLBox, handRBox, footLBox, footRBox, upperHandle: handleGroup, toeLJoint, toeRJoint};}
+    return { group, jointSpheres, boneList, torso, pelvis, spine, chest, handLBox, handRBox, footLBox, footRBox, toeLJoint, toeRJoint};}
 
   function materialLooksWhite(material) {
     if (!material || material.map || !material.color) return false;
@@ -2820,8 +2621,7 @@ function isLocked(person, key){
       torsoB, pelvisB, spineB, chestB,
       handBoxesA?.L, handBoxesA?.R, handBoxesB?.L, handBoxesB?.R,
       footBoxesA?.L, footBoxesA?.R, footBoxesB?.L, footBoxesB?.R,
-      toeJointsA?.L, toeJointsA?.R, toeJointsB?.L, toeJointsB?.R,
-      upperHandleA, upperHandleB
+      toeJointsA?.L, toeJointsA?.R, toeJointsB?.L, toeJointsB?.R
     ]) {
       if (mesh) mesh.visible = visible;
     }
@@ -2917,6 +2717,240 @@ function isLocked(person, key){
     return { group, top, bottom };
   }
 
+  function createMeshySubfloorOutline(person) {
+    const color = person === 'A' ? 0x3b82f6 : 0x22c55e;
+    const group = new THREE.Group();
+    const meshes = [];
+    group.visible = false;
+    group.matrixAutoUpdate = false;
+    scene.add(group);
+
+    return {
+      group,
+      meshes,
+      color,
+      visible: false,
+      interactionStartMinY: null,
+      interactionStartProbeDepth: new WeakMap(),
+      editingModeActive: false
+    };
+  }
+
+  function buildMeshySubfloorOutline(rig) {
+    if (!rig?.floorOutline || !rig?.object) return;
+    const outline = rig.floorOutline;
+    const group = outline.group;
+    if (!group || outline.meshes?.length) return;
+    const color = outline.color || (rig.person === 'A' ? 0x3b82f6 : 0x22c55e);
+
+    rig.object.updateMatrixWorld(true);
+    rig.object.traverse((sourceMesh) => {
+      if (!sourceMesh?.isMesh && !sourceMesh?.isSkinnedMesh) return;
+      if (!sourceMesh.geometry) return;
+      const material = new THREE.MeshBasicMaterial({
+        color,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+        depthWrite: false,
+        clippingPlanes: [subfloorOutlineClipPlane],
+        clipIntersection: false
+      });
+      let outlineMesh = null;
+      if (sourceMesh.isSkinnedMesh) {
+        outlineMesh = new THREE.SkinnedMesh(sourceMesh.geometry, material);
+        outlineMesh.bind(sourceMesh.skeleton, sourceMesh.bindMatrix);
+        outlineMesh.bindMode = sourceMesh.bindMode;
+        outlineMesh.bindMatrix.copy(sourceMesh.bindMatrix);
+        outlineMesh.bindMatrixInverse.copy(sourceMesh.bindMatrixInverse);
+      } else {
+        outlineMesh = new THREE.Mesh(sourceMesh.geometry, material);
+      }
+      outlineMesh.matrixAutoUpdate = false;
+      outlineMesh.frustumCulled = false;
+      outlineMesh.renderOrder = 9000;
+      outlineMesh.visible = false;
+      outlineMesh.userData.sourceMesh = sourceMesh;
+      group.add(outlineMesh);
+      outline.meshes.push(outlineMesh);
+    });
+  }
+
+  function setMeshySubfloorOutlineVisible(outline, visible) {
+    if (!outline?.group) return;
+    outline.visible = visible;
+    outline.group.visible = visible;
+    for (const mesh of outline.meshes || []) mesh.visible = visible;
+  }
+
+  function resetMeshySubfloorOutlineState(rig) {
+    const outline = rig?.floorOutline;
+    if (!outline) return;
+    const { box, samples } = meshyRigFloorSamples(rig);
+    outline.interactionStartMinY = box.isEmpty() || !Number.isFinite(box.min.y) ? null : box.min.y;
+    outline.interactionStartProbeDepth = new WeakMap();
+    for (const sample of samples) {
+      if (sample?.probe && Number.isFinite(sample.depth)) {
+        outline.interactionStartProbeDepth.set(sample.probe, sample.depth);
+      }
+    }
+    setMeshySubfloorOutlineVisible(outline, false);
+  }
+
+  function resetAllMeshySubfloorOutlineStates() {
+    for (const rig of meshyRigFigures || []) resetMeshySubfloorOutlineState(rig);
+  }
+
+  function syncMeshySubfloorOutlineMeshes(outline) {
+    for (const outlineMesh of outline?.meshes || []) {
+      const sourceMesh = outlineMesh.userData.sourceMesh;
+      if (!sourceMesh) continue;
+      outlineMesh.visible = !!sourceMesh.visible;
+      outlineMesh.matrix.copy(sourceMesh.matrixWorld);
+      outlineMesh.matrixWorldNeedsUpdate = true;
+    }
+  }
+
+  function meshyRigSubfloorProbeRadius(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    if (name.includes('headfront') || name.includes('chin')) return 0.09;
+    if (name.includes('head')) return 0.13;
+    if (name.includes('neck')) return 0.1;
+    if (name.includes('hand') || name.includes('foot') || name.includes('toe')) return 0.085;
+    if (name.includes('spine') || name.includes('hips') || name.includes('pelvis')) return 0.12;
+    if (name.includes('shoulder')) return 0.1;
+    if (name.includes('arm') || name.includes('leg')) return 0.08;
+    return 0.075;
+  }
+
+  function meshyRigBoneFloorSamples(rig) {
+    const samples = [];
+    const world = new THREE.Vector3();
+    rig?.object?.updateMatrixWorld(true);
+    for (const handle of rig?.handles || []) {
+      const bone = handle?.userData?.bone;
+      if (!bone) continue;
+      try {
+        bone.getWorldPosition(world);
+        const radius = meshyRigSubfloorProbeRadius(bone);
+        const minY = world.y - radius;
+        samples.push({
+          probe: bone,
+          minY,
+          depth: Math.max(0, FLOOR_Y - minY)
+        });
+      } catch (_) {}
+    }
+    return samples;
+  }
+
+  function meshyRigFallbackMeshFloorSamples(rig) {
+    const worldBox = new THREE.Box3();
+    const meshBox = new THREE.Box3();
+    const samples = [];
+    let foundMesh = false;
+    rig?.object?.updateMatrixWorld(true);
+    rig?.object?.traverse((mesh) => {
+      if ((!mesh?.isMesh && !mesh?.isSkinnedMesh) || !mesh.visible || !mesh.geometry) return;
+      try {
+        if (mesh.isSkinnedMesh && typeof mesh.computeBoundingBox === 'function') {
+          mesh.computeBoundingBox();
+        } else if (!mesh.geometry.boundingBox) {
+          mesh.geometry.computeBoundingBox();
+        }
+        const localBox = mesh.boundingBox || mesh.geometry.boundingBox;
+        if (!localBox || localBox.isEmpty()) return;
+        meshBox.copy(localBox).applyMatrix4(mesh.matrixWorld);
+        if (!foundMesh) worldBox.copy(meshBox);
+        else worldBox.union(meshBox);
+        samples.push({ probe: mesh, minY: meshBox.min.y, depth: Math.max(0, FLOOR_Y - meshBox.min.y) });
+        foundMesh = true;
+      } catch (_) {}
+    });
+    if (foundMesh) return { box: worldBox, samples };
+    const fallbackBox = rig?.object ? new THREE.Box3().setFromObject(rig.object) : new THREE.Box3();
+    return { box: fallbackBox, samples };
+  }
+
+  function meshyRigFloorSamples(rig) {
+    const boneSamples = meshyRigBoneFloorSamples(rig);
+    if (boneSamples.length) {
+      const minY = Math.min(...boneSamples.map((sample) => sample.minY).filter(Number.isFinite));
+      const box = Number.isFinite(minY)
+        ? new THREE.Box3(new THREE.Vector3(0, minY, 0), new THREE.Vector3(0, minY + 0.01, 0))
+        : new THREE.Box3();
+      return { box, samples: boneSamples };
+    }
+    return meshyRigFallbackMeshFloorSamples(rig);
+  }
+
+  function meshyRigWorldBox(rig) {
+    return meshyRigFloorSamples(rig).box;
+  }
+
+  function updateMeshySubfloorOutline(rig, activeCamera = camera) {
+    const outline = rig?.floorOutline;
+    if (!outline || !rig?.object || !activeCamera) return;
+
+    const cameraCanSeeFloor = activeCamera.position.y > FLOOR_Y + SUBFLOOR_OUTLINE_CAMERA_CLEARANCE;
+    if (!cameraCanSeeFloor) {
+      setMeshySubfloorOutlineVisible(outline, false);
+      return;
+    }
+
+    const { box, samples } = meshyRigFloorSamples(rig);
+    const editingModeActive = editingPlaybackIdx >= 0 || editingPresetIdx >= 0;
+    const outlineDepthThreshold = editingModeActive
+      ? SUBFLOOR_OUTLINE_EDIT_DEPTH_THRESHOLD
+      : SUBFLOOR_OUTLINE_DEPTH_THRESHOLD;
+    if (outline.editingModeActive !== editingModeActive) {
+      outline.editingModeActive = editingModeActive;
+      outline.interactionStartMinY = box.isEmpty() || !Number.isFinite(box.min.y) ? null : box.min.y;
+      outline.interactionStartProbeDepth = new WeakMap();
+      for (const sample of samples) {
+        if (sample?.probe && Number.isFinite(sample.depth)) {
+          outline.interactionStartProbeDepth.set(sample.probe, sample.depth);
+        }
+      }
+      setMeshySubfloorOutlineVisible(outline, false);
+    }
+    // Once visible, clip at the real floor so the outline remains flush with the body.
+    subfloorOutlineClipPlane.constant = FLOOR_Y;
+    if (box.isEmpty()) {
+      setMeshySubfloorOutlineVisible(outline, false);
+      return;
+    }
+
+    const hasAnyVisiblePenetration = samples.some((sample) => sample.depth > outlineDepthThreshold);
+    const hasMeaningfulNewPenetration = samples.some((sample) => {
+      if (!sample?.probe || !Number.isFinite(sample.depth)) return false;
+      const startDepth = outline.interactionStartProbeDepth?.get(sample.probe);
+      if (!Number.isFinite(startDepth)) {
+        outline.interactionStartProbeDepth?.set(sample.probe, sample.depth);
+        return false;
+      }
+      return sample.depth > outlineDepthThreshold
+        && sample.depth > startDepth + outlineDepthThreshold;
+    });
+    const hasAnyVisiblePenetrationAfterHysteresis = samples.some((sample) => sample.depth > Math.max(0, outlineDepthThreshold - SUBFLOOR_OUTLINE_HYSTERESIS));
+    if (outline.visible) {
+      if (!hasAnyVisiblePenetrationAfterHysteresis) {
+        setMeshySubfloorOutlineVisible(outline, false);
+        return;
+      }
+    } else {
+      if (!hasAnyVisiblePenetration || !hasMeaningfulNewPenetration) {
+        setMeshySubfloorOutlineVisible(outline, false);
+        return;
+      }
+    }
+
+    buildMeshySubfloorOutline(rig);
+    setMeshySubfloorOutlineVisible(outline, true);
+    syncMeshySubfloorOutlineMeshes(outline);
+  }
+
   function createMeshyRigFigure(object, person) {
     const rig = {
       object,
@@ -2925,6 +2959,7 @@ function isLocked(person, key){
       handles: [],
       rotationIcon: null,
       rotationIconHandles: [],
+      floorOutline: null,
       bindPositions: new Map(),
       positionOverrides: new Map(),
       bindQuaternions: new Map(),
@@ -2970,6 +3005,7 @@ function isLocked(person, key){
     scene.add(rig.jointGroup);
     rig.rotationIcon = createMeshyRigRotationIcon(rig);
     rig.rotationIconHandles = [rig.rotationIcon.top, rig.rotationIcon.bottom];
+    rig.floorOutline = createMeshySubfloorOutline(person);
     updateMeshyRigHandles(rig);
     meshyRigFigures.push(rig);
     return rig;
@@ -3025,7 +3061,10 @@ function isLocked(person, key){
   }
 
   function updateAllMeshyRigHandles() {
-    for (const rig of meshyRigFigures) updateMeshyRigHandles(rig);
+    for (const rig of meshyRigFigures) {
+      updateMeshyRigHandles(rig);
+      updateMeshySubfloorOutline(rig);
+    }
   }
 
   function findMeshyRigBone(rig, name) {
@@ -3894,6 +3933,7 @@ function isLocked(person, key){
     const rig = handle?.userData?.meshyRig;
     const bone = handle?.userData?.bone;
     if (!rig || !bone) return false;
+    resetMeshySubfloorOutlineState(rig);
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     if (handle.userData.marker) handle.userData.marker.material = meshyRigSelectedJointMaterial;
     meshyRigBodyTwistDrag = {
@@ -4013,6 +4053,9 @@ function isLocked(person, key){
     const rig = handle?.userData?.meshyRig;
     const bone = handle?.userData?.bone;
     if (!rig || !bone) return false;
+    resetMeshySubfloorOutlineState(rig);
+    selectedMeshyRig = rig;
+    mobileSelectedRigHandle = handle;
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     if (handle.userData.marker) handle.userData.marker.material = meshyRigSelectedJointMaterial;
     meshyRigTwistDrag = {
@@ -4066,7 +4109,7 @@ function isLocked(person, key){
     if (!isMobileViewport() || !handle) return;
     mobileCrosshair = {
       ...mobileCrosshair,
-      visible: true,
+      visible: false,
       active: false,
       pointerId: null,
       x: Math.round(Math.max(88, Math.min((typeof window !== 'undefined' ? window.innerWidth : 240) - 88, (typeof window !== 'undefined' ? window.innerWidth : 240) / 2))),
@@ -4085,7 +4128,7 @@ function isLocked(person, key){
     if (!isMobileViewport() || !rig) return;
     mobileCrosshair = {
       ...mobileCrosshair,
-      visible: true,
+      visible: false,
       active: false,
       pointerId: null,
       x: Math.round(Math.max(88, Math.min((typeof window !== 'undefined' ? window.innerWidth : 240) - 88, (typeof window !== 'undefined' ? window.innerWidth : 240) / 2))),
@@ -4187,6 +4230,44 @@ function isLocked(person, key){
     updateMeshyRigHandles(rig);
     selectedMeshyRig = rig;
     return true;
+  }
+
+  function nudgeSelectedMobileJointDepth(direction) {
+    const handle = mobileSelectedRigHandle || mobileCrosshair.handle;
+    const rig = handle?.userData?.meshyRig;
+    const bone = handle?.userData?.bone;
+    if (!handle || !rig || !bone || !camera || !direction) return false;
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    resetMeshySubfloorOutlineState(rig);
+    const cameraForward = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const step = 0.045 * direction;
+    const targetWorld = handle.position.clone().addScaledVector(cameraForward, step);
+    solveMeshyRigBoneToTarget(rig, bone, targetWorld);
+    updateMeshyRigHandles(rig);
+    mobileSelectedRigHandle = handle;
+    mobileCrosshair = {
+      ...mobileCrosshair,
+      handle,
+      rig,
+      mode: 'joint'
+    };
+    selectedMeshyRig = rig;
+    return true;
+  }
+
+  function startMobileDepthButton(direction, event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    nudgeSelectedMobileJointDepth(direction);
+    stopMobileDepthButton();
+    mobileDepthHoldTimer = setInterval(() => nudgeSelectedMobileJointDepth(direction), 55);
+  }
+
+  function stopMobileDepthButton() {
+    if (!mobileDepthHoldTimer) return;
+    try { clearInterval(mobileDepthHoldTimer); } catch(e) {}
+    mobileDepthHoldTimer = null;
+    dragSnapshotTaken = false;
   }
 
   function applyMobileCrosshairWholeFigureRotation(dx, dy) {
@@ -4335,7 +4416,9 @@ function isLocked(person, key){
     const rig = handle.userData.meshyRig;
     const bone = handle.userData.bone;
     if (!rig || !bone) return false;
+    resetMeshySubfloorOutlineState(rig);
     selectedMeshyRig = rig;
+    mobileSelectedRigHandle = handle;
     const world = handle.position.clone();
     const normal = camera.getWorldDirection(new THREE.Vector3()).negate();
     meshyRigDragPlane.setFromNormalAndCoplanarPoint(normal, world);
@@ -4467,6 +4550,7 @@ function isLocked(person, key){
 
   function startMeshyFigureDrag(event, rig, hit) {
     if (!rig || !hit) return false;
+    resetMeshySubfloorOutlineState(rig);
     selectedMeshyRig = rig;
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     const normal = camera.getWorldDirection(new THREE.Vector3()).negate();
@@ -4612,15 +4696,26 @@ function isLocked(person, key){
     if (!renderer || !camera || !meshyRigFigures.length) return;
     const isMobilePointer = event.pointerType === 'touch' || (isMobileViewport() && event.pointerType !== 'mouse');
     if (isMobilePointer && event.button !== 2 && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
-      const figureHit = pickMeshyRigFigure(event);
-      const jointHandle = figureHit ? null : pickMeshyRigJoint(event);
+      const jointHandle = pickMeshyRigJoint(event);
+      const figureHit = jointHandle ? null : pickMeshyRigFigure(event);
       const tapRig = figureHit?.rig || jointHandle?.userData?.meshyRig || null;
       const now = Date.now();
-      const isDoubleTap = !!tapRig
+      const sameTapTarget = !!tapRig
         && lastMobileFigureTap.rig === tapRig
         && now - lastMobileFigureTap.time < 360
         && Math.hypot(event.clientX - lastMobileFigureTap.x, event.clientY - lastMobileFigureTap.y) < 34;
-      lastMobileFigureTap = { rig: tapRig, time: now, x: event.clientX, y: event.clientY };
+      const tapCount = sameTapTarget ? Math.min(3, (lastMobileFigureTap.count || 1) + 1) : 1;
+      lastMobileFigureTap = { rig: tapRig, time: now, x: event.clientX, y: event.clientY, count: tapCount };
+      const isTripleTap = !!jointHandle && tapCount >= 3;
+      const isDoubleTap = !!tapRig && tapCount === 2;
+      if (isTripleTap) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        hideMobileCrosshair();
+        startMeshyRigBodyTwistDrag(event, jointHandle, 'whole');
+        return;
+      }
       if (isDoubleTap) {
         event.preventDefault();
         event.stopPropagation();
@@ -4644,6 +4739,7 @@ function isLocked(person, key){
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
+      resetAllMeshySubfloorOutlineStates();
       const handle = pickMeshyRigJoint(event);
       if (handle) {
         event.preventDefault();
@@ -4654,6 +4750,7 @@ function isLocked(person, key){
       return;
     }
     if (event.ctrlKey || event.metaKey) {
+      resetAllMeshySubfloorOutlineStates();
       const figureHit = pickMeshyRigFigure(event);
       const jointHandle = figureHit ? null : pickMeshyRigJoint(event);
       const jointRig = jointHandle?.userData?.meshyRig;
@@ -4676,6 +4773,10 @@ function isLocked(person, key){
     event.stopPropagation();
     event.stopImmediatePropagation?.();
     if (event.button === 2) {
+      startMeshyRigTwistDrag(event, handle);
+      return;
+    }
+    if (isMobilePointer && mobileJointMode === 'rotate') {
       startMeshyRigTwistDrag(event, handle);
       return;
     }
@@ -4799,8 +4900,9 @@ function isLocked(person, key){
 
       meshyFigureA = cloneSkeleton(meshyFigureTemplate);
       meshyFigureB = cloneSkeleton(meshyFigureTemplate);
-      prepareMeshyFightlabFigure(meshyFigureA, TORSO_NORMAL_COLOR_A, textureMaterial);
-      prepareMeshyFightlabFigure(meshyFigureB, TORSO_NORMAL_COLOR_B, textureMaterial);
+      const scheme = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
+      prepareMeshyFightlabFigure(meshyFigureA, scheme.A, textureMaterial);
+      prepareMeshyFightlabFigure(meshyFigureB, scheme.B, textureMaterial);
       meshyFigureA.userData.isMeshyFightlabFigure = true;
       meshyFigureB.userData.isMeshyFightlabFigure = true;
       meshyFigureA.userData.meshyFacingYaw = Math.PI / 2;
@@ -4812,6 +4914,7 @@ function isLocked(person, key){
       setClassicFightlabBodyVisible(false);
       createMeshyRigFigure(meshyFigureA, 'A');
       createMeshyRigFigure(meshyFigureB, 'B');
+      applyColorblindScheme();
       clearPendingMeshyRigPose();
       if (startPosition === 'neutral') placeAllMeshyRigsNeutralStanding();
       else syncMeshyRigsFromCurrentJoints();
@@ -4909,7 +5012,6 @@ function isLocked(person, key){
   }
 
   function resetTransientPoseInteractionState(){
-    hoverUpperHandlePerson = null;
     dragTorsoAnchorA = null;
     dragTorsoAnchorB = null;
     dragTorsoForwardA = null;
@@ -4980,24 +5082,47 @@ function isLocked(person, key){
   // Apply current colorblind scheme to figure body materials
   function applyColorblindScheme(){
     const scheme = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
-    const applyToGroup = (group, which)=>{
+    const applyToGroup = (group, which, opts = {})=>{
       if (!group) return;
       const bodyColor = (which === 'A') ? scheme.A : scheme.B;
       group.traverse(obj=>{
         if (!obj.isMesh || !obj.material) return;
         // Skip joint spheres/toe joints which have a joint key
-        if (obj.userData && obj.userData.key) return;
+        if (!opts.includeJointKeys && obj.userData && obj.userData.key) return;
         try{
           if (Array.isArray(obj.material)){
-            for (const m of obj.material){ if (m?.color) m.color.setHex(bodyColor); }
+            for (const m of obj.material){
+              if (m?.color) {
+                m.color.setHex(bodyColor);
+                m.needsUpdate = true;
+              }
+            }
           } else if (obj.material.color){
             obj.material.color.setHex(bodyColor);
+            obj.material.needsUpdate = true;
           }
         }catch(e){}
       });
     };
     applyToGroup(figureGroupA, 'A');
     applyToGroup(figureGroupB, 'B');
+    applyToGroup(meshyFigureA, 'A', { includeJointKeys: true });
+    applyToGroup(meshyFigureB, 'B', { includeJointKeys: true });
+    try {
+      for (const rig of meshyRigFigures || []) {
+        const markerColor = rig.person === 'A' ? scheme.A : scheme.B;
+        for (const handle of rig.handles || []) {
+          const marker = handle?.userData?.marker;
+          const baseMaterial = handle?.userData?.markerBaseMaterial;
+          for (const material of [baseMaterial, marker?.material]) {
+            if (!material?.color || material === meshyRigSelectedJointMaterial) continue;
+            material.color.setHex(markerColor);
+            if (material.emissive) material.emissive.setHex(markerColor);
+            material.needsUpdate = true;
+          }
+        }
+      }
+    } catch(e) {}
     applyJointDefaultColors();
     updateTorsoColors();
   }
@@ -5072,14 +5197,6 @@ function isLocked(person, key){
     chest.setRotationFromMatrix(torsoBasis);
 
     // ---- Shoulder bar (kept slim, aligns to shoulders)
-
-    // ---- Upper-body control handle: floats above shoulder center along torso up
-    if (upperHandle){
-      const headPos = new THREE.Vector3(...joints.head);
-      const pos = headPos.clone().add(new THREE.Vector3(0, HEAD_HANDLE_OFFSET, 0));
-      upperHandle.position.copy(pos);
-      try{ if (camera) upperHandle.lookAt(camera.position); }catch(e){}
-    }
 
     // ---- Hands (simple ellipsoids aligned along forearm)
     const handL = new THREE.Vector3(...joints.handL);
@@ -5300,9 +5417,9 @@ function isLocked(person, key){
     boneMeshesB.forEach(b => { const s=new THREE.Vector3(...jointsB[b.a]); const e=new THREE.Vector3(...jointsB[b.b]); alignCylinder(b.mesh, s, e); });
     // body parts
     updateTorsoFromJoints(torsoA, jointsA, skeletonA?.dims ?? {torsoWidth:0.5, torsoHeight:0.6, torsoDepth:0.28});
-    updateBodyExtras({torso:torsoA, pelvis:pelvisA, spine:spineA, chest:chestA, handLBox:handBoxesA.L, handRBox:handBoxesA.R, footLBox:footBoxesA.L, footRBox:footBoxesA.R, upperHandle: upperHandleA, toeLJoint: toeJointsA.L, toeRJoint: toeJointsA.R, person: 'A'}, jointsA, skeletonA?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    updateBodyExtras({torso:torsoA, pelvis:pelvisA, spine:spineA, chest:chestA, handLBox:handBoxesA.L, handRBox:handBoxesA.R, footLBox:footBoxesA.L, footRBox:footBoxesA.R, toeLJoint: toeJointsA.L, toeRJoint: toeJointsA.R, person: 'A'}, jointsA, skeletonA?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
     updateTorsoFromJoints(torsoB, jointsB, skeletonB?.dims ?? {torsoWidth:0.5, torsoHeight:0.6, torsoDepth:0.28});
-    updateBodyExtras({torso:torsoB, pelvis:pelvisB, spine:spineB, chest:chestB, handLBox:handBoxesB.L, handRBox:handBoxesB.R, footLBox:footBoxesB.L, footRBox:footBoxesB.R, upperHandle: upperHandleB, toeLJoint: toeJointsB.L, toeRJoint: toeJointsB.R, person: 'B'}, jointsB, skeletonB?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    updateBodyExtras({torso:torsoB, pelvis:pelvisB, spine:spineB, chest:chestB, handLBox:handBoxesB.L, handRBox:handBoxesB.R, footLBox:footBoxesB.L, footRBox:footBoxesB.R, toeLJoint: toeJointsB.L, toeRJoint: toeJointsB.R, person: 'B'}, jointsB, skeletonB?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
     if (meshyFigureA || meshyFigureB) setClassicFightlabBodyVisible(false);
 
   }
@@ -5317,9 +5434,9 @@ function isLocked(person, key){
     boneMeshesB.forEach(b => { const s=new THREE.Vector3(...jointsB[b.a]); const e=new THREE.Vector3(...jointsB[b.b]); alignCylinder(b.mesh, s, e); });
     // body parts
     updateTorsoFromJoints(torsoA, jointsA, skeletonA?.dims ?? {torsoWidth:0.5, torsoHeight:0.6, torsoDepth:0.28});
-    updateBodyExtras({torso:torsoA, pelvis:pelvisA, spine:spineA, chest:chestA, handLBox:handBoxesA.L, handRBox:handBoxesA.R, footLBox:footBoxesA.L, footRBox:footBoxesA.R, upperHandle: upperHandleA, toeLJoint: toeJointsA.L, toeRJoint: toeJointsA.R, person: 'A'}, jointsA, skeletonA?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    updateBodyExtras({torso:torsoA, pelvis:pelvisA, spine:spineA, chest:chestA, handLBox:handBoxesA.L, handRBox:handBoxesA.R, footLBox:footBoxesA.L, footRBox:footBoxesA.R, toeLJoint: toeJointsA.L, toeRJoint: toeJointsA.R, person: 'A'}, jointsA, skeletonA?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
     updateTorsoFromJoints(torsoB, jointsB, skeletonB?.dims ?? {torsoWidth:0.5, torsoHeight:0.6, torsoDepth:0.28});
-    updateBodyExtras({torso:torsoB, pelvis:pelvisB, spine:spineB, chest:chestB, handLBox:handBoxesB.L, handRBox:handBoxesB.R, footLBox:footBoxesB.L, footRBox:footBoxesB.R, upperHandle: upperHandleB, toeLJoint: toeJointsB.L, toeRJoint: toeJointsB.R, person: 'B'}, jointsB, skeletonB?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
+    updateBodyExtras({torso:torsoB, pelvis:pelvisB, spine:spineB, chest:chestB, handLBox:handBoxesB.L, handRBox:handBoxesB.R, footLBox:footBoxesB.L, footRBox:footBoxesB.R, toeLJoint: toeJointsB.L, toeRJoint: toeJointsB.R, person: 'B'}, jointsB, skeletonB?.dims ?? {pelvisWidth:0.4, chestWidth:0.6, chestHeight:0.6, chestDepth:0.32});
     if (meshyFigureA || meshyFigureB) setClassicFightlabBodyVisible(false);
   }
 
@@ -6225,6 +6342,7 @@ function clampToDragLengths(person, jointKey, target){
       camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.05, 1000);
       camera.position.set(2, 1.6, 3);
       renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+      renderer.localClippingEnabled = true;
       renderer.setPixelRatio(window.devicePixelRatio);
       updateMobileViewportInset();
       const viewportSize = getRenderViewportSize();
@@ -6287,21 +6405,6 @@ function clampToDragLengths(person, jointKey, target){
       toeJointsB = { L: dB.toeLJoint, R: dB.toeRJoint };
       if (handBoxesA?.L){ handBoxesA.L.userData.person = 'A'; handBoxesA.R.userData.person = 'A'; }
       if (handBoxesB?.L){ handBoxesB.L.userData.person = 'B'; handBoxesB.R.userData.person = 'B'; }
-      upperHandleA = dA.upperHandle; upperHandleB = dB.upperHandle;
-      function setHandleVisual(h, color, emissive, scale=1){
-        if (!h) return;
-        h.scale.set(scale, scale, scale);
-        h.traverse(m=>{
-          if (m.isMesh && m.material){
-            if (m.material.color) m.material.color.setHex(color);
-            if (m.material.emissive) m.material.emissive.setHex(emissive);
-          }
-        });
-      }
-      const ROT_GREEN = 0x00b050, ROT_EMISS = 0x003a20;
-      // Make the head handle icon smaller via scale
-      if (upperHandleA){ setHandleVisual(upperHandleA, ROT_GREEN, ROT_EMISS, 0.75); upperHandleA.userData.defaultColor = ROT_GREEN; upperHandleA.userData.person='A'; }
-      if (upperHandleB){ setHandleVisual(upperHandleB, ROT_GREEN, ROT_EMISS, 0.75); upperHandleB.userData.defaultColor = ROT_GREEN; upperHandleB.userData.person='B'; }
       addMeshyFightlabFigures();
 
       // Ensure torso colors and body colors reflect current mode/lock state
@@ -6395,18 +6498,29 @@ function clampToDragLengths(person, jointKey, target){
         stopMeshyRigDepthNudge();
         stopDepthNudge();
       };
+      const preventInteractionSelection = (e) => {
+        if (isTypingTarget(e.target)) return;
+        if (e.type === 'dragstart' && e.target?.closest?.('[draggable="true"]')) return;
+        e.preventDefault();
+      };
       window.addEventListener('keydown', meshyDepthKeyCapture, true);
       window.addEventListener('keydown', kd);
       window.addEventListener('keyup', ku);
       window.addEventListener('blur', stopAllDepthNudges);
+      window.addEventListener('selectstart', preventInteractionSelection, true);
+      window.addEventListener('dragstart', preventInteractionSelection, true);
       const handleGlobalPointer = (e)=>{
         const t = e.target;
         if (showSequenceMenu && !clickInside(t, sequenceMenuEl, playbacksMenuEl, sequenceToggleEl, playbacksToggleEl)) {
-          showSequenceMenu = false;
-          showSavedPlaybacksMenu = false;
+          const sequenceWindowMoved = Math.abs(sequenceWindowOffset?.x || 0) > 1 || Math.abs(sequenceWindowOffset?.y || 0) > 1;
+          if (!sequenceDraftActive && !sequenceWindowMoved) {
+            showSequenceMenu = false;
+            showSavedPlaybacksMenu = false;
+          }
         } else if (showSavedPlaybacksMenu && !clickInside(t, playbacksMenuEl, playbacksToggleEl, sequenceMenuEl, sequenceToggleEl)) {
           showSavedPlaybacksMenu = false;
         }
+        if (showMemoryMenu && !clickInside(t, memoryMenuEl, memoryToggleEl)) showMemoryMenu = false;
         if (showSavedPresetsMenu && !clickInside(t, presetsMenuEl, presetsToggleEl)) showSavedPresetsMenu = false;
         if (showAccountMenu && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllMenus();
         if ((showAccountAuth || showAccountSettings || showAccountShortcuts) && !clickInside(t, accountMenuEl, accountToggleEl)) closeAllSettingTabs();
@@ -6420,6 +6534,8 @@ function clampToDragLengths(person, jointKey, target){
         window.removeEventListener('keyup', ku);
         window.removeEventListener('blur', stopAllDepthNudges);
         window.removeEventListener('wheel', meshyWheelCapture, true);
+        window.removeEventListener('selectstart', preventInteractionSelection, true);
+        window.removeEventListener('dragstart', preventInteractionSelection, true);
         window.removeEventListener('pointerdown', handleGlobalPointer, true);
         try{ window.visualViewport?.removeEventListener('resize', onResize); }catch(e){}
         try{ toolbarResizeObserver?.disconnect(); }catch(e){}
@@ -6465,6 +6581,7 @@ function clampToDragLengths(person, jointKey, target){
   function onResize(){
     if (!renderer) return;
     updateShortcutViewportMode();
+    if (!toolbarCompactTouched && isMobileViewport()) compactToolbar = true;
     updateMobileViewportInset();
     const viewportSize = getRenderViewportSize();
     const singleViewRect = getSingleViewViewportRect(viewportSize.width, viewportSize.height);
@@ -7119,7 +7236,13 @@ function clampToDragLengths(person, jointKey, target){
       poses = [...poses, { data, comment: (comment||'') }];
       currentFrame = poses.length - 1;
     }
+    if (editingPlaybackIdx < 0) {
+      sequenceDraftActive = true;
+      showSequenceMenu = true;
+      showSavedPlaybacksMenu = false;
+    }
     comment = '';
+    playMemorySaveSound("frame");
   }
   function applyFrame(idx){
     if (!poses || poses.length===0) return;
@@ -7130,7 +7253,17 @@ function clampToDragLengths(person, jointKey, target){
     playbackApplying = true;
     try{ applyLoadedPose(snap); }finally{ playbackApplying = false; }
   }
-  function nextFrame(){ if (!poses.length) return; applyFrame((currentFrame+1)%poses.length); }
+  function nextFrame(){
+    if (!poses.length) return;
+    const wasLastReviewFrame = activeReviewPlaybackIdx >= 0 && activeReviewFrameCount > 0 && currentFrame >= activeReviewFrameCount - 1;
+    applyFrame((currentFrame+1)%poses.length);
+    if (wasLastReviewFrame){
+      const reviewedIdx = activeReviewPlaybackIdx;
+      activeReviewPlaybackIdx = -1;
+      activeReviewFrameCount = 0;
+      markSavedPlaybackReviewed(reviewedIdx);
+    }
+  }
   function prevFrame(){ if (!poses.length) return; applyFrame((currentFrame-1+poses.length)%poses.length); }
   function commitLivePoseToCurrentFrame(){
     if (!poses || !poses[currentFrame]) return;
@@ -7187,11 +7320,120 @@ function clampToDragLengths(person, jointKey, target){
   playbackSpeedPct = intervalToPct(playbackIntervalMs);
   function clearPlaybackQueue(){
     stopPlayback();
+    activeReviewPlaybackIdx = -1;
+    activeReviewFrameCount = 0;
     poses = [];
+    sequenceDraftActive = false;
     currentFrame = 0;
     comment = '';
     commentText = '';
     commentVisible = false;
+  }
+  function cancelSequenceDraft(){
+    clearPlaybackQueue();
+    newPlaybackName = "";
+    showSequenceMenu = false;
+    showSavedPlaybacksMenu = false;
+    sequenceWindowOffset = { x: 0, y: 0 };
+  }
+  function startSequenceWindowDrag(event){
+    if (!sequenceMenuEl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = sequenceMenuEl.getBoundingClientRect();
+    sequenceWindowDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: sequenceWindowOffset.x,
+      offsetY: sequenceWindowOffset.y,
+      rect
+    };
+    event.currentTarget?.setPointerCapture?.(event.pointerId);
+    try {
+      window.addEventListener('pointermove', moveSequenceWindow, true);
+      window.addEventListener('pointerup', stopSequenceWindowDrag, true);
+      window.addEventListener('pointercancel', stopSequenceWindowDrag, true);
+    } catch(_) {}
+  }
+  function moveSequenceWindow(event){
+    if (!sequenceWindowDrag || event.pointerId !== sequenceWindowDrag.pointerId) return;
+    event.preventDefault?.();
+    const margin = 8;
+    const dx = event.clientX - sequenceWindowDrag.startX;
+    const dy = event.clientY - sequenceWindowDrag.startY;
+    const proposedX = sequenceWindowDrag.offsetX + dx;
+    const proposedY = sequenceWindowDrag.offsetY + dy;
+    const baseLeft = sequenceWindowDrag.rect.left - sequenceWindowDrag.offsetX;
+    const baseTop = sequenceWindowDrag.rect.top - sequenceWindowDrag.offsetY;
+    const minX = margin - baseLeft;
+    const maxX = window.innerWidth - margin - sequenceWindowDrag.rect.width - baseLeft;
+    const minY = margin - baseTop;
+    const maxY = window.innerHeight - margin - sequenceWindowDrag.rect.height - baseTop;
+    sequenceWindowOffset = {
+      x: Math.max(minX, Math.min(maxX, proposedX)),
+      y: Math.max(minY, Math.min(maxY, proposedY))
+    };
+  }
+  function stopSequenceWindowDrag(event){
+    if (!sequenceWindowDrag || event.pointerId !== sequenceWindowDrag.pointerId) return;
+    try{ event.currentTarget?.releasePointerCapture?.(event.pointerId); }catch(_){}
+    try {
+      window.removeEventListener('pointermove', moveSequenceWindow, true);
+      window.removeEventListener('pointerup', stopSequenceWindowDrag, true);
+      window.removeEventListener('pointercancel', stopSequenceWindowDrag, true);
+    } catch(_) {}
+    sequenceWindowDrag = null;
+  }
+  function clearSequenceWindowDrag(){
+    try {
+      window.removeEventListener('pointermove', moveSequenceWindow, true);
+      window.removeEventListener('pointerup', stopSequenceWindowDrag, true);
+      window.removeEventListener('pointercancel', stopSequenceWindowDrag, true);
+    } catch(_) {}
+    sequenceWindowDrag = null;
+  }
+  function closeSequenceWindow(){
+    showSequenceMenu = false;
+    showSavedPlaybacksMenu = false;
+    clearSequenceWindowDrag();
+    sequenceWindowOffset = { x: 0, y: 0 };
+  }
+  function portalToBody(node, enabled = false) {
+    let parent = null;
+    let placeholder = null;
+    let moved = false;
+    const move = () => {
+      if (typeof document === 'undefined' || !node) return;
+      if (enabled && !moved) {
+        parent = node.parentNode;
+        if (!parent) return;
+        placeholder = document.createComment('sequence-portal');
+        parent.insertBefore(placeholder, node);
+        document.body.appendChild(node);
+        moved = true;
+      } else if (!enabled && moved) {
+        if (placeholder?.parentNode) placeholder.parentNode.insertBefore(node, placeholder);
+        placeholder?.remove?.();
+        placeholder = null;
+        moved = false;
+      }
+    };
+    move();
+    return {
+      update(value) {
+        enabled = !!value;
+        move();
+      },
+      destroy() {
+        if (moved) {
+          if (node?.parentNode) node.parentNode.removeChild(node);
+          placeholder?.remove?.();
+          placeholder = null;
+          moved = false;
+        }
+      }
+    };
   }
   const closeAllSettingTabs = ()=>{
     showAccountAuth = false;
@@ -7202,6 +7444,7 @@ function clampToDragLengths(person, jointKey, target){
     showSavedPlaybacksMenu = false;
     showSavedPresetsMenu = false;
     showSequenceMenu = false;
+    showMemoryMenu = false;
     showAccountMenu = false;
     closeAllSettingTabs();
   };
@@ -7210,6 +7453,7 @@ function clampToDragLengths(person, jointKey, target){
     showSavedPlaybacksMenu = next;
     if (next) showSequenceMenu = true;
     showSavedPresetsMenu = false;
+    showMemoryMenu = false;
     if (next){
       playbackFolderView = null;
       playbacksMenuVersion += 1;
@@ -7218,9 +7462,12 @@ function clampToDragLengths(person, jointKey, target){
   function openSavedSequencesMenu(event){
     event?.preventDefault?.();
     event?.stopPropagation?.();
+    clearSequenceWindowDrag();
+    sequenceWindowOffset = { x: 0, y: 0 };
     showSequenceMenu = true;
     showSavedPlaybacksMenu = true;
     showSavedPresetsMenu = false;
+    showMemoryMenu = false;
     playbackFolderView = null;
     playbacksMenuVersion += 1;
   }
@@ -7228,8 +7475,22 @@ function clampToDragLengths(person, jointKey, target){
     const next = !showSequenceMenu;
     showSequenceMenu = next;
     showSavedPresetsMenu = false;
+    showMemoryMenu = false;
     showAccountMenu = false;
     if (!next) showSavedPlaybacksMenu = false;
+  }
+  function toggleMemoryMenu(){
+    const next = !showMemoryMenu;
+    if (next && !memoryReviewSessionStarted) startMemoryReviewSession();
+    showMemoryMenu = next;
+    showSequenceMenu = false;
+    showSavedPlaybacksMenu = false;
+    showSavedPresetsMenu = false;
+    showAccountMenu = false;
+  }
+  function startMemoryReviewSession(){
+    memoryReviewSessionIndices = reviewTodayPlaybacks.slice(0, 5).map((pb)=> pb._idx);
+    memoryReviewSessionStarted = true;
   }
   function toggleAccountSetting(panel){
     const next = (panel === 'account') ? !showAccountAuth : (panel === 'settings') ? !showAccountSettings : (panel === 'shortcuts') ? !showAccountShortcuts : false;
@@ -7323,9 +7584,554 @@ function clampToDragLengths(person, jointKey, target){
     }
     return null;
   }
-  function normalizeSavedPlayback(pb){
+  const GOOD_START_DAYS = 7;
+  const GOOD_MAX_DAYS = 14;
+  const STRONG_DAILY_STREAK_DAYS = 4;
+  const STRONG_MAX_WEEKS = 4;
+  const REVIEW_GRACE_DAYS = 1;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  function todayKey(date = new Date()){
+    const d = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+  }
+  function addDaysIso(base, days){
+    const d = base ? new Date(base) : new Date();
+    if (Number.isNaN(d.getTime())) return new Date(Date.now() + days * DAY_MS).toISOString();
+    d.setDate(d.getDate() + days);
+    return d.toISOString();
+  }
+  function daysBetweenKeys(a, b){
+    if (!a || !b) return null;
+    const ad = new Date(`${a}T00:00:00`);
+    const bd = new Date(`${b}T00:00:00`);
+    if (Number.isNaN(ad.getTime()) || Number.isNaN(bd.getTime())) return null;
+    return Math.round((bd.getTime() - ad.getTime()) / DAY_MS);
+  }
+  function nextReviewAt(days = GOOD_START_DAYS, base = new Date()){
+    const safeDays = Math.max(1, Number.parseInt(days, 10) || GOOD_START_DAYS);
+    return addDaysIso(base, safeDays);
+  }
+  function isDueForReview(pb){
+    if (!pb?.next_review_at) return true;
+    const next = new Date(pb.next_review_at);
+    if (Number.isNaN(next.getTime())) return true;
+    return next.getTime() <= Date.now();
+  }
+  function isWithinReviewGrace(pb){
+    if (!pb?.next_review_at) return false;
+    const next = new Date(pb.next_review_at);
+    if (Number.isNaN(next.getTime())) return false;
+    return Date.now() - next.getTime() <= REVIEW_GRACE_DAYS * DAY_MS;
+  }
+  function friendlyMemoryDate(value, empty = "Not reviewed yet"){
+    if (!value) return empty;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return empty;
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  function memoryStatusFor(pb){
+    const reviewCount = Math.max(0, Number.parseInt(pb?.review_count, 10) || 0);
+    const dailyStreak = Math.max(0, Number.parseInt(pb?.daily_review_streak, 10) || 0);
+    const strongUnlocked = !!pb?.strong_unlocked || dailyStreak >= STRONG_DAILY_STREAK_DAYS;
+    if (!reviewCount || !dailyStreak) return { label: "Weak", tone: "weak" };
+    if (isDueForReview(pb)) {
+      return isWithinReviewGrace(pb) ? { label: "Needs Review", tone: "review" } : { label: "Weak", tone: "weak" };
+    }
+    if (strongUnlocked) return { label: "Strong", tone: "strong" };
+    return { label: "Good", tone: "good" };
+  }
+  function daysUntilNextReview(pb){
+    const next = new Date(pb?.next_review_at || 0);
+    if (!pb?.next_review_at || Number.isNaN(next.getTime())) return null;
+    return Math.ceil((next.getTime() - Date.now()) / DAY_MS);
+  }
+  function formatMemoryDays(days){
+    if (days == null) return "no date";
+    if (days <= 0) return "today";
+    if (days === 1) return "1 day";
+    return `${days} days`;
+  }
+  function daysLeftInCurrentState(pb){
+    const status = memoryStatusFor(pb);
+    if (status.tone === "weak") return null;
+    if (status.tone === "review") {
+      const next = new Date(pb?.next_review_at || 0);
+      if (!pb?.next_review_at || Number.isNaN(next.getTime())) return null;
+      return Math.max(0, Math.ceil((next.getTime() + REVIEW_GRACE_DAYS * DAY_MS - Date.now()) / DAY_MS));
+    }
+    const days = daysUntilNextReview(pb);
+    return days == null ? null : Math.max(0, days);
+  }
+  function reviewsUntilStrong(pb){
+    const dailyStreak = Math.max(0, Number.parseInt(pb?.daily_review_streak, 10) || 0);
+    return Math.max(0, STRONG_DAILY_STREAK_DAYS - dailyStreak);
+  }
+  function strongProgressLabel(pb){
+    const status = memoryStatusFor(pb);
+    if (status.tone !== "good") return "";
+    const dailyStreak = Math.max(0, Number.parseInt(pb?.daily_review_streak, 10) || 0);
+    return `${Math.max(1, Math.min(STRONG_DAILY_STREAK_DAYS - 1, dailyStreak))}/${STRONG_DAILY_STREAK_DAYS}`;
+  }
+  function formatDaysToStrong(count){
+    if (count <= 0) return "Strong unlocked";
+    if (count === 1) return "1 more daily review to Strong";
+    return `${count} more daily reviews to Strong`;
+  }
+  function memoryStateChangeText(pb){
+    const status = memoryStatusFor(pb);
+    const stateDays = daysLeftInCurrentState(pb);
+    const toStrong = reviewsUntilStrong(pb);
+    const strongWeeks = Math.max(1, Number.parseInt(pb?.strong_interval_weeks, 10) || 1);
+    if (status.tone === "weak") return "";
+    if (status.tone === "review") {
+      return `${formatMemoryDays(stateDays)} left in Needs Review`;
+    }
+    if (status.tone === "strong") return `${formatMemoryDays(stateDays)} left as Strong. Next on-time review holds ${Math.min(STRONG_MAX_WEEKS, strongWeeks + 1)} weeks.`;
+    return `${formatDaysToStrong(toStrong)}. ${formatMemoryDays(stateDays)} left as Good.`;
+  }
+  function memoryCountdownLabel(pb){
+    const status = memoryStatusFor(pb);
+    if (status.tone === "weak") return "";
+    const diff = daysLeftInCurrentState(pb);
+    if (diff == null) return "--";
+    if (diff <= 0) return "today";
+    return `${diff}d left`;
+  }
+  function normalizeSavedPlayback(pb, index = 0){
     if (!pb || typeof pb !== 'object') return pb;
-    return { ...pb, folder: folderKey(pb.folder) };
+    const now = new Date().toISOString();
+    const reviewCount = Math.max(0, Number.parseInt(pb.review_count, 10) || 0);
+    const createdAt = pb.created_at || pb.saved_at || now;
+    const lastReviewedAt = pb.last_reviewed_at || null;
+    const derivedDailyStreak = Math.min(
+      STRONG_DAILY_STREAK_DAYS,
+      Math.max(0, Number.parseInt(pb.daily_review_streak, 10) || Number.parseInt(pb.current_streak, 10) || reviewCount || 0)
+    );
+    const goodIntervalDays = Math.max(GOOD_START_DAYS, Math.min(GOOD_MAX_DAYS, Number.parseInt(pb.good_interval_days, 10) || GOOD_START_DAYS));
+    const strongIntervalWeeks = Math.max(1, Math.min(STRONG_MAX_WEEKS, Number.parseInt(pb.strong_interval_weeks, 10) || 1));
+    const strongUnlocked = !!pb.strong_unlocked || derivedDailyStreak >= STRONG_DAILY_STREAK_DAYS;
+    const intervalDays = strongUnlocked ? strongIntervalWeeks * 7 : goodIntervalDays;
+    return {
+      ...pb,
+      name: String(pb.name || `Sequence ${index + 1}`),
+      frames: Array.isArray(pb.frames) ? pb.frames : [],
+      folder: folderKey(pb.folder),
+      created_at: createdAt,
+      saved_at: pb.saved_at || createdAt,
+      last_reviewed_at: lastReviewedAt,
+      review_count: reviewCount,
+      daily_review_streak: derivedDailyStreak,
+      strong_unlocked: strongUnlocked,
+      good_interval_days: goodIntervalDays,
+      strong_interval_weeks: strongIntervalWeeks,
+      next_review_at: pb.next_review_at || nextReviewAt(intervalDays, lastReviewedAt || createdAt),
+      current_streak: Math.max(0, Number.parseInt(pb.current_streak, 10) || 0),
+      best_streak: Math.max(0, Number.parseInt(pb.best_streak, 10) || 0),
+      last_review_date: pb.last_review_date || (lastReviewedAt ? todayKey(lastReviewedAt) : null)
+    };
+  }
+  function createMemoryPlaybackRecord(record){
+    const now = new Date().toISOString();
+    return normalizeSavedPlayback({
+      ...record,
+      created_at: now,
+      saved_at: now,
+      last_reviewed_at: now,
+      review_count: 1,
+      daily_review_streak: 1,
+      strong_unlocked: false,
+      good_interval_days: GOOD_START_DAYS,
+      strong_interval_weeks: 1,
+      next_review_at: nextReviewAt(GOOD_START_DAYS, now),
+      current_streak: 1,
+      best_streak: 1,
+      last_review_date: todayKey(now)
+    }, savedPlaybacks.length);
+  }
+  function playMemorySaveSound(kind = "frame"){
+    if (typeof window === "undefined") return;
+    try{
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+      const notes = kind === "sequence"
+        ? [{ start: 0, frequency: 660, duration: 0.09 }, { start: 0.1, frequency: 880, duration: 0.13 }]
+        : [{ start: 0, frequency: 760, duration: 0.07 }];
+      notes.forEach((note)=>{
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(note.frequency, now + note.start);
+        gain.gain.setValueAtTime(0.0001, now + note.start);
+        gain.gain.exponentialRampToValueAtTime(0.08, now + note.start + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + note.start + note.duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + note.start);
+        osc.stop(now + note.start + note.duration + 0.02);
+      });
+      window.setTimeout(() => {
+        try{ ctx.close(); }catch(_){}
+      }, kind === "sequence" ? 320 : 180);
+    }catch(_){}
+  }
+  function showMemoryConfirmation(kind = "save"){
+    const list = kind === "review"
+      ? REVIEW_CONFIRMATIONS
+      : kind === "review-start"
+        ? REVIEW_START_CONFIRMATIONS
+        : SAVE_CONFIRMATIONS;
+    saveConfirmation = list[Math.floor(Math.random() * list.length)] || list[0];
+    if (saveConfirmationTimer) clearTimeout(saveConfirmationTimer);
+    saveConfirmationTimer = setTimeout(() => {
+      saveConfirmation = "";
+      saveConfirmationTimer = null;
+    }, 2600);
+  }
+  function normalizeMemoryStats(stats){
+    return {
+      current_streak: Math.max(0, Number.parseInt(stats?.current_streak, 10) || 0),
+      best_streak: Math.max(0, Number.parseInt(stats?.best_streak, 10) || 0),
+      last_review_date: stats?.last_review_date || null
+    };
+  }
+  function writeMemoryReviewStatsToLocalStorage(){
+    try{ localStorage.setItem('fightlabMemoryReviewStatsV1', JSON.stringify(memoryReviewStats)); }catch(e){}
+  }
+  function restoreMemoryReviewStats(){
+    try{
+      const raw = localStorage.getItem('fightlabMemoryReviewStatsV1');
+      if (!raw) return;
+      memoryReviewStats = normalizeMemoryStats(JSON.parse(raw));
+    }catch(e){}
+  }
+  function normalizeTrainingReminderSettings(settings){
+    const lead = Number.parseInt(settings?.lead_mins, 10);
+    const savedEmail = typeof settings?.email === "string" ? settings.email : "";
+    const useAccountEmail = typeof settings?.use_account_email === "boolean"
+      ? settings.use_account_email
+      : !savedEmail || (!!loginEmail && savedEmail === loginEmail);
+    const days = Array.isArray(settings?.days)
+      ? settings.days.map((day)=> Number.parseInt(day, 10)).filter((day)=> day >= 0 && day <= 6)
+      : [];
+    const uniqueDays = Array.from(new Set(days));
+    const migratedDays = Number(settings?.version) >= 2 ? uniqueDays : (uniqueDays.length === 7 ? [] : uniqueDays);
+    const configs = {};
+    if (settings?.day_configs && typeof settings.day_configs === "object"){
+      Object.entries(settings.day_configs).forEach(([key, value])=>{
+        const day = Number.parseInt(key, 10);
+        const configLead = Number.parseInt(value?.lead_mins, 10);
+        if (day >= 0 && day <= 6 && /^\d{2}:\d{2}$/.test(value?.time || "")){
+          configs[day] = {
+            time: value.time,
+            lead_mins: TRAINING_REMINDER_LEAD_MINS,
+            email: typeof value.email === "string" ? value.email : ""
+          };
+        }
+      });
+    }
+    if (!Object.keys(configs).length && settings?.enabled && migratedDays.length && /^\d{2}:\d{2}$/.test(settings?.time || "")){
+      migratedDays.forEach((day)=>{
+        configs[day] = {
+          time: settings.time,
+          lead_mins: TRAINING_REMINDER_LEAD_MINS,
+          email: typeof settings.email === "string" ? settings.email : ""
+        };
+      });
+    }
+    return {
+      time: /^\d{2}:\d{2}$/.test(settings?.time || "") ? settings.time : "",
+      email: useAccountEmail ? "" : savedEmail,
+      lead_mins: TRAINING_REMINDER_LEAD_MINS,
+      days: migratedDays,
+      day_configs: configs,
+      enabled: !!settings?.enabled && (migratedDays.length > 0 || Object.keys(configs).length > 0)
+    };
+  }
+  function writeTrainingReminderSettings(){
+    try{
+      localStorage.setItem('fightlabTrainingReminderV1', JSON.stringify({
+        version: 4,
+        time: trainingReminderTime,
+        email: trainingReminderEmail,
+        lead_mins: trainingReminderLeadMins,
+        days: trainingReminderDays,
+        day_configs: trainingReminderConfigs,
+        enabled: trainingReminderEnabled
+      }));
+    }catch(e){}
+  }
+  function restoreTrainingReminderSettings(){
+    try{
+      const raw = localStorage.getItem('fightlabTrainingReminderV1');
+      if (!raw) return;
+      const settings = normalizeTrainingReminderSettings(JSON.parse(raw));
+      trainingReminderTime = settings.time;
+      trainingReminderEmail = settings.email;
+      trainingReminderLeadMins = TRAINING_REMINDER_LEAD_MINS;
+      trainingReminderDays = settings.days;
+      trainingReminderConfigs = settings.day_configs || {};
+      trainingReminderEnabled = settings.enabled;
+      if (trainingReminderEnabled && Object.keys(trainingReminderConfigs).length) trainingReminderDays = [];
+    }catch(e){}
+  }
+  function clearTrainingReminderTimer(){
+    if (trainingReminderTimer) clearTimeout(trainingReminderTimer);
+    trainingReminderTimer = null;
+  }
+  function trainingReminderRecipientEmail(){
+    return String(trainingReminderEmail || "").trim() || String(loginEmail || "").trim();
+  }
+  function scheduleTrainingReminder(){
+    clearTrainingReminderTimer();
+    const normalizedLead = TRAINING_REMINDER_LEAD_MINS;
+    if (trainingReminderLeadMins !== normalizedLead) trainingReminderLeadMins = normalizedLead;
+    writeTrainingReminderSettings();
+    const configEntries = Object.entries(trainingReminderConfigs || {})
+      .map(([day, config])=> ({
+        day: Number.parseInt(day, 10),
+        time: config?.time,
+        lead_mins: TRAINING_REMINDER_LEAD_MINS,
+        email: config?.email || trainingReminderRecipientEmail()
+      }))
+      .filter((config)=> config.day >= 0 && config.day <= 6 && /^\d{2}:\d{2}$/.test(config.time || ""));
+    if (!trainingReminderEnabled || !configEntries.length) {
+      if (trainingReminderEnabled && !configEntries.length) trainingReminderNotice = "Choose at least one training day.";
+      return;
+    }
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      trainingReminderNotice = "Browser notifications are not supported here.";
+      return;
+    }
+    if (Notification.permission !== "granted") {
+      trainingReminderNotice = "Save again and allow browser notifications.";
+      return;
+    }
+    const now = new Date();
+    let target = null;
+    for (const config of configEntries){
+      const [hours, minutes] = config.time.split(":").map((v)=> Number.parseInt(v, 10));
+      if (!Number.isFinite(hours) || !Number.isFinite(minutes)) continue;
+      for (let offset = 0; offset < 14; offset += 1){
+        const candidate = new Date(now);
+        candidate.setDate(now.getDate() + offset);
+        candidate.setHours(hours, minutes, 0, 0);
+        if (candidate.getDay() !== config.day) continue;
+        candidate.setMinutes(candidate.getMinutes() - config.lead_mins);
+        if (candidate.getTime() <= now.getTime()) continue;
+        if (!target || candidate.getTime() < target.getTime()) {
+          target = candidate;
+        }
+        break;
+      }
+    }
+    if (!target) {
+      trainingReminderNotice = "No upcoming reminder time found.";
+      return;
+    }
+    const delay = Math.min(Math.max(target.getTime() - Date.now(), 1000), 2147483647);
+    trainingReminderTimer = setTimeout(() => {
+      try{
+        const recommendedCount = reviewTodayPlaybacks.length || savedPlaybacks.length;
+        if (recommendedCount > 0) {
+          new Notification("Fightlab 3D review", {
+            body: `${recommendedCount} technique${recommendedCount === 1 ? "" : "s"} ready for a quick memory review before training.`
+          });
+        } else {
+          new Notification("Fightlab 3D review", {
+            body: "Training is coming up. Open Fightlab for a quick memory review."
+          });
+        }
+      }catch(_){}
+      scheduleTrainingReminder();
+    }, delay);
+    trainingReminderNotice = `Next browser reminder: ${target.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}.`;
+  }
+  async function enableTrainingReminder(){
+    const hasExistingReminders = Object.keys(trainingReminderConfigs || {}).length > 0;
+    if (!trainingReminderDays.length && trainingReminderEnabled && hasExistingReminders) {
+      scheduleTrainingReminder();
+      return;
+    }
+    if (!trainingReminderDays.length) {
+      trainingReminderNotice = "Choose at least one training day first.";
+      return;
+    }
+    if (!trainingReminderTime) {
+      trainingReminderNotice = "Choose when training starts first.";
+      return;
+    }
+    try{
+      const lead = TRAINING_REMINDER_LEAD_MINS;
+      const recipientEmail = trainingReminderRecipientEmail();
+      const nextConfigs = { ...(trainingReminderConfigs || {}) };
+      trainingReminderDays.forEach((day)=>{
+        nextConfigs[day] = { time: trainingReminderTime, lead_mins: lead, email: recipientEmail };
+      });
+      trainingReminderConfigs = nextConfigs;
+      trainingReminderDays = [];
+      trainingReminderEnabled = true;
+      playbacksMenuVersion += 1;
+      let permission = "unsupported";
+      if (typeof window !== "undefined" && "Notification" in window) {
+        permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      }
+      trainingReminderNotice = permission === "granted"
+        ? "Browser reminder enabled."
+        : "Reminder saved. Browser notifications were not allowed.";
+      scheduleTrainingReminder();
+    }catch(_){
+      trainingReminderNotice = "Could not save reminder.";
+    }
+  }
+  function updateTrainingReminder(){
+    trainingReminderNotice = "";
+    if (Object.keys(trainingReminderConfigs || {}).length) {
+      trainingReminderConfigs = Object.fromEntries(
+        Object.entries(trainingReminderConfigs).map(([day, config])=> [
+          day,
+          { ...config, email: trainingReminderRecipientEmail() }
+        ])
+      );
+    }
+    writeTrainingReminderSettings();
+    if (trainingReminderEnabled) scheduleTrainingReminder();
+  }
+  function trainingReminderTimeLabel(time = trainingReminderTime, leadMins = trainingReminderLeadMins){
+    if (!time) return "";
+    const [hours, minutes] = time.split(":").map((v)=> Number.parseInt(v, 10));
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return "";
+    const lead = Math.max(1, Math.min(240, Number.parseInt(leadMins, 10) || 30));
+    const d = new Date();
+    d.setHours(hours, minutes, 0, 0);
+    d.setMinutes(d.getMinutes() - lead);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+  function trainingReminderDayTimeLabel(day){
+    const config = trainingReminderConfigs?.[day];
+    return config ? trainingReminderTimeLabel(config.time, config.lead_mins) : "";
+  }
+  function deleteTrainingReminderDay(day){
+    const value = Number.parseInt(day, 10);
+    if (!Number.isFinite(value)) return;
+    const nextConfigs = { ...(trainingReminderConfigs || {}) };
+    delete nextConfigs[value];
+    trainingReminderConfigs = nextConfigs;
+    trainingReminderDays = trainingReminderDays.filter((item)=> item !== value);
+    if (!Object.keys(nextConfigs).length) trainingReminderEnabled = false;
+    playbacksMenuVersion += 1;
+    trainingReminderNotice = "Reminder removed.";
+    scheduleTrainingReminder();
+  }
+  function openTimeInputPicker(event){
+    const input = event?.currentTarget;
+    try{
+      input?.showPicker?.();
+    }catch(_){}
+  }
+  function toggleTrainingReminderDay(day){
+    const value = Number.parseInt(day, 10);
+    if (!Number.isFinite(value)) return;
+    const existingConfig = trainingReminderConfigs?.[value];
+    if (trainingReminderDays.includes(value)) {
+      trainingReminderDays = trainingReminderDays.filter((item)=> item !== value);
+    } else if (existingConfig) {
+      trainingReminderDays = [value];
+    } else {
+      const hasSelectedAssignedDay = trainingReminderDays.some((item)=> !!trainingReminderConfigs?.[item]);
+      const next = hasSelectedAssignedDay ? [value] : [...trainingReminderDays, value];
+      trainingReminderDays = TRAINING_REMINDER_DAYS.map((item)=> item.value).filter((item)=> next.includes(item));
+    }
+    if (existingConfig && trainingReminderDays.includes(value)){
+      trainingReminderTime = existingConfig.time;
+      trainingReminderEmail = existingConfig.email || trainingReminderEmail;
+      trainingReminderLeadMins = TRAINING_REMINDER_LEAD_MINS;
+    }
+    trainingReminderNotice = "";
+    updateTrainingReminder();
+  }
+  function bumpMemoryReviewStreak(){
+    const today = todayKey();
+    const yesterday = todayKey(new Date(Date.now() - DAY_MS));
+    const previous = memoryReviewStats?.last_review_date || null;
+    let current = previous === today
+      ? memoryReviewStats.current_streak
+      : previous === yesterday
+        ? (memoryReviewStats.current_streak || 0) + 1
+        : 1;
+    const best = Math.max(memoryReviewStats.best_streak || 0, current);
+    memoryReviewStats = { current_streak: current, best_streak: best, last_review_date: today };
+    writeMemoryReviewStatsToLocalStorage();
+  }
+  function markSavedPlaybackReviewed(idx){
+    const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
+    const now = new Date().toISOString();
+    savedPlaybacks = savedPlaybacks.map((pb, j)=>{
+      if (j !== i) return pb;
+      const normalized = normalizeSavedPlayback(pb, j);
+      const today = todayKey(now);
+      const previousDate = normalized.last_review_date || (normalized.last_reviewed_at ? todayKey(normalized.last_reviewed_at) : null);
+      const dayGap = daysBetweenKeys(previousDate, today);
+      const alreadyReviewedToday = previousDate === today;
+      const wasDue = isDueForReview(normalized);
+      const nextCount = alreadyReviewedToday ? (normalized.review_count || 1) : (normalized.review_count || 0) + 1;
+      const wasStrongUnlocked = !!normalized.strong_unlocked || (normalized.daily_review_streak || 0) >= STRONG_DAILY_STREAK_DAYS;
+      const nextDailyStreak = wasStrongUnlocked
+        ? Math.max(STRONG_DAILY_STREAK_DAYS, normalized.daily_review_streak || STRONG_DAILY_STREAK_DAYS)
+        : alreadyReviewedToday
+          ? Math.max(1, normalized.daily_review_streak || 1)
+          : dayGap === 1
+            ? (normalized.daily_review_streak || 0) + 1
+            : 1;
+      const strongUnlocked = wasStrongUnlocked || nextDailyStreak >= STRONG_DAILY_STREAK_DAYS;
+      const currentGoodDays = Math.max(GOOD_START_DAYS, Math.min(GOOD_MAX_DAYS, normalized.good_interval_days || GOOD_START_DAYS));
+      const currentStrongWeeks = Math.max(1, Math.min(STRONG_MAX_WEEKS, normalized.strong_interval_weeks || 1));
+      const nextGoodDays = alreadyReviewedToday
+        ? currentGoodDays
+        : Math.min(GOOD_MAX_DAYS, currentGoodDays + 1);
+      const nextStrongWeeks = strongUnlocked
+        ? alreadyReviewedToday
+          ? currentStrongWeeks
+          : Math.min(STRONG_MAX_WEEKS, currentStrongWeeks + (wasDue ? 1 : 0))
+        : currentStrongWeeks;
+      const nextIntervalDays = strongUnlocked ? nextStrongWeeks * 7 : nextGoodDays;
+      return {
+        ...normalized,
+        last_reviewed_at: now,
+        review_count: nextCount,
+        daily_review_streak: nextDailyStreak,
+        strong_unlocked: strongUnlocked,
+        good_interval_days: nextGoodDays,
+        strong_interval_weeks: nextStrongWeeks,
+        next_review_at: nextReviewAt(nextIntervalDays, now),
+        current_streak: nextDailyStreak,
+        best_streak: Math.max(normalized.best_streak || 0, nextDailyStreak),
+        last_review_date: today
+      };
+    });
+    bumpMemoryReviewStreak();
+    persistSavedPlaybacks();
+    playbacksMenuVersion += 1;
+    showMemoryConfirmation("review");
+    scheduleTrainingReminder();
+  }
+  function beginSavedPlaybackReview(idx){
+    const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
+    loadSavedPlayback(i, { keepMenusOpen: true });
+    activeReviewPlaybackIdx = i;
+    activeReviewFrameCount = Math.max(poses?.length || 0, 1);
+    showMemoryConfirmation("review-start");
+    showMemoryMenu = false;
+    startPlayback();
+  }
+  function loadSavedPlaybackForReview(idx){
+    const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
+    loadSavedPlayback(i);
+    activeReviewPlaybackIdx = i;
+    activeReviewFrameCount = Math.max(poses?.length || 0, 1);
+    showMemoryConfirmation("review-start");
   }
   function writeSavedPlaybacksToLocalStorage(){
     try{ localStorage.setItem('savedPlaybacks', JSON.stringify(savedPlaybacks)); }catch(e){}
@@ -7339,6 +8145,7 @@ function clampToDragLengths(person, jointKey, target){
   function writeFixedReplacementPresetsToLocalStorage(){
     try{ localStorage.setItem('fixedReplacementPresetsV1', JSON.stringify(fixedReplacementPresets)); }catch(e){}
   }
+  const CUSTOM_PRESETS_PROMOTED_TO_FIXED_KEY = 'customPresetsPromotedToFixedV3';
 
   function cleanPresetDisplayName(name, fallback = 'Preset'){
     return String(name || fallback)
@@ -7359,6 +8166,13 @@ function clampToDragLengths(person, jointKey, target){
   $: fixedCustomPresets = Array.isArray(fixedReplacementPresets)
     ? fixedReplacementPresets.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean)
     : [];
+  $: visibleSavedPresets = (Array.isArray(savedPresets) ? savedPresets : [])
+    .map((preset, i)=> {
+      const normalized = normalizeSavedPreset(preset, i);
+      return normalized ? { ...normalized, _idx: i } : null;
+    })
+    .filter(Boolean)
+    .filter((preset)=> !fixedCustomPresets.some((fixed)=> canonicalPresetName(fixed?.name) === canonicalPresetName(preset?.name)));
 
   function restoreFixedReplacementPresets(){
     try{
@@ -7370,11 +8184,26 @@ function clampToDragLengths(person, jointKey, target){
   }
 
   function promoteCurrentCustomPresetsToFixedReplacements(){
-    if (fixedReplacementPresets.length || !savedPresets.length) return false;
-    fixedReplacementPresets = savedPresets.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean);
+    try{
+      if (localStorage.getItem(CUSTOM_PRESETS_PROMOTED_TO_FIXED_KEY) === 'true') return false;
+    }catch(e){}
+    if (!savedPresets.length) return false;
+    const merged = new Map();
+    fixedReplacementPresets.forEach((preset, i) => {
+      const normalized = normalizeSavedPreset(preset, i);
+      if (!normalized) return;
+      merged.set(canonicalPresetName(normalized.name || `Preset ${i + 1}`), normalized);
+    });
+    savedPresets.forEach((preset, i) => {
+      const normalized = normalizeSavedPreset(preset, i);
+      if (!normalized) return;
+      merged.set(canonicalPresetName(normalized.name || `Preset ${i + 1}`), normalized);
+    });
+    fixedReplacementPresets = Array.from(merged.values());
     savedPresets = [];
     writeFixedReplacementPresetsToLocalStorage();
     writeSavedPresetsToLocalStorage();
+    try{ localStorage.setItem(CUSTOM_PRESETS_PROMOTED_TO_FIXED_KEY, 'true'); }catch(e){}
     return true;
   }
 
@@ -7513,7 +8342,7 @@ function clampToDragLengths(person, jointKey, target){
     const user = session?.user ?? null;
     if (!user?.id) return;
     playbackSyncUserId = user.id;
-    const localSavedPlaybacks = Array.isArray(savedPlaybacks) ? savedPlaybacks.map(normalizeSavedPlayback) : [];
+    const localSavedPlaybacks = Array.isArray(savedPlaybacks) ? savedPlaybacks.map((pb, i) => normalizeSavedPlayback(pb, i)) : [];
     const localPlaybackFolders = Array.isArray(playbackFolders) ? playbackFolders.map(folderKey).filter(Boolean) : [];
     const localSavedPresets = (() => {
       try{
@@ -7536,13 +8365,13 @@ function clampToDragLengths(person, jointKey, target){
       if (error) throw error;
       if (data){
         const currentLocalSavedPlaybacks = Array.isArray(savedPlaybacks)
-          ? savedPlaybacks.map(normalizeSavedPlayback)
+          ? savedPlaybacks.map((pb, i) => normalizeSavedPlayback(pb, i))
           : [];
         const currentLocalPlaybackFolders = Array.isArray(playbackFolders)
           ? playbackFolders.map(folderKey).filter(Boolean)
           : [];
         const remoteSavedPlaybacks = Array.isArray(data.saved_playbacks)
-          ? data.saved_playbacks.map(normalizeSavedPlayback)
+          ? data.saved_playbacks.map((pb, i) => normalizeSavedPlayback(pb, i))
           : [];
         const remotePlaybackFolders = Array.isArray(data.playback_folders)
           ? data.playback_folders.map(folderKey).filter(Boolean)
@@ -7610,6 +8439,9 @@ function clampToDragLengths(person, jointKey, target){
   async function hydratePlaybackLibraryForSession(session){
     restoreSavedPlaybacks();
     restorePlaybackFolders();
+    restoreMemoryReviewStats();
+    restoreTrainingReminderSettings();
+    scheduleTrainingReminder();
     await hydratePlaybackLibrary(session);
     ensurePlaybackFoldersFromSaved();
     playbackFolderView = null;
@@ -7689,8 +8521,8 @@ function clampToDragLengths(person, jointKey, target){
       const s = localStorage.getItem('savedPlaybacks');
       if (s){
         const arr = JSON.parse(s);
-        if (Array.isArray(arr)) savedPlaybacks = arr.map(pb=>{
-          if (pb && typeof pb === 'object') return { ...pb, folder: folderKey(pb.folder) };
+        if (Array.isArray(arr)) savedPlaybacks = arr.map((pb, i)=>{
+          if (pb && typeof pb === 'object') return normalizeSavedPlayback(pb, i);
           return pb;
         });
       }
@@ -7852,6 +8684,8 @@ function clampToDragLengths(person, jointKey, target){
     savedPresets = savedPresets.map((p,i)=> i===editingPresetIdx ? { name, data } : p);
     activeCustomPresetName = name;
     persistSavedPresets();
+    editingPresetIdx = -1;
+    editingPresetName = "";
   }
   function cancelPresetEdit(){
     editingPresetIdx = -1;
@@ -7863,6 +8697,8 @@ function clampToDragLengths(person, jointKey, target){
     editingPresetName = savedPresets[idx].name || `Preset ${idx+1}`;
     showSavedPresetsMenu = false;
     showSavedPlaybacksMenu = false;
+    showSequenceMenu = false;
+    showMemoryMenu = false;
     showFrameComments = false;
     comment = '';
     commentText = '';
@@ -7928,6 +8764,31 @@ function clampToDragLengths(person, jointKey, target){
   }
   let playbackGroups = [];
   $: playbackGroups = groupPlaybacks(savedPlaybacks, playbackFolders);
+  $: memorySavedTechniques = Array.isArray(savedPlaybacks) ? savedPlaybacks.map((pb, i)=> ({ ...normalizeSavedPlayback(pb, i), _idx: i })) : [];
+  $: reviewTodayPlaybacks = memorySavedTechniques.filter(isDueForReview).sort((a, b)=> {
+    const av = new Date(a.next_review_at || 0).getTime() || 0;
+    const bv = new Date(b.next_review_at || 0).getTime() || 0;
+    return av - bv;
+  });
+  $: memoryStatusCounts = memorySavedTechniques.reduce((counts, pb)=> {
+    const tone = memoryStatusFor(pb).tone;
+    counts[tone] = (counts[tone] || 0) + 1;
+    return counts;
+  }, { strong: 0, good: 0, review: 0, weak: 0 });
+  $: reviewTodayVisibleTechniques = reviewTodayPlaybacks.filter((pb)=> memoryReviewSessionIndices.includes(pb._idx));
+  $: reviewTodayBacklogCount = Math.max(0, reviewTodayPlaybacks.length - reviewTodayVisibleTechniques.length);
+  $: memoryScore = memorySavedTechniques.length
+    ? Math.round(memorySavedTechniques.reduce((total, pb)=> {
+        const tone = memoryStatusFor(pb).tone;
+        const value = tone === "strong" ? 100 : tone === "good" ? 75 : tone === "review" ? 45 : 20;
+        return total + value;
+      }, 0) / memorySavedTechniques.length)
+    : 0;
+  $: recentlySavedTechniques = [...memorySavedTechniques].sort((a, b)=> {
+    const av = new Date(a.saved_at || a.created_at || 0).getTime() || 0;
+    const bv = new Date(b.saved_at || b.created_at || 0).getTime() || 0;
+    return bv - av;
+  }).slice(0, 3);
   $: topPlaybackGroups = Array.isArray(playbackGroups) ? playbackGroups.filter(g => !g.folder || g.folder.indexOf('/') === -1) : [];
   $: topPlaybackFolders = Array.from(
     new Set([
@@ -8090,6 +8951,7 @@ function clampToDragLengths(person, jointKey, target){
     showSequenceMenu = true;
     showSavedPlaybacksMenu = true;
     showSavedPresetsMenu = false;
+    showMemoryMenu = false;
     const nextFolder = folderKey(folder ?? playbackFolderView);
     playbackFolderView = nextFolder || null;
     playbacksMenuVersion += 1;
@@ -8103,14 +8965,17 @@ function clampToDragLengths(person, jointKey, target){
     // Update the currently visible frame with the live pose before saving
     commitLivePoseToCurrentFrame();
     const frames = deepCopyFrames(poses);
-    savedPlaybacks = savedPlaybacks.map((pb, i)=> i===idx ? { name, frames, folder } : pb);
+    savedPlaybacks = savedPlaybacks.map((pb, i)=> i===idx ? { ...normalizeSavedPlayback(pb, i), name, frames, folder } : pb);
     persistSavedPlaybacks();
+    showMemoryConfirmation("save");
+    playMemorySaveSound("sequence");
     poses = frames;
     currentFrame = Math.min(currentFrame, Math.max(poses.length - 1, 0));
     try{ applyFrame(currentFrame); }catch(_) {}
     // refresh dropdown grouping
     playbackGroups = groupPlaybacks(savedPlaybacks);
     editingPlaybackIdx = -1;
+    sequenceDraftActive = false;
     editingPlaybackName = "";
     editingPlaybackFolder = "";
     reopenSavedSequencesAfterEdit(folder);
@@ -8120,6 +8985,7 @@ function clampToDragLengths(person, jointKey, target){
       ? folderKey(savedPlaybacks[editingPlaybackIdx].folder)
       : playbackFolderView;
     editingPlaybackIdx = -1;
+    sequenceDraftActive = false;
     editingPlaybackName = "";
     editingPlaybackFolder = "";
     showSavedPlaybacksMenu = false;
@@ -8128,12 +8994,14 @@ function clampToDragLengths(person, jointKey, target){
   function startPlaybackEdit(idx){
     if (idx<0 || idx>=savedPlaybacks.length) return;
     reopenSavedSequencesAfterPlaybackEdit = true;
+    sequenceDraftActive = false;
     editingPlaybackIdx = idx;
     editingPlaybackName = savedPlaybacks[idx].name || `Playback ${idx+1}`;
     editingPlaybackFolder = folderKey(savedPlaybacks[idx].folder) || "";
     showSavedPlaybacksMenu = false;
     showSequenceMenu = false;
     showSavedPresetsMenu = false;
+    showMemoryMenu = false;
     try{
       const frames = deepCopyFrames(savedPlaybacks[idx].frames);
       poses = frames;
@@ -8150,7 +9018,7 @@ function clampToDragLengths(person, jointKey, target){
     const name = (newPlaybackName||"").trim() || `Playback ${savedPlaybacks.length+1}`;
     const folder = folderKey(playbackFolderView);
     const frames = deepCopyFrames(poses);
-    savedPlaybacks = [...savedPlaybacks, { name, frames, folder }];
+    savedPlaybacks = [...savedPlaybacks, createMemoryPlaybackRecord({ name, frames, folder })];
     newPlaybackName = "";
     editingPlaybackIdx = -1; editingPlaybackName = "";
     persistSavedPlaybacks();
@@ -8162,18 +9030,26 @@ function clampToDragLengths(person, jointKey, target){
     playbackFolderView = folder || null;
     syncOpenPlaybackFolders();
     playbacksMenuVersion += 1;
+    showMemoryConfirmation("save");
+    playMemorySaveSound("sequence");
+    sequenceDraftActive = false;
   }
-  function loadSavedPlayback(idx){
+  function loadSavedPlayback(idx, options = {}){
     const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
     stopPlayback();
+    activeReviewPlaybackIdx = -1;
+    activeReviewFrameCount = 0;
+    sequenceDraftActive = false;
     const pb = savedPlaybacks[i];
     const frames = deepCopyFrames(pb.frames);
     poses = frames;
     currentFrame = 0;
     playbackFolderView = folderKey(pb.folder) || playbackFolderView;
     try{ applyFrame(0); }catch(e){}
-    showSavedPlaybacksMenu = false;
-    showSequenceMenu = false;
+    if (!options.keepMenusOpen){
+      showSavedPlaybacksMenu = false;
+      showSequenceMenu = false;
+    }
   }
   function deleteSavedPlayback(idx){
     const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
@@ -8436,13 +9312,11 @@ function clampToDragLengths(person, jointKey, target){
     const ny = (event.clientY - rect.top) / rect.height;
     const nearEdge = nx < EDGE_THRESHOLD || nx > (1-EDGE_THRESHOLD) || ny < EDGE_THRESHOLD || ny > (1-EDGE_THRESHOLD);
     let edgeJointHit = null;
-    let edgeHandlePerson = null;
     let edgeHipHit = null;
     if (nearEdge) {
       edgeJointHit = pickJoint(event, { allowFallback: false });
       if (!edgeJointHit) edgeHipHit = pickHipBody(event);
-      if (!edgeJointHit && !edgeHipHit) edgeHandlePerson = pickUpperHandle(event);
-      if (!edgeJointHit && !edgeHandlePerson && !edgeHipHit) {
+      if (!edgeJointHit && !edgeHipHit) {
         orbitEnabled = true;
         controls.enabled = true;
         dragging = null;
@@ -8468,12 +9342,7 @@ function clampToDragLengths(person, jointKey, target){
     // cache last mouse NDC so drag continues updating if camera moves (WASD)
     const ndc = ndcForEventInView(event, view);
     mouse.x = ndc.x; mouse.y = ndc.y;
-    virtCursorX = event.clientX; virtCursorY = event.clientY;
     mouseLockedToJoint = false;
-    if (!dragging && isCtrlLike && event.shiftKey){
-      const modifierHandlePerson = (edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event);
-      if (modifierHandlePerson && startUpperHandleDrag(event, modifierHandlePerson, view, cam, false, true)) return;
-    }
     // Prefer joints and body hits before the rotation handle so hidden handles cannot steal the click.
     let hit = edgeJointHit || pickJoint(event, { allowFallback: false });
     const hitBody = !hit ? (edgeHipHit || pickHipBody(event)) : null;
@@ -8481,10 +9350,6 @@ function clampToDragLengths(person, jointKey, target){
       if (!isTouchOrbit || view !== 'persp') {
         hit = pickJoint(event, { allowFallback: true });
       }
-    }
-    if (!dragging && !hit && !hitBody){
-      const handlePerson = (edgeHandlePerson != null) ? edgeHandlePerson : pickUpperHandle(event);
-      if (handlePerson && isCtrlLike && event.shiftKey && startUpperHandleDrag(event, handlePerson, view, cam, false, true)) return;
     }
     // Lock selection mode: clicking toggles lock state and exits without starting a drag
     if (lockState === 'select' && hit){ toggleLockForMesh(hit.object); return; }
@@ -9118,22 +9983,8 @@ function clampToDragLengths(person, jointKey, target){
       return;
     }
 
-    // Handle hover highlight for upper handles when not dragging
     if (!dragging && !upperDrag.active && !lowerHandleDrag.active){
-      try{
-        hoverUpperHandlePerson = pickUpperHandle(event, { allowScreenFallback: false });
-        const hoverA = hoverUpperHandlePerson === 'A';
-        const hoverB = hoverUpperHandlePerson === 'B';
-        if (hoverUpperHandlePerson){
-          lastHandleHover.person = hoverUpperHandlePerson;
-          lastHandleHover.time = timeNowMs();
-        }
-        const setColor = (h, col)=>{ if (!h) return; h.traverse(m=>{ if (m.isMesh && m.material?.color) m.material.color.setHex(col); }); };
-        setColor(upperHandleA, hoverA ? HANDLE_COLOR_HOVER : (upperHandleA?.userData?.defaultColor||HANDLE_COLOR_A));
-        setColor(upperHandleB, hoverB ? HANDLE_COLOR_HOVER : (upperHandleB?.userData?.defaultColor||HANDLE_COLOR_B));
-        // Cursor feedback
-        try{ const el = renderer?.domElement; if (el) el.style.cursor = (lockState==='select' ? 'crosshair' : 'default'); }catch(e){}
-      }catch(e){}
+      try{ const el = renderer?.domElement; if (el) el.style.cursor = (lockState==='select' ? 'crosshair' : 'default'); }catch(e){}
       return;
     }
     // Lower-body rotation drag (Ctrl + hip)
@@ -9353,7 +10204,6 @@ function clampToDragLengths(person, jointKey, target){
       touchOrbitDrag = { active: false, pointerId: null, lastX: 0, lastY: 0 };
       try{ controls.enableRotate = touchOrbitRotateRestore; }catch(e){}
     }
-    hoverUpperHandlePerson = null;
     dragTorsoAnchorA = null;
     dragTorsoAnchorB = null;
     dragTorsoForwardA = null;
@@ -9673,7 +10523,7 @@ function clampToDragLengths(person, jointKey, target){
 
   <div class="scene-gradient" aria-hidden="true"></div>
   <div class="account-anchor">
-    <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; showSequenceMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
+    <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; showSequenceMenu = false; showMemoryMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
       <svg class="icon account-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span class="account-label">Menu</span>
     </button>
@@ -9729,17 +10579,24 @@ function clampToDragLengths(person, jointKey, target){
           <svg class="icon shortcut-toggle__icon" viewBox="0 0 24 24" style={`transform: rotate(${showAccountSettings ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         {#if showAccountSettings}
-        <div id="account-settings" class="menu-item panel-block" style="flex-direction:column; align-items:flex-start; gap:10px; padding:10px;">
-          <div style="display:flex; flex-direction:column; gap:6px; width:100%;">
-            <span class="name">Scroll sensitivity</span>
-            <div style="display:flex; gap:8px; width:100%; align-items:center;">
-              <input type="range" min="0.005" max="0.2" step="0.005" bind:value={scrollSensitivity} style="flex:1;" />
-              <input type="number" step="0.005" min="0.005" max="0.5" bind:value={scrollSensitivity} style="width:72px; font-size:12px; padding:4px 6px;" />
+        <div id="account-settings" class="menu-item panel-block settings-panel">
+          <div class="settings-row settings-row--stack">
+            <div class="settings-label">
+              <span class="name">Scroll sensitivity</span>
+              <span>Depth movement speed for wheel and keyboard nudges.</span>
+            </div>
+            <div class="settings-control settings-control--split">
+              <input class="settings-range" type="range" min="0.005" max="0.2" step="0.005" bind:value={scrollSensitivity} aria-label="Scroll sensitivity" />
+              <input class="input settings-number" type="number" step="0.005" min="0.005" max="0.5" bind:value={scrollSensitivity} aria-label="Scroll sensitivity value" />
             </div>
           </div>
-          <div style="display:flex; flex-direction:column; gap:6px; width:100%;">
-            <span class="name">Playback speed</span>
-            <div class="speed-inline speed-inline--settings">
+          <div class="settings-row settings-row--stack">
+            <div class="settings-label">
+              <span class="name">Playback speed</span>
+              <span>Controls how fast saved frames play back.</span>
+            </div>
+            <div class="settings-control">
+              <div class="speed-inline speed-inline--settings">
               <div class="speed-track">
                 <div class="speed-markers">
                   <span>-</span>
@@ -9747,20 +10604,27 @@ function clampToDragLengths(person, jointKey, target){
                 </div>
                 <input class="slim" id="playback-speed" type="range" min="0" max="100" step="1" value={playbackSpeedPct} on:input={(e)=> setPlaybackSpeedPct(+e.currentTarget.value)} />
               </div>
+              </div>
             </div>
           </div>
-          <div style="display:flex; flex-direction:column; gap:6px; width:100%;">
-            <span class="name">Colorblind mode</span>
-            <select bind:value={colorblindMode} on:change={applyColorblindScheme} style="width:100%; font-size:12px; padding:6px; border-radius:6px;">
+          <div class="settings-row">
+            <div class="settings-label">
+              <span class="name">Colorblind mode</span>
+              <span>Changes figure and marker colors.</span>
+            </div>
+            <select class="input settings-select" bind:value={colorblindMode} on:change={applyColorblindScheme} aria-label="Colorblind mode">
               <option value="normal">Normal</option>
               <option value="deuteranopia">Deuteranopia</option>
               <option value="protanopia">Protanopia</option>
               <option value="tritanopia">Tritanopia</option>
             </select>
           </div>
-          <div style="display:flex; align-items:center; justify-content:space-between; width:100%;">
-            <span class="name">Dark mode</span>
-            <button class="btn" on:click={toggleDarkMode}>{darkMode ? 'Disable' : 'Enable'}</button>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span class="name">Dark mode</span>
+              <span>Switches the interface and floor to the darker palette.</span>
+            </div>
+            <button class="btn settings-toggle-btn" class:is-active={darkMode} on:click={toggleDarkMode}>{darkMode ? 'On' : 'Off'}</button>
           </div>
         </div>
         {/if}
@@ -9775,7 +10639,7 @@ function clampToDragLengths(person, jointKey, target){
           <svg class="icon shortcut-toggle__icon" viewBox="0 0 24 24" style={`transform: rotate(${showAccountShortcuts ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         {#if showAccountShortcuts}
-        <div id="account-shortcuts" class="shortcut-list" style="background:rgba(255,255,255,0.04); border-color:rgba(255,255,255,0.08);">
+        <div id="account-shortcuts" class="shortcut-list">
           {#each (showMobileShortcutList ? mobileShortcuts : desktopShortcuts) as shortcut}
             <div class="shortcut-row"><span class="keys">{shortcut.keys}</span><span class="desc">{shortcut.desc}</span></div>
           {/each}
@@ -9784,7 +10648,7 @@ function clampToDragLengths(person, jointKey, target){
     </div>
     {/if}
   </div>
-  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu || showSequenceMenu} class:toolbar-compact={compactToolbar} class:toolbar-crosshair-active={mobileCrosshair.visible} bind:this={toolbarEl}>
+  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu || showSequenceMenu || showMemoryMenu} class:toolbar-compact={compactToolbar} class:toolbar-crosshair-active={mobileCrosshair.visible} bind:this={toolbarEl}>
       {#if mobileCrosshair.visible}
         <div
           class="mobile-crosshair mobile-crosshair--toolbar"
@@ -9808,12 +10672,15 @@ function clampToDragLengths(person, jointKey, target){
         class="toolbar-collapse-toggle"
         class:is-active={compactToolbar}
         aria-pressed={compactToolbar}
-        title={compactToolbar ? 'Expand toolbar' : 'Collapse toolbar'}
+        title={compactToolbar ? 'Expand toolbar (H)' : 'Collapse toolbar (H)'}
         on:click={() => {
+          toolbarCompactTouched = true;
           compactToolbar = !compactToolbar;
           if (compactToolbar) {
             showSavedPresetsMenu = false;
             showSavedPlaybacksMenu = false;
+            showSequenceMenu = false;
+            showMemoryMenu = false;
           }
         }}>
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -9828,10 +10695,10 @@ function clampToDragLengths(person, jointKey, target){
         <div class="toolbar-row toolbar-row--compact">
           <div class="row-center row-center--compact">
             <div class="controls-row controls-row--expanded controls-row--compact">
-              <button class="icon-btn" on:click={prevFrame} title="Previous frame">
+              <button class="icon-btn" on:click={prevFrame} title="Previous frame (Left arrow)">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause sequence">
+              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause sequence (Space)">
                 {#if playing}
                   <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
                 {:else}
@@ -9839,7 +10706,7 @@ function clampToDragLengths(person, jointKey, target){
                 {/if}
                 <span class="play-count-badge">{poses.length ? currentFrame + 1 : 0}/{poses.length}</span>
               </button>
-              <button class="icon-btn" on:click={nextFrame} title="Next frame">
+              <button class="icon-btn" on:click={nextFrame} title="Next frame (Right arrow)">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
             </div>
@@ -9856,8 +10723,8 @@ function clampToDragLengths(person, jointKey, target){
                     aria-haspopup="true"
                     aria-expanded={showSavedPresetsMenu}
                     bind:this={presetsToggleEl}
-                    on:click={()=>{ showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; showSequenceMenu = false; }}
-                    on:keydown={(e)=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; showSequenceMenu = false; } }}>
+                    on:click={()=>{ showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; showSequenceMenu = false; showMemoryMenu = false; }}
+                    on:keydown={(e)=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); showSavedPresetsMenu = !showSavedPresetsMenu; showSavedPlaybacksMenu = false; showSequenceMenu = false; showMemoryMenu = false; } }}>
                     <span class="preset-trigger__label">
                       {#if activeCustomPresetName}
                         {activeCustomPresetName}
@@ -9873,7 +10740,11 @@ function clampToDragLengths(person, jointKey, target){
                     <svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21 4v6h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                   </button>
                   {#if showSavedPresetsMenu}
-                    <div class="menu-popup preset-menu" bind:this={presetsMenuEl} style="left:0; right:auto; bottom:calc(100% + 8px); top:auto; position:absolute;">
+                    <div
+                      class="menu-popup preset-menu"
+                      bind:this={presetsMenuEl}
+                      use:portalToBody={showMobileShortcutList}
+                      style="left:0; right:auto; bottom:calc(100% + 8px); top:auto; position:absolute;">
                       <div class="preset-menu-col">
                         <div class="menu-section-title">Presets</div>
                         {#each BUILTIN_PRESETS as preset (preset.key)}
@@ -9892,36 +10763,34 @@ function clampToDragLengths(person, jointKey, target){
                             </div>
                           {/each}
                         {/if}
-                      </div>
-                      <div class="preset-menu-col">
-                        <div class="menu-section-title preset-menu-title">
-                          <span>Custom presets</span>
-                          <button type="button" class="add-preset-action" on:click|stopPropagation={promptSaveCustomPreset} title="Add custom preset">
-                            <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                          </button>
-                        </div>
-                        <div class="menu-item" style="cursor:default; gap:6px; align-items:flex-start;">
-                          <span class="name" style="white-space:normal; color:#555; font-size:12px;">Tip: Click the + to save your current pose as a preset. It will appear below and stay saved in your browser.</span>
-                        </div>
-                        {#if savedPresets.length}
-                          {#each savedPresets as pr, i (pr?.name || i)}
+                        {#if visibleSavedPresets.length}
+                          {#each visibleSavedPresets as pr (pr._idx)}
                             <div class="menu-item">
-                              <button type="button" class="menu-row-btn" on:click={() => { loadSavedPreset(i); showSavedPresetsMenu=false; }}>
-                                <span class="name">{cleanPresetDisplayName(pr?.name, `Preset ${i + 1}`)}</span>
+                              <button type="button" class="menu-row-btn" on:click={() => { loadSavedPreset(pr._idx); showSavedPresetsMenu=false; }}>
+                                <span class="name">{cleanPresetDisplayName(pr?.name, `Preset ${pr._idx + 1}`)}</span>
                               </button>
-                              <div style="display:flex; gap:4px;">
-                                <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => startPresetEdit(i)} title="Edit preset">
+                              <div class="preset-row-actions">
+                                <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => startPresetEdit(pr._idx)} title="Edit preset">
                                   <svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.5 3.5l4 4-10 10H6.5v-4.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                                 </button>
-                                <button type="button" class="inline-action small danger-action" on:click|stopPropagation={() => deleteSavedPreset(i)} title="Delete preset">
+                                <button type="button" class="inline-action small danger-action" on:click|stopPropagation={() => deleteSavedPreset(pr._idx)} title="Delete preset">
                                   <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                                 </button>
                               </div>
                             </div>
                           {/each}
-                        {:else}
-                          <div class="menu-item"><span class="name" style="opacity:.6;">No custom presets</span></div>
                         {/if}
+                      </div>
+                      <div class="preset-menu-col">
+                        <div class="menu-section-title preset-menu-title">
+                          <span>Create preset</span>
+                          <button type="button" class="add-preset-action" on:click|stopPropagation={promptSaveCustomPreset} title="Add custom preset">
+                            <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                          </button>
+                        </div>
+                        <div class="menu-item" style="cursor:default; gap:6px; align-items:flex-start;">
+                          <span class="name" style="white-space:normal; color:#555; font-size:12px;">Click the + to save the current pose. New presets appear in the main Presets list.</span>
+                        </div>
                       </div>
                     </div>
                   {/if}
@@ -9931,15 +10800,15 @@ function clampToDragLengths(person, jointKey, target){
             <div class="toolbar-actions wrap-tight">
               <button class="btn btn--toggle" class:is-active={!singleJointMode}
                 on:click={toggleSingleJointMode}
-                title="Toggle movement mode">{singleJointMode ? 'Single' : 'Multiple'}</button>
+                title="Toggle movement mode (E)"><span>{singleJointMode ? 'Single' : 'Multiple'}</span></button>
             </div>
           </div>
           <div class="row-center">
             <div class="controls-row controls-row--expanded">
-              <button class="icon-btn" on:click={prevFrame} title="Previous frame">
+              <button class="icon-btn" on:click={prevFrame} title="Previous frame (Left arrow)">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause sequence">
+              <button class="icon-btn icon-btn--primary" class:is-active={playing} on:click={togglePlayback} title="Play / Pause sequence (Space)">
                 {#if playing}
                   <svg class="icon" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
                 {:else}
@@ -9947,14 +10816,14 @@ function clampToDragLengths(person, jointKey, target){
                 {/if}
                 <span class="play-count-badge">{poses.length ? currentFrame + 1 : 0}/{poses.length}</span>
               </button>
-              <button class="icon-btn" on:click={nextFrame} title="Next frame">
+              <button class="icon-btn" on:click={nextFrame} title="Next frame (Right arrow)">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
-              <button class="icon-btn" on:click={clearPlaybackQueue} title="Clear sequence queue">
-                <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               </button>
               <button class="icon-btn mobile-only-control mobile-undo-control" on:click={undoLastFigureMove} title="Undo (mobile)" aria-label="Undo">
                 <span class="mobile-undo-symbol" aria-hidden="true">↩</span>
+              </button>
+              <button class="icon-btn" on:click={clearPlaybackQueue} title="Clear sequence queue">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               </button>
             </div>
           </div>
@@ -9971,11 +10840,40 @@ function clampToDragLengths(person, jointKey, target){
                 <svg class="icon" viewBox="0 0 24 24" style={`transform: rotate(${showSequenceMenu ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               {#if showSequenceMenu && !showSavedPlaybacksMenu}
-                <div class="menu-popup sequence-menu" bind:this={sequenceMenuEl}>
+                <div
+                  class="menu-popup sequence-menu sequence-menu--movable"
+                  style={`--sequence-drag-x:${sequenceWindowOffset.x}px; --sequence-drag-y:${sequenceWindowOffset.y}px;`}
+                  use:portalToBody={showMobileShortcutList}
+                  bind:this={sequenceMenuEl}>
                   <div class="sequence-section">
                     <span class="menu-section-title sequence-title-row">
                       <span>Frame</span>
-                      <span class="sequence-frame-count">{poses.length ? currentFrame + 1 : 0}/{poses.length}</span>
+                      <span class="sequence-window-tools">
+                        <span class="sequence-frame-count">{poses.length ? currentFrame + 1 : 0}/{poses.length}</span>
+                        <button
+                          type="button"
+                          class="sequence-move-handle"
+                          aria-label="Move sequence window"
+                          title="Move sequence window"
+                          on:pointerdown={startSequenceWindowDrag}
+                          on:pointermove={moveSequenceWindow}
+                          on:pointerup={stopSequenceWindowDrag}
+                          on:pointercancel={stopSequenceWindowDrag}>
+                          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="sequence-close-handle"
+                          aria-label="Close sequence window"
+                          title="Close sequence window"
+                          on:click={closeSequenceWindow}>
+                          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                          </svg>
+                        </button>
+                      </span>
                     </span>
                     <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
                       <input class="input" type="text" bind:value={comment} placeholder="Frame note" />
@@ -9999,6 +10897,13 @@ function clampToDragLengths(person, jointKey, target){
                       </div>
                     </div>
                   </div>
+                  {#if sequenceDraftActive}
+                    <div class="sequence-actions">
+                      <button type="button" class="btn sequence-cancel-action" on:click={cancelSequenceDraft}>
+                        Cancel sequence
+                      </button>
+                    </div>
+                  {/if}
                 </div>
               {:else if showSequenceMenu && showSavedPlaybacksMenu}
                   {#key playbacksMenuVersion}
@@ -10050,8 +10955,15 @@ function clampToDragLengths(person, jointKey, target){
                       {#if playbacksInFolder('').length}
                         {#each playbacksInFolder('') as pb (pb._idx)}
                         <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null}>
-                            <button type="button" class="menu-row-btn" on:click={() => { loadSavedPlayback(pb._idx); showSavedPlaybacksMenu=false; }}>
-                              <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
+                            <button type="button" class="menu-row-btn" on:click={() => loadSavedPlaybackForReview(pb._idx)}>
+                              <span class="saved-sequence-name">
+                                <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
+                                <span class={`memory-status-combo memory-status-combo--${memoryStatusFor(pb).tone}`} title={memoryStateChangeText(pb)}>
+                                  {#if strongProgressLabel(pb)}<span class="memory-status-combo__progress">{strongProgressLabel(pb)}</span>{/if}
+                                  <span class="memory-status-combo__label">{memoryStatusFor(pb).label}</span>
+                                  {#if memoryCountdownLabel(pb)}<span class="memory-status-combo__count">{memoryCountdownLabel(pb)}</span>{/if}
+                                </span>
+                              </span>
                             </button>
                             <div style="display:flex; gap:4px; align-items:center;">
                               <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => startPlaybackEdit(pb._idx)} title="Edit playback">
@@ -10135,8 +11047,15 @@ function clampToDragLengths(person, jointKey, target){
                     {#if playbacksInFolder(playbackFolderView).length}
                       {#each playbacksInFolder(playbackFolderView) as pb (pb._idx)}
                         <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null}>
-                          <button type="button" class="menu-row-btn" on:click={() => { loadSavedPlayback(pb._idx); showSavedPlaybacksMenu=false; }}>
-                            <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
+                          <button type="button" class="menu-row-btn" on:click={() => loadSavedPlaybackForReview(pb._idx)}>
+                            <span class="saved-sequence-name">
+                              <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
+                              <span class={`memory-status-combo memory-status-combo--${memoryStatusFor(pb).tone}`} title={memoryStateChangeText(pb)}>
+                                {#if strongProgressLabel(pb)}<span class="memory-status-combo__progress">{strongProgressLabel(pb)}</span>{/if}
+                                <span class="memory-status-combo__label">{memoryStatusFor(pb).label}</span>
+                                {#if memoryCountdownLabel(pb)}<span class="memory-status-combo__count">{memoryCountdownLabel(pb)}</span>{/if}
+                              </span>
+                            </span>
                           </button>
                           <div style="display:flex; gap:4px; align-items:center;">
                             <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => startPlaybackEdit(pb._idx)} title="Edit playback">
@@ -10156,9 +11075,252 @@ function clampToDragLengths(person, jointKey, target){
                   {/key}
               {/if}
               </div>
-            </div>
-          </div>
-        </div>
+              <div class="sequence-dropdown memory-dropdown">
+                <button
+                  type="button"
+                  class="btn btn--primary sequence-trigger memory-trigger"
+                  bind:this={memoryToggleEl}
+                  aria-haspopup="true"
+                  aria-expanded={showMemoryMenu}
+                  on:click={toggleMemoryMenu}>
+                  Your memory
+                  {#if reviewTodayPlaybacks.length}
+                    <span class="memory-trigger-badge">{reviewTodayPlaybacks.length}</span>
+                  {/if}
+                  <svg class="icon" viewBox="0 0 24 24" style={`transform: rotate(${showMemoryMenu ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                {#if showMemoryMenu}
+                  <div class="menu-popup sequence-menu memory-menu" bind:this={memoryMenuEl}>
+                    <div class="memory-panel" aria-live="polite">
+                      {#if saveConfirmation}
+                        <div class="memory-confirmation">{saveConfirmation}</div>
+                      {/if}
+                      <div class="memory-panel-head">
+                        <div class="memory-titleblock">
+                          <span class="menu-section-title">Your memory</span>
+                          <span class="memory-headline">{reviewTodayPlaybacks.length ? `${reviewTodayPlaybacks.length} due today` : "All caught up"}</span>
+                        </div>
+                        <button type="button" class="memory-close-btn" on:click={() => showMemoryMenu = false} aria-label="Close memory">
+                          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                        </button>
+                        <div class="memory-total" style={`--score-deg:${memoryScore * 3.6}deg;`}>
+                          <strong>{memoryScore}%</strong>
+                          <span>score</span>
+                        </div>
+                      </div>
+                      <div class="memory-stats">
+                        <div><span>Saved</span><strong>{savedPlaybacks.length}</strong></div>
+                        <div><span>Current streak</span><strong>{memoryReviewStats.current_streak}</strong></div>
+                        <div><span>Best streak</span><strong>{memoryReviewStats.best_streak}</strong></div>
+                      </div>
+                      <div class="memory-status-counts" aria-label="Technique memory status counts">
+                        <details class="memory-status-card memory-status-card--strong" open={openMemoryStatus === "strong"}>
+                          <summary on:click|preventDefault={() => openMemoryStatus = openMemoryStatus === "strong" ? null : "strong"}>
+                            {#if openMemoryStatus === "strong"}
+                              <span class="memory-status-card__description">Remembered well. Review on time to extend it up to four weeks.</span>
+                            {:else}
+                              <span class="memory-status-card__count">{memoryStatusCounts.strong}</span><strong>Strong</strong>
+                            {/if}
+                          </summary>
+                        </details>
+                        <details class="memory-status-card memory-status-card--good" open={openMemoryStatus === "good"}>
+                          <summary on:click|preventDefault={() => openMemoryStatus = openMemoryStatus === "good" ? null : "good"}>
+                            {#if openMemoryStatus === "good"}
+                              <span class="memory-status-card__description">Building toward Strong. Review once per day for four days.</span>
+                            {:else}
+                              <span class="memory-status-card__count">{memoryStatusCounts.good}</span><strong>Good</strong>
+                            {/if}
+                          </summary>
+                        </details>
+                        <details class="memory-status-card memory-status-card--review" open={openMemoryStatus === "review"}>
+                          <summary on:click|preventDefault={() => openMemoryStatus = openMemoryStatus === "review" ? null : "review"}>
+                            {#if openMemoryStatus === "review"}
+                              <span class="memory-status-card__description">Due today. Replay it before it moves to Weak.</span>
+                            {:else}
+                              <span class="memory-status-card__count">{memoryStatusCounts.review}</span><strong>Review</strong>
+                            {/if}
+                          </summary>
+                        </details>
+                        <details class="memory-status-card memory-status-card--weak" open={openMemoryStatus === "weak"}>
+                          <summary on:click|preventDefault={() => openMemoryStatus = openMemoryStatus === "weak" ? null : "weak"}>
+                            {#if openMemoryStatus === "weak"}
+                              <span class="memory-status-card__description">Replay the full sequence once to return it to Good.</span>
+                            {:else}
+                              <span class="memory-status-card__count">{memoryStatusCounts.weak}</span><strong>Weak</strong>
+                            {/if}
+                          </summary>
+                        </details>
+                      </div>
+                      <div class="memory-subsection">
+                        <div class="memory-subtitle">
+                          <span>Today's review set</span>
+                          <span class="memory-subtitle-count">{reviewTodayVisibleTechniques.length}</span>
+                        </div>
+                        {#if reviewTodayVisibleTechniques.length}
+                          {#each reviewTodayVisibleTechniques as pb (pb._idx)}
+                            <button type="button" class={`memory-review-row memory-review-row--${memoryStatusFor(pb).tone}`} on:click={() => beginSavedPlaybackReview(pb._idx)}>
+                              <span class="memory-review-name">
+                                <span>{pb.name}</span>
+                                {#if memoryStateChangeText(pb)}
+                                  <span class="memory-review-change">{memoryStateChangeText(pb)}</span>
+                                {/if}
+                              </span>
+                              <span class="memory-review-inline-meta" title={memoryStateChangeText(pb)}>
+                                {#if strongProgressLabel(pb)}<span>{strongProgressLabel(pb)}</span>{/if}
+                                {#if memoryCountdownLabel(pb)}<span>{memoryCountdownLabel(pb)}</span>{/if}
+                              </span>
+                            </button>
+                          {/each}
+                          {#if reviewTodayBacklogCount}
+                            <span class="memory-session-note">{reviewTodayBacklogCount} more due after this set</span>
+                          {/if}
+                        {:else if reviewTodayPlaybacks.length}
+                          <div class="memory-session-complete">
+                            <strong>Review set complete</strong>
+                            <span>{reviewTodayPlaybacks.length} technique{reviewTodayPlaybacks.length === 1 ? "" : "s"} still due.</span>
+                            <button type="button" class="btn memory-session-action" on:click={startMemoryReviewSession}>Start next set</button>
+                          </div>
+                        {:else}
+                          <span class="memory-empty">No techniques due today.</span>
+                        {/if}
+                      </div>
+                      <div class="memory-subsection">
+                        <div class="memory-subtitle"><span>Recently saved</span><span class="memory-subtitle-count">{recentlySavedTechniques.length}</span></div>
+                        {#if recentlySavedTechniques.length}
+                          {#each recentlySavedTechniques as pb (pb._idx)}
+                            <div class="memory-recent-row">
+                              <span>{pb.name}</span>
+                              <span>{friendlyMemoryDate(pb.saved_at || pb.created_at, "Saved")}</span>
+                            </div>
+                          {/each}
+                        {:else}
+                          <span class="memory-empty">Never lose a technique again.</span>
+                        {/if}
+                      </div>
+                      <div class="memory-subsection training-reminder">
+                        <div class="memory-subtitle"><span>Training reminder</span></div>
+                        <span class="training-reminder-copy">Choose your training days and start time. Fightlab shows a browser notification 30 minutes before training.</span>
+                        <div class="training-practice-prompt">
+                          10 min x 6 days = 1 hour of focused review each week before training.
+                        </div>
+                        {#key playbacksMenuVersion}
+                          <div class="training-day-grid" aria-label="Training days">
+                            {#each TRAINING_REMINDER_DAYS as day (day.value)}
+                              <div class="training-day-wrap">
+                                <button
+                                  type="button"
+                                  class="training-day"
+                                  class:is-active={trainingReminderDays.includes(day.value)}
+                                  aria-pressed={trainingReminderDays.includes(day.value)}
+                                  aria-label={day.name}
+                                  title={day.name}
+                                  on:click={() => toggleTrainingReminderDay(day.value)}
+                                >
+                                  <span>{day.label}</span>
+                                </button>
+                                {#if trainingReminderEnabled && trainingReminderDayTimeLabel(day.value)}
+                                  <span class="training-day-badge">
+                                    <span>{trainingReminderDayTimeLabel(day.value)}</span>
+                                    <button
+                                      type="button"
+                                      class="training-day-delete"
+                                      aria-label={`Delete ${day.name} reminder`}
+                                      title="Delete reminder"
+                                      on:pointerdown|stopPropagation|preventDefault
+                                      on:click|stopPropagation={() => deleteTrainingReminderDay(day.value)}
+                                    >×</button>
+                                  </span>
+                                {/if}
+                              </div>
+                            {/each}
+                          </div>
+                        {/key}
+                        <div class="training-reminder-row">
+                          <label class="training-reminder-field">
+                            <span>Training starts</span>
+                            <input
+                              class="input training-time-input"
+                              type="time"
+                              bind:value={trainingReminderTime}
+                              on:click={openTimeInputPicker}
+                              on:focus={openTimeInputPicker}
+                              on:change={updateTrainingReminder}
+                              aria-label="Training time"
+                            />
+                          </label>
+                          <div class="training-reminder-field training-email-field">
+                            <span>Email recipient</span>
+                            <input
+                              class="input training-email-input"
+                              type="email"
+                              bind:value={trainingReminderEmail}
+                              on:change={updateTrainingReminder}
+                              placeholder={loginEmail || "you@example.com"}
+                              aria-label="Reminder email"
+                            />
+                          </div>
+                          <button type="button" class="btn btn--primary memory-reminder-btn" on:click={enableTrainingReminder}>
+                            Save
+                          </button>
+                        </div>
+                        {#if trainingReminderNotice}
+                          <span class="memory-empty">{trainingReminderNotice}</span>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+      </div>
+    </div>
+    <div
+      class="mobile-floating-tools"
+      aria-label="Mobile joint tools"
+      use:portalToBody={showMobileShortcutList}
+      style={`--mobile-floating-bottom:${mobileFloatingToolsOffset}px;`}>
+      <button
+        type="button"
+        class="mobile-mode-control"
+        class:is-active={mobileJointMode === 'rotate'}
+        aria-pressed={mobileJointMode === 'rotate'}
+        aria-label="Rotate joint mode"
+        title="Rotate joint mode"
+        on:click={() => mobileJointMode = mobileJointMode === 'rotate' ? 'normal' : 'rotate'}>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M21 4v6h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="mobile-mode-control"
+        aria-label="Move selected joint toward camera"
+        title="Move selected joint toward camera"
+        on:pointerdown={(e) => startMobileDepthButton(-1, e)}
+        on:pointerup={stopMobileDepthButton}
+        on:pointercancel={stopMobileDepthButton}
+        on:pointerleave={stopMobileDepthButton}>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 20V5M7 10l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M5 20h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="mobile-mode-control"
+        aria-label="Move selected joint away from camera"
+        title="Move selected joint away from camera"
+        on:pointerdown={(e) => startMobileDepthButton(1, e)}
+        on:pointerup={stopMobileDepthButton}
+        on:pointercancel={stopMobileDepthButton}
+        on:pointerleave={stopMobileDepthButton}>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 4v15M7 14l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M5 4h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</div>
       </div>
     {#if editingPlaybackIdx >= 0}
       <div class="editing-bar collapse-hide">
@@ -10265,6 +11427,11 @@ function clampToDragLengths(person, jointKey, target){
     width: 100vw;
     height: 100dvh;
     min-height: 100svh;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-user-drag: none;
+    touch-action: none;
   }
   .figures-canvas {
     width: 100vw;
@@ -10274,6 +11441,31 @@ function clampToDragLengths(person, jointKey, target){
     position: relative;
     z-index: 1;
     background: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-user-drag: none;
+    touch-action: none;
+  }
+  .figures-wrapper button,
+  .figures-wrapper canvas,
+  .figures-wrapper svg,
+  .figures-wrapper img,
+  .preset-ui,
+  .account-anchor,
+  .mobile-crosshair {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-user-drag: none;
+  }
+  .figures-wrapper input,
+  .figures-wrapper textarea,
+  .figures-wrapper [contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
+    -webkit-touch-callout: default;
+    touch-action: manipulation;
   }
   :global(.lil-gui) {
     position: absolute;
@@ -10293,6 +11485,7 @@ function clampToDragLengths(person, jointKey, target){
   .preset-ui.bottom.toolbar-menu-open .row-left,
   .preset-ui.bottom.toolbar-menu-open .row-right,
   .preset-ui.bottom.toolbar-menu-open .preset-select-wrap,
+  .preset-ui.bottom.toolbar-menu-open .sequence-dropdown,
   .preset-ui.bottom.toolbar-menu-open .playback-dropdown { overflow: visible !important; }
   .toolbar-collapse-toggle { position:absolute; top:8px; right:8px; width:28px; height:28px; padding:0; border:1px solid #d0d7de; border-radius:9999px; background:#fff; color:#111; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; z-index:2; }
   .toolbar-collapse-toggle:hover { background:#f7f8fa; border-color:#c4cbd3; }
@@ -10313,6 +11506,73 @@ function clampToDragLengths(person, jointKey, target){
   .sequence-dropdown { position:relative; display:inline-flex; justify-content:flex-end; }
   .sequence-trigger { display:inline-flex; align-items:center; gap:5px; min-height:32px; }
   .sequence-trigger .icon { width:14px; height:14px; transition:transform .15s ease; }
+  .memory-trigger {
+    position:relative;
+    justify-content:center;
+    text-align:center;
+    overflow:visible;
+    background:linear-gradient(180deg, #1d4ed8, #0f3fa8);
+    border-color:rgba(15,23,42,0.14);
+    box-shadow:0 8px 18px rgba(37,99,235,0.2);
+  }
+  .memory-trigger-badge {
+    position:absolute;
+    right:-7px;
+    top:-8px;
+    min-width:18px;
+    height:18px;
+    padding:0 5px;
+    border-radius:999px;
+    background:#ff3b30;
+    color:#fff;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    font:800 10px/1 system-ui, sans-serif;
+    box-shadow:0 4px 10px rgba(255,59,48,0.35);
+  }
+  .memory-menu {
+    --memory-menu-max-height:min(76vh, 640px);
+    width:min(540px, calc(100vw - 24px));
+    max-height:var(--memory-menu-max-height);
+    padding:2px;
+    overflow-y:hidden;
+    overflow-x:hidden;
+  }
+  .memory-menu .memory-panel {
+    max-height:var(--memory-menu-max-height);
+    padding:14px 10px 14px 14px;
+    gap:12px;
+    overflow-y:auto;
+    overflow-x:hidden;
+    box-sizing:border-box;
+    scrollbar-gutter:stable;
+    scrollbar-width:thin;
+    scrollbar-color:rgba(100,116,139,0.5) transparent;
+  }
+  .memory-menu .memory-panel::-webkit-scrollbar { width:3px; }
+  .memory-menu .memory-panel::-webkit-scrollbar-track { background:transparent; }
+  .memory-menu .memory-panel::-webkit-scrollbar-thumb {
+    background-color:rgba(100,116,139,0.5);
+    background-clip:padding-box;
+    border-block:10px solid transparent;
+    border-radius:999px;
+  }
+  .memory-menu .memory-panel::-webkit-scrollbar-thumb:hover { background-color:rgba(71,85,105,0.72); }
+  .memory-menu .memory-panel::-webkit-scrollbar-button,
+  .memory-menu .memory-panel::-webkit-scrollbar-button:single-button,
+  .memory-menu .memory-panel::-webkit-scrollbar-button:start,
+  .memory-menu .memory-panel::-webkit-scrollbar-button:end,
+  .memory-menu .memory-panel::-webkit-scrollbar-button:vertical:decrement,
+  .memory-menu .memory-panel::-webkit-scrollbar-button:vertical:increment {
+    display:none;
+    width:0;
+    height:0;
+    background:transparent;
+  }
+  .memory-menu .memory-stats { grid-template-columns:repeat(3, minmax(0, 1fr)); }
+  .memory-menu .memory-review-row { padding:8px 10px; }
+  .memory-menu .memory-review-name { font-size:12px; }
   .sequence-menu {
     display:flex;
     flex-direction:column;
@@ -10324,7 +11584,712 @@ function clampToDragLengths(person, jointKey, target){
   }
   .sequence-section { display:flex; flex-direction:column; gap:6px; }
   .sequence-helper { font:11px/1.25 system-ui, sans-serif; color:#64748b; padding:0 8px; max-width:260px; }
+  .memory-copy { padding:0; display:block; max-width:190px; }
+  .memory-panel {
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+    padding:14px;
+    border:1px solid rgba(148,163,184,0.32);
+    border-radius:16px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98)),
+      #f8fafc;
+    box-shadow:0 22px 48px rgba(15,23,42,0.2), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+  .memory-panel-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    padding:2px 2px 4px;
+  }
+  .memory-close-btn {
+    display:none;
+    width:34px;
+    height:34px;
+    padding:0;
+    border:1px solid rgba(148,163,184,0.28);
+    border-radius:999px;
+    background:#fff;
+    color:#0f172a;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    flex:0 0 auto;
+  }
+  .memory-close-btn:hover,
+  .memory-close-btn:focus-visible {
+    background:#eff6ff;
+    border-color:#93c5fd;
+    outline:none;
+  }
+  .memory-titleblock {
+    min-width:0;
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+  }
+  .memory-titleblock .menu-section-title {
+    padding:0;
+    color:#64748b;
+  }
+  .memory-headline {
+    min-width:0;
+    color:#0f172a;
+    font:800 18px/1.1 system-ui, sans-serif;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .memory-total {
+    --score-deg:0deg;
+    position:relative;
+    min-width:76px;
+    width:76px;
+    height:76px;
+    padding:0;
+    border-radius:999px;
+    background:
+      radial-gradient(circle at 50% 50%, #ffffff 0 58%, transparent 59%),
+      conic-gradient(#2563eb var(--score-deg), #dbeafe 0);
+    color:#0f172a;
+    text-align:center;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:2px;
+    box-shadow:0 10px 24px rgba(37,99,235,0.18);
+    flex:0 0 auto;
+  }
+  .memory-total strong { font:900 19px/1 system-ui, sans-serif; letter-spacing:0; }
+  .memory-total span { font:800 8px/1 system-ui, sans-serif; text-transform:uppercase; letter-spacing:.08em; color:#64748b; }
+  .memory-confirmation {
+    padding:7px 8px;
+    border-radius:9px;
+    background:linear-gradient(135deg, #dcfce7, #dbeafe);
+    color:#065f46;
+    border:1px solid #86efac;
+    font:700 12px/1.2 system-ui, sans-serif;
+    text-align:center;
+  }
+  .memory-stats {
+    position:relative;
+    display:grid;
+    grid-template-columns:repeat(3, minmax(0, 1fr));
+    gap:1px;
+    overflow:hidden;
+    border:1px solid rgba(148,163,184,0.22);
+    border-radius:12px;
+    background:rgba(148,163,184,0.18);
+  }
+  .memory-stats div {
+    min-width:0;
+    padding:10px 8px 11px;
+    border-radius:0;
+    background:#ffffff;
+    border:0;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    text-align:center;
+    box-shadow:none;
+  }
+  .memory-stats strong { order:1; font:900 22px/1.05 system-ui, sans-serif; color:#0f172a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .memory-stats span { order:2; font:800 9px/1.25 system-ui, sans-serif; color:#64748b; text-transform:uppercase; letter-spacing:.055em; }
+  .memory-subsection {
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    padding:11px;
+    border:1px solid rgba(148,163,184,0.2);
+    border-radius:12px;
+    background:#ffffff;
+  }
+  .memory-subtitle { display:flex; align-items:center; justify-content:space-between; gap:8px; font:800 12px/1.2 system-ui, sans-serif; color:#0f172a; }
+  .memory-subtitle-actions {
+    display:inline-flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:5px;
+    min-width:0;
+  }
+  .memory-subtitle-count {
+    min-width:20px;
+    height:20px;
+    padding:0 7px;
+    border-radius:999px;
+    background:#eff6ff;
+    color:#0b5bd3;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    font:900 10px/1 system-ui, sans-serif;
+  }
+  .memory-review-row {
+    border:1px solid rgba(148,163,184,0.22);
+    border-radius:10px;
+    background:#f8fafc;
+    color:#0f172a;
+    padding:8px 10px;
+    width:100%;
+    align-self:stretch;
+    display:grid;
+    grid-template-columns:minmax(0, 1fr) max-content;
+    align-items:center;
+    gap:8px;
+    cursor:pointer;
+    text-align:left;
+    min-height:42px;
+    box-shadow:0 1px 2px rgba(15,23,42,0.04);
+  }
+  .memory-review-row:hover,
+  .memory-review-row:focus-visible {
+    border-color:#2563eb;
+    background:#eff6ff;
+    box-shadow:0 8px 18px rgba(37,99,235,0.14);
+    outline:none;
+  }
+  .memory-review-row--strong { color:#15803d; }
+  .memory-review-row--good { color:#0369a1; }
+  .memory-review-row--review { color:#a16207; }
+  .memory-review-row--weak { color:#be123c; }
+  .memory-review-name { min-width:0; overflow:hidden; font:700 12px/1.2 system-ui, sans-serif; display:flex; flex-direction:column; gap:3px; }
+  .memory-review-name > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .memory-review-change {
+    color:currentColor;
+    opacity:.72;
+    font:800 10px/1.15 system-ui, sans-serif;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .memory-review-inline-meta {
+    display:inline-flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:4px;
+    color:currentColor;
+    font:900 10px/1 system-ui, sans-serif;
+    white-space:nowrap;
+    opacity:.9;
+  }
+  .memory-row-meta { display:flex; align-items:center; justify-content:flex-end; gap:4px; }
+  .memory-status-combo {
+    max-width:100%;
+    height:16px;
+    padding:0 6px;
+    border-radius:999px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:4px;
+    font:900 9px/1 system-ui, sans-serif;
+    white-space:nowrap;
+    box-shadow:0 2px 6px rgba(15,23,42,0.16);
+  }
+  .memory-status-combo--strong { background:#16a34a; color:#052e16; }
+  .memory-status-combo--good { background:#0284c7; color:#fff; }
+  .memory-status-combo--review { background:#ca8a04; color:#422006; }
+  .memory-status-combo--weak { background:#e11d48; color:#fff; }
+  .memory-status-combo__progress {
+    color:#bbf7d0;
+    text-shadow:0 1px 0 rgba(0,0,0,0.16);
+  }
+  .memory-status-combo__label {
+    color:inherit;
+  }
+  .memory-status-combo__count {
+    color:#fff;
+    opacity:.95;
+  }
+  .memory-status-counts {
+    position:relative;
+    display:flex;
+    gap:7px;
+    padding:0;
+    margin:0;
+    align-items:stretch;
+  }
+  .memory-status-counts::before,
+  .memory-status-counts::after { display:none; }
+  .memory-status-card {
+    position:relative;
+    flex:1 1 0;
+    min-width:0;
+    border-radius:11px;
+    border:1px solid rgba(148,163,184,0.24);
+    background:#fff;
+    overflow:visible;
+    box-shadow:0 1px 2px rgba(15,23,42,0.04);
+    transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  }
+  .memory-status-card:hover,
+  .memory-status-card:focus-within {
+    transform:translateY(-1px);
+    border-color:rgba(37,99,235,0.26);
+    box-shadow:0 10px 22px rgba(15,23,42,0.1);
+  }
+  .memory-status-card::before {
+    content:"";
+    position:absolute;
+    left:0;
+    right:0;
+    top:0;
+    height:3px;
+    background:#94a3b8;
+    z-index:1;
+    border-radius:11px 11px 0 0;
+  }
+  .memory-status-card summary {
+    min-width:0;
+    min-height:36px;
+    padding:8px 7px 7px;
+    display:flex;
+    flex-direction:row;
+    align-items:center;
+    justify-content:center;
+    gap:5px;
+    text-align:center;
+    cursor:pointer;
+    list-style:none;
+    font:800 10px/1.35 system-ui, sans-serif;
+    white-space:nowrap;
+    border-radius:10px;
+  }
+  .memory-status-card summary::-webkit-details-marker { display:none; }
+  .memory-status-card__count {
+    min-width:20px;
+    height:18px;
+    padding:0 5px;
+    border-radius:999px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    background:rgba(255,255,255,0.82);
+    font:900 10px/1 system-ui, sans-serif;
+    box-shadow:0 1px 2px rgba(15,23,42,0.08);
+  }
+  .memory-status-card__description {
+    display:block;
+    width:100%;
+    color:inherit;
+    font:800 10px/1.35 system-ui, sans-serif;
+    text-align:center;
+    white-space:normal;
+    overflow-wrap:anywhere;
+  }
+  .memory-status-card summary strong {
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    max-width:100%;
+    font:900 10px/1.35 system-ui, sans-serif;
+    padding-bottom:0;
+  }
+  .memory-status-card--strong::before { background:#16a34a; }
+  .memory-status-card--good::before { background:#0284c7; }
+  .memory-status-card--review::before { background:#ca8a04; }
+  .memory-status-card--weak::before { background:#e11d48; }
+  .memory-status-card--strong summary { background:#f0fdf4; color:#166534; }
+  .memory-status-card--good summary { background:#f0f9ff; color:#075985; }
+  .memory-status-card--review summary { background:#fffbeb; color:#92400e; }
+  .memory-status-card--weak summary { background:#fff1f2; color:#9f1239; }
+  .memory-status-card[open] {
+    flex:1.9 1 170px;
+    overflow:hidden;
+    box-shadow:0 6px 14px rgba(15,23,42,0.08);
+  }
+  .memory-status-counts:has(.memory-status-card[open]) .memory-status-card:not([open]) {
+    flex:0.72 1 54px;
+  }
+  .memory-status-card[open] summary {
+    min-height:36px;
+    justify-content:center;
+    padding:7px 10px;
+    border-radius:10px;
+  }
+  .memory-description-toggle {
+    border:1px solid #bfdbfe;
+    border-radius:8px;
+    background:#ffffff;
+    color:#0b5bd3;
+    padding:4px 7px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:5px;
+    cursor:pointer;
+    font:800 11px/1 system-ui, sans-serif;
+  }
+  .memory-description-toggle .icon { width:13px; height:13px; transition:transform .15s ease; }
+  .memory-descriptions {
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:6px;
+  }
+  .memory-descriptions div {
+    border:1px solid rgba(59,130,246,0.16);
+    border-radius:8px;
+    background:rgba(255,255,255,0.76);
+    padding:7px;
+    display:flex;
+    flex-direction:column;
+    gap:5px;
+  }
+  .memory-descriptions p { margin:0; color:#475569; font:10px/1.35 system-ui, sans-serif; }
+  .memory-status {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    height:16px;
+    padding:0 6px;
+    border-radius:999px;
+    font:700 9px/1 system-ui, sans-serif;
+    white-space:nowrap;
+  }
+  .memory-status--strong { background:#22c55e; color:#052e16; box-shadow:0 0 0 1px rgba(34,197,94,0.25); }
+  .memory-status--good { background:#38bdf8; color:#082f49; box-shadow:0 0 0 1px rgba(14,165,233,0.25); }
+  .memory-status--review { background:#facc15; color:#422006; box-shadow:0 0 0 1px rgba(234,179,8,0.28); }
+  .memory-status--weak { background:#fb7185; color:#450a0a; box-shadow:0 0 0 1px rgba(244,63,94,0.25); }
+  .memory-empty {
+    display:block;
+    width:100%;
+    color:#64748b;
+    font:12px/1.35 system-ui, sans-serif;
+    text-align:center;
+  }
+  .memory-session-note {
+    display:block;
+    width:100%;
+    color:#64748b;
+    font:700 10px/1.3 system-ui, sans-serif;
+    text-align:center;
+  }
+  .memory-session-complete {
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:5px;
+    padding:8px 6px 4px;
+    text-align:center;
+  }
+  .memory-session-complete strong {
+    color:#166534;
+    font:800 12px/1.2 system-ui, sans-serif;
+  }
+  .memory-session-complete span {
+    color:#64748b;
+    font:11px/1.3 system-ui, sans-serif;
+  }
+  .memory-session-action {
+    margin-top:3px;
+    min-height:30px;
+    padding:5px 10px;
+    justify-content:center;
+    background:#eff6ff;
+    border-color:#bfdbfe;
+    color:#1d4ed8;
+    font-weight:800;
+  }
+  .memory-recent-row, .saved-sequence-name {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:6px;
+    min-width:0;
+    width:100%;
+  }
+  .memory-recent-row span:first-child, .saved-sequence-name .name {
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .saved-sequence-memory {
+    display:inline-flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:4px;
+    flex:0 0 auto;
+  }
+  .memory-recent-row {
+    padding:7px 0;
+    border-top:1px solid rgba(226,232,240,0.9);
+    font:12px/1.25 system-ui, sans-serif;
+    color:#334155;
+  }
+  .memory-recent-row:first-of-type { border-top:0; padding-top:0; }
+  .memory-recent-row span:last-child { color:#64748b; white-space:nowrap; }
+  .training-reminder {
+    padding-top:11px;
+    background:linear-gradient(180deg, #ffffff, #f8fafc);
+  }
+  .training-reminder-copy {
+    color:#64748b;
+    font:11px/1.4 system-ui, sans-serif;
+    text-align:left;
+  }
+  .training-practice-prompt {
+    padding:8px 10px;
+    border-left:3px solid #2563eb;
+    border-radius:6px;
+    background:#eff6ff;
+    color:#1e3a8a;
+    font:800 11px/1.35 system-ui, sans-serif;
+    text-align:left;
+  }
+  .training-reminder-row {
+    display:grid;
+    grid-template-columns:max-content minmax(150px, 1fr) max-content;
+    gap:8px;
+    align-items:end;
+  }
+  .training-reminder-field { display:flex; flex-direction:column; gap:3px; min-width:0; }
+  .training-reminder-field span { font:700 10px/1.1 system-ui, sans-serif; color:#475569; display:flex; align-items:center; justify-content:space-between; gap:5px; }
+  .training-reminder-field em { font-style:normal; font-weight:700; color:#0b5bd3; white-space:nowrap; }
+  .training-day-grid {
+    display:grid;
+    grid-template-columns:repeat(7, 36px);
+    gap:8px;
+    justify-content:center;
+    overflow:visible;
+    padding:8px 0 2px;
+  }
+  .training-day-wrap {
+    position:relative;
+    min-width:0;
+    overflow:visible;
+  }
+  .training-day {
+    height:36px;
+    width:36px;
+    padding:0 4px;
+    border:1px solid #cbd5e1;
+    border-radius:999px;
+    background:#f8fafc;
+    color:#334155;
+    cursor:pointer;
+    font:800 12px/1 system-ui, sans-serif;
+    transition:background .15s ease, border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+  }
+  .training-day:hover,
+  .training-day:focus-visible {
+    border-color:#2563eb;
+    background:#eff6ff;
+    outline:none;
+  }
+  .training-day > span:first-child { position:relative; z-index:1; }
+  .training-day.is-active {
+    border-color:#2563eb;
+    background:#dbeafe;
+    color:#0b5bd3;
+    box-shadow:0 4px 12px rgba(37,99,235,0.18);
+  }
+  .training-day-badge {
+    position:absolute;
+    right:-3px;
+    top:-7px;
+    min-width:34px;
+    height:13px;
+    padding:0 2px 0 5px;
+    border-radius:999px;
+    border:1px solid rgba(15,23,42,0.16);
+    background:linear-gradient(135deg, #2563eb, #14b8a6);
+    color:#fff;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:2px;
+    font:700 8px/1 system-ui, sans-serif;
+    box-shadow:0 2px 5px rgba(15,23,42,0.18);
+    pointer-events:auto;
+    white-space:nowrap;
+    z-index:2;
+  }
+  .training-day-delete {
+    border:0;
+    padding:0;
+    background:transparent;
+    width:11px;
+    height:11px;
+    border-radius:999px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    color:#fff;
+    opacity:.78;
+    cursor:pointer;
+    font:900 10px/1 system-ui, sans-serif;
+  }
+  .training-day-delete:hover, .training-day-delete:focus-visible {
+    background:rgba(255,255,255,0.18);
+    opacity:1;
+    outline:none;
+  }
+  .training-time-input { min-width:0; width:96px; max-width:100%; cursor:pointer; }
+  .training-email-field { min-width:150px; }
+  .training-email-input { width:100%; min-width:0; box-sizing:border-box; }
+  .memory-reminder-btn { width:auto; min-width:0; justify-content:center; padding:6px 10px; white-space:nowrap; }
+  :global(body.dark-mode) .memory-trigger {
+    background:linear-gradient(180deg, #2563eb, #1e40af);
+    border-color:rgba(147,197,253,0.22);
+    box-shadow:0 8px 18px rgba(37,99,235,0.32);
+  }
+  :global(body.dark-mode) .memory-panel {
+    background:#0f172a;
+    border-color:rgba(148,163,184,0.22);
+    box-shadow:0 18px 42px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+  :global(body.dark-mode) .memory-panel .menu-section-title,
+  :global(body.dark-mode) .memory-headline,
+  :global(body.dark-mode) .memory-subtitle,
+  :global(body.dark-mode) .memory-stats strong { color:#e5e7eb; }
+  :global(body.dark-mode) .memory-stats span,
+  :global(body.dark-mode) .memory-empty,
+  :global(body.dark-mode) .memory-session-note,
+  :global(body.dark-mode) .memory-session-complete span,
+  :global(body.dark-mode) .training-reminder-copy,
+  :global(body.dark-mode) .memory-recent-row span:last-child,
+  :global(body.dark-mode) .training-reminder-field span { color:#94a3b8; }
+  :global(body.dark-mode) .memory-stats div,
+  :global(body.dark-mode) .memory-subsection,
+  :global(body.dark-mode) .memory-status-card {
+    background:#111827;
+    border-color:rgba(148,163,184,0.18);
+  }
+  :global(body.dark-mode) .memory-stats {
+    background:rgba(148,163,184,0.14);
+    border-color:rgba(148,163,184,0.18);
+  }
+  :global(body.dark-mode) .memory-total {
+    background:
+      radial-gradient(circle at 50% 50%, #111827 0 58%, transparent 59%),
+      conic-gradient(#60a5fa var(--score-deg), #1e293b 0);
+    color:#e5e7eb;
+  }
+  :global(body.dark-mode) .memory-total span { color:#94a3b8; }
+  :global(body.dark-mode) .memory-subtitle-count {
+    background:#172554;
+    color:#bfdbfe;
+  }
+  :global(body.dark-mode) .memory-session-complete strong { color:#86efac; }
+  :global(body.dark-mode) .memory-session-action {
+    background:#172554;
+    border-color:#1d4ed8;
+    color:#bfdbfe;
+  }
+  :global(body.dark-mode) .memory-status-card--strong summary { background:#052e16; color:#bbf7d0; }
+  :global(body.dark-mode) .memory-status-card--good summary { background:#082f49; color:#bae6fd; }
+  :global(body.dark-mode) .memory-status-card--review summary { background:#422006; color:#fde68a; }
+  :global(body.dark-mode) .memory-status-card--weak summary { background:#4c0519; color:#fecdd3; }
+  :global(body.dark-mode) .memory-status-card__count {
+    background:rgba(15,23,42,0.72);
+    box-shadow:0 1px 2px rgba(0,0,0,0.28);
+  }
+  :global(body.dark-mode) .memory-close-btn {
+    background:#111827;
+    border-color:rgba(148,163,184,0.22);
+    color:#e5e7eb;
+  }
+  :global(body.dark-mode) .memory-close-btn:hover,
+  :global(body.dark-mode) .memory-close-btn:focus-visible {
+    background:#172554;
+    border-color:#60a5fa;
+  }
+  :global(body.dark-mode) .training-practice-prompt {
+    background:#172554;
+    border-left-color:#60a5fa;
+    color:#dbeafe;
+  }
+  :global(body.dark-mode) .memory-review-row {
+    background:#111827;
+    border-color:rgba(148,163,184,0.18);
+    color:#e5e7eb;
+  }
+  :global(body.dark-mode) .memory-review-row:hover,
+  :global(body.dark-mode) .memory-review-row:focus-visible {
+    background:#172554;
+    border-color:#60a5fa;
+  }
+  :global(body.dark-mode) .memory-recent-row {
+    color:#e5e7eb;
+    border-top-color:rgba(148,163,184,0.16);
+  }
+  :global(body.dark-mode) .training-day {
+    background:#0f172a;
+    border-color:rgba(148,163,184,0.24);
+    color:#cbd5e1;
+  }
+  :global(body.dark-mode) .training-day:hover,
+  :global(body.dark-mode) .training-day:focus-visible {
+    background:#172554;
+    border-color:#60a5fa;
+  }
+  :global(body.dark-mode) .training-day.is-active {
+    background:#1e3a8a;
+    border-color:#60a5fa;
+    color:#dbeafe;
+  }
+  .sequence-menu--movable {
+    transform:translate(var(--sequence-drag-x, 0px), var(--sequence-drag-y, 0px));
+    will-change:transform;
+  }
   .sequence-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .sequence-window-tools {
+    display:inline-flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:5px;
+  }
+  .sequence-move-handle {
+    width:24px;
+    height:24px;
+    padding:0;
+    border:1px solid #cbd5e1;
+    border-radius:6px;
+    background:#ffffff;
+    color:#475569;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    cursor:grab;
+    touch-action:none;
+  }
+  .sequence-move-handle:hover,
+  .sequence-move-handle:focus-visible {
+    border-color:#2563eb;
+    color:#1d4ed8;
+    background:#eff6ff;
+    outline:none;
+  }
+  .sequence-move-handle:active { cursor:grabbing; }
+  .sequence-move-handle .icon { width:14px; height:14px; }
+  .sequence-close-handle {
+    width:24px;
+    height:24px;
+    padding:0;
+    border:1px solid #fecaca;
+    border-radius:6px;
+    background:#ffffff;
+    color:#b91c1c;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+  }
+  .sequence-close-handle:hover,
+  .sequence-close-handle:focus-visible {
+    background:#fef2f2;
+    border-color:#f87171;
+    color:#991b1b;
+    outline:none;
+  }
+  .sequence-close-handle .icon { width:14px; height:14px; }
   .sequence-frame-count {
     min-width:18px;
     height:16px;
@@ -10341,6 +12306,48 @@ function clampToDragLengths(person, jointKey, target){
   }
   .sequence-actions { display:flex; gap:6px; flex-wrap:wrap; }
   .sequence-action { width:100%; justify-content:center; }
+  .sequence-cancel-action {
+    width:100%;
+    justify-content:center;
+    background:#ffffff;
+    border-color:#fecaca;
+    color:#b91c1c;
+    font-weight:800;
+  }
+  .sequence-cancel-action:hover,
+  .sequence-cancel-action:focus-visible {
+    background:#fef2f2;
+    border-color:#f87171;
+    color:#991b1b;
+    outline:none;
+  }
+  :global(body.dark-mode) .sequence-move-handle {
+    background:#111827;
+    border-color:#334155;
+    color:#cbd5e1;
+  }
+  :global(body.dark-mode) .sequence-move-handle:hover,
+  :global(body.dark-mode) .sequence-move-handle:focus-visible {
+    background:#172554;
+    border-color:#60a5fa;
+    color:#bfdbfe;
+  }
+  :global(body.dark-mode) .sequence-close-handle {
+    background:#111827;
+    border-color:#7f1d1d;
+    color:#fca5a5;
+  }
+  :global(body.dark-mode) .sequence-close-handle:hover,
+  :global(body.dark-mode) .sequence-close-handle:focus-visible {
+    background:#450a0a;
+    border-color:#ef4444;
+    color:#fecaca;
+  }
+  :global(body.dark-mode) .sequence-cancel-action {
+    background:#111827;
+    border-color:#7f1d1d;
+    color:#fca5a5;
+  }
   .sequence-file-menu {
     position:relative;
     inset:auto;
@@ -10375,6 +12382,23 @@ function clampToDragLengths(person, jointKey, target){
   .btn--primary { border-color: #3b82f6; color: #0b5bd3; background: #eef5ff; }
   .btn--primary:hover { background: #e5f0ff; }
   /* .btn--ghost removed (unused) */
+  .btn--toggle {
+    width:74px;
+    min-width:74px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+  }
+  .btn--toggle span {
+    display:block;
+    width:100%;
+  }
+  .toolbar-actions .btn--toggle {
+    flex:0 0 74px;
+    width:74px;
+    max-width:74px;
+  }
   .btn--toggle.is-active { border-color: #16a34a; color: #166534; background: #ecfdf5; }
   .account-anchor { position: fixed; top: 12px; left: 12px; z-index: 12; }
   .account-btn { display:inline-flex; align-items:center; gap:6px; background: #ffffff; border:1px solid #d6dbe4; color: #0f172a; padding: 5px 10px; border-radius: 10px; font: 13px/1.2 system-ui, -apple-system, Segoe UI, sans-serif; transition: background .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
@@ -10391,6 +12415,81 @@ function clampToDragLengths(person, jointKey, target){
   .account-menu .shortcut-row .keys { color: #0f172a; }
   .account-menu .shortcut-list { border-color: rgba(15,23,42,0.08); background: rgba(255,255,255,0.6); }
   .panel-block { border:1px solid #d8e3f5; border-radius:10px; background: rgba(255,255,255,0.92); box-shadow: inset 0 1px 0 rgba(255,255,255,0.6); }
+  .settings-panel {
+    width:100%;
+    padding:10px;
+    display:flex;
+    flex-direction:column;
+    align-items:stretch;
+    gap:8px;
+    box-sizing:border-box;
+  }
+  .settings-row {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    width:100%;
+    padding:8px;
+    border:1px solid rgba(148,163,184,0.22);
+    border-radius:9px;
+    background:rgba(248,250,252,0.78);
+    box-sizing:border-box;
+  }
+  .settings-row--stack {
+    flex-direction:column;
+    align-items:stretch;
+  }
+  .settings-label {
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+    min-width:0;
+  }
+  .settings-label .name {
+    color:#0f172a;
+    font:800 12px/1.2 system-ui, sans-serif;
+  }
+  .settings-label span:not(.name) {
+    color:#64748b;
+    font:10px/1.3 system-ui, sans-serif;
+  }
+  .settings-control {
+    width:100%;
+    min-width:0;
+  }
+  .settings-control--split {
+    display:grid;
+    grid-template-columns:minmax(0, 1fr) 72px;
+    gap:8px;
+    align-items:center;
+  }
+  .settings-range {
+    width:100%;
+    min-width:0;
+    accent-color:#2563eb;
+  }
+  .settings-number {
+    width:72px;
+    box-sizing:border-box;
+    text-align:center;
+  }
+  .settings-select {
+    width:132px;
+    max-width:48%;
+    box-sizing:border-box;
+    background:#fff;
+  }
+  .settings-toggle-btn {
+    min-width:54px;
+    justify-content:center;
+    font-weight:800;
+  }
+  .settings-toggle-btn.is-active {
+    border-color:#2563eb;
+    background:#eff6ff;
+    color:#1d4ed8;
+  }
   .input { font: 12px/1.2 system-ui, sans-serif; padding: 5px 7px; border:1px solid #d0d7de; border-radius:8px; }
   .input:focus-visible { outline: 2px solid #0b5bd3; outline-offset: 2px; }
   .icon { width: 18px; height: 18px; display: block; }
@@ -10469,6 +12568,17 @@ function clampToDragLengths(person, jointKey, target){
   input[type="range"].slim::-moz-range-track { height: 6px; background: #fff; border-radius: 9999px; border: 1px solid #000; box-shadow: inset 0 1px 0 rgba(0,0,0,0.08); }
   input[type="range"].slim::-moz-range-thumb { width: 14px; height: 14px; background: #3b82f6; border: 0; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.18); }
   .menu-popup { position:absolute; bottom: 110%; right:0; background:linear-gradient(135deg, #ffffff 0%, #f6f7fb 100%); border:1px solid #d0d7de; border-radius:12px; box-shadow:0 10px 28px rgba(0,0,0,0.14); padding:6px; min-width: 200px; max-height: 240px; max-width: min(100vw - 18px, 420px); width: min(420px, 100%); overflow:auto; z-index: 12; box-sizing: border-box; }
+  .menu-popup.memory-menu {
+    --memory-menu-max-height:min(76vh, 640px);
+    width:min(540px, calc(100vw - 24px));
+    max-width:min(540px, calc(100vw - 24px));
+    max-height:var(--memory-menu-max-height);
+    background:transparent;
+    border:0;
+    box-shadow:none;
+    padding:2px;
+    overflow:hidden;
+  }
   .menu-popup.sequence-file-menu {
     position:relative;
     inset:auto;
@@ -10500,6 +12610,7 @@ function clampToDragLengths(person, jointKey, target){
   .menu-item .name { font: 13px/1.2 system-ui, sans-serif; color:#111; flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   .menu-section-title { font:12px/1.2 system-ui, sans-serif; font-weight:600; color:#444; padding:6px 8px 2px; text-transform:uppercase; letter-spacing:0.02em; display:flex; align-items:center; gap:6px; }
   .preset-menu-title { justify-content:space-between; }
+  .preset-row-actions { display:flex; align-items:center; gap:4px; flex:0 0 auto; }
   .add-preset-action { border:0; background:transparent; cursor:pointer; width:24px; height:24px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; color:#0f172a; }
   .add-preset-action:hover { background:#eef2ff; color:#0b5bd3; }
   .folder-icon { width:14px; height:14px; color:#f0b400; flex:none; }
@@ -10527,9 +12638,9 @@ function clampToDragLengths(person, jointKey, target){
   .editing-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; background:#ffffff; border:3px solid #0f172a; border-radius:12px; box-shadow: 0 16px 34px rgba(15,23,42,0.30); color:#0f172a; opacity: 1; position: relative; z-index: 20; }
   .frame-edit-field { display:inline-flex; align-items:center; gap:5px; }
   .frame-edit-input { width:68px; text-align:center; }
-  .shortcut-list { display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:10px 14px; margin:6px 0 10px 0; padding:10px; border:1px solid #eee; border-radius:10px; background:#fafafa; max-height: 360px; overflow-y: auto; overflow-x: hidden; }
-  .shortcut-row { display:grid; grid-template-columns: 50% 50%; align-items:start; gap:6px 12px; font:12px/1.3 system-ui, sans-serif; color:#333; }
-  .shortcut-row .keys { font-weight:700; color:#0f172a; white-space:normal; width: 100%; word-break: break-word; }
+  .shortcut-list { display:grid; grid-template-columns:1fr; gap:6px; margin:6px 0 10px 0; padding:10px; border:1px solid #eee; border-radius:10px; background:#fafafa; max-height: 390px; overflow-y: auto; overflow-x: hidden; }
+  .shortcut-row { display:grid; grid-template-columns:minmax(106px, 42%) minmax(0, 1fr); align-items:center; gap:8px; padding:7px 8px; border-radius:8px; background:rgba(255,255,255,0.72); font:12px/1.3 system-ui, sans-serif; color:#333; }
+  .shortcut-row .keys { font-weight:800; color:#0f172a; white-space:normal; width: 100%; overflow-wrap:anywhere; }
   .shortcut-row .desc { color:#444; }
   .danger-action { border:1px solid transparent; border-radius:6px; transition: color .15s; }
   .danger-action:hover { color:#dc2626; background:transparent; }
@@ -10539,10 +12650,43 @@ function clampToDragLengths(person, jointKey, target){
   .save-action:hover { background:#e5f0ff; border-color:#3b82f6; color:#0b5bd3; }
   .btn--primary:hover { background:#dbe8ff; border-color:#2f6fe0; }
   .mobile-only-control { display: none; }
+  .mobile-floating-tools { display:none; }
   .mobile-crosshair { display:none; }
   .mobile-undo-control { color:#1f2937; background: transparent; border-color: #cbd5e1; }
   .mobile-undo-control:hover { background: #f3f4f6; color:#1f2937; }
   .mobile-undo-symbol { display:flex; align-items:center; justify-content:center; width:100%; height:100%; font-size: 18px; line-height: 1; font-family: "Segoe UI Symbol", Arial, sans-serif; transform: none; }
+  .mobile-mode-control {
+    width:34px;
+    height:30px;
+    padding:0;
+    border:1px solid #cbd5e1;
+    border-radius:7px;
+    background:#f8fafc;
+    color:#0f172a;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    box-sizing:border-box;
+  }
+  .mobile-mode-control:hover {
+    background:#eef2ff;
+    border-color:#94a3b8;
+  }
+  .mobile-mode-control .icon {
+    width:17px;
+    height:17px;
+  }
+  .mobile-mode-control.is-active {
+    background:#0f766e;
+    border-color:#0f766e;
+    color:#ffffff;
+    box-shadow:0 0 0 2px rgba(15,118,110,0.18);
+  }
+  .mobile-mode-control.is-active:hover {
+    background:#115e59;
+    border-color:#115e59;
+    color:#ffffff;
+  }
   .input-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .shortcut-toggle {
     width: 100%;
@@ -10556,7 +12700,7 @@ function clampToDragLengths(person, jointKey, target){
     background: linear-gradient(135deg, #ffffff, #f3f6ff);
     color: #0f172a;
     cursor: pointer;
-    transition: background .15s ease, border-color .15s ease, tran sform .12s ease;
+    transition: background .15s ease, border-color .15s ease, transform .12s ease;
   }
   .shortcut-toggle:hover { background: #eef2ff; border-color: #c7d7f5; }
   .shortcut-toggle:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
@@ -10611,6 +12755,24 @@ function clampToDragLengths(person, jointKey, target){
     background: linear-gradient(150deg, rgba(15,23,42,0.9), rgba(10,14,26,0.9));
     border-color: rgba(59,73,102,0.8);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+  :global(body.dark-mode) .settings-row {
+    background:rgba(15,23,42,0.72);
+    border-color:rgba(71,85,105,0.58);
+  }
+  :global(body.dark-mode) .settings-label .name {
+    color:#e5e7eb;
+  }
+  :global(body.dark-mode) .settings-label span:not(.name) {
+    color:#94a3b8;
+  }
+  :global(body.dark-mode) .settings-toggle-btn.is-active {
+    background:#172554;
+    border-color:#60a5fa;
+    color:#bfdbfe;
+  }
+  :global(body.dark-mode) .shortcut-row {
+    background:rgba(15,23,42,0.72);
   }
   :global(body.dark-mode) .speed-label,
   :global(body.dark-mode) .speed-inline label,
@@ -10753,12 +12915,60 @@ function clampToDragLengths(person, jointKey, target){
     .playback-comment { overflow: hidden; }
     .toolbar-actions .btn { flex: 0 0 auto; width: auto; max-width: 100%; }
     .menu-popup { width: min(100vw - 16px, 420px); max-width: min(100vw - 16px, 420px); }
+    .menu-popup.memory-menu {
+      --memory-menu-max-height:min(74vh, 560px);
+      width: min(100vw - 16px, 420px);
+      max-width: min(100vw - 16px, 420px);
+      max-height:var(--memory-menu-max-height);
+      background:transparent;
+      border:0;
+      box-shadow:none;
+      padding:2px;
+      overflow:hidden;
+    }
+    .memory-menu .memory-stats { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    .memory-status-counts { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    .memory-descriptions { grid-template-columns:1fr; }
+    .training-day-grid { grid-template-columns:repeat(7, 36px); justify-content:center; }
+    .training-reminder-row { grid-template-columns:1fr; align-items:stretch; }
+    .memory-reminder-btn { width:max-content; }
     :global(.preset-menu) { grid-template-columns: 1fr; min-width: 0; width: min(100vw - 16px, 760px); }
     :global(.playback-footer) { grid-template-columns: 1fr; }
     :global(.pf-controls) { flex-wrap: wrap; }
   }
   @media (pointer: coarse), (max-width: 768px){
     .mobile-only-control { display: inline-flex; }
+    .mobile-floating-tools {
+      position:fixed;
+      left:max(10px, env(safe-area-inset-left));
+      bottom:max(var(--mobile-floating-bottom, 54px), env(safe-area-inset-bottom));
+      z-index:9;
+      display:flex;
+      align-items:center;
+      justify-content:flex-start;
+      gap:8px;
+      padding:0;
+      margin:0;
+      background:transparent;
+      border:0;
+      box-shadow:none;
+      pointer-events:auto;
+    }
+    .mobile-floating-tools .mobile-mode-control {
+      display:inline-flex;
+      width:38px;
+      height:38px;
+      border-radius:9px;
+      background:rgba(248,250,252,0.92);
+      border-color:rgba(148,163,184,0.72);
+      box-shadow:0 6px 16px rgba(15,23,42,0.16);
+      backdrop-filter:saturate(150%) blur(4px);
+      -webkit-backdrop-filter:saturate(150%) blur(4px);
+    }
+    .mobile-floating-tools .mobile-mode-control .icon {
+      width:18px;
+      height:18px;
+    }
     .mobile-crosshair {
       position: relative;
       z-index: 12;
@@ -10912,6 +13122,7 @@ function clampToDragLengths(person, jointKey, target){
     .preset-ui.bottom.toolbar-menu-open .row-center,
     .preset-ui.bottom.toolbar-menu-open .row-right,
     .preset-ui.bottom.toolbar-menu-open .preset-select-wrap,
+    .preset-ui.bottom.toolbar-menu-open .sequence-dropdown,
     .preset-ui.bottom.toolbar-menu-open .playback-dropdown {
       overflow: visible !important;
     }
@@ -11193,5 +13404,546 @@ function clampToDragLengths(person, jointKey, target){
     .input-with-icon .input { width: 100%; max-width: 100%; }
     .mobile-undo-control { width: 34px; min-width: 34px; padding: 0; border-radius: 9999px; }
     .playback-comment .input { width: 100%; }
+  }
+
+  @media (pointer: coarse), (max-width: 720px) {
+    .preset-ui.bottom {
+      left:max(6px, env(safe-area-inset-left)) !important;
+      right:auto !important;
+      bottom:max(6px, env(safe-area-inset-bottom)) !important;
+      top:auto !important;
+      transform:none !important;
+      width:max-content !important;
+      max-width:calc(100vw - 12px) !important;
+      max-height:min(32dvh, 220px) !important;
+      padding:6px 34px 6px 8px !important;
+      gap:6px !important;
+      display:block !important;
+      overflow-y:hidden !important;
+      overflow-x:hidden !important;
+      overscroll-behavior:contain;
+      -webkit-overflow-scrolling:touch;
+    }
+    .preset-ui.bottom:not(.toolbar-compact) {
+      right:max(6px, env(safe-area-inset-right)) !important;
+      width:auto !important;
+      max-width:none !important;
+      max-height:min(58dvh, 420px) !important;
+      overflow-y:visible !important;
+    }
+    .preset-ui.bottom.toolbar-compact {
+      width:146px !important;
+      max-width:146px !important;
+      padding:6px 32px 6px 8px !important;
+      overflow:visible !important;
+    }
+    .toolbar-collapse-toggle {
+      top:6px !important;
+      right:6px !important;
+      width:28px !important;
+      height:28px !important;
+    }
+    .toolbar-layout,
+    .toolbar-layout.expanded-grid {
+      width:100% !important;
+      min-width:0 !important;
+      padding:0 !important;
+      display:flex !important;
+      flex-direction:column !important;
+      gap:6px !important;
+    }
+    .toolbar-layout:not(.is-compact) > .toolbar-row:not(.toolbar-row--compact) {
+      display:flex !important;
+      flex-direction:column !important;
+      gap:6px !important;
+      width:100% !important;
+      min-width:0 !important;
+    }
+    .toolbar-layout.is-compact {
+      width:auto !important;
+      padding:0 !important;
+    }
+    .toolbar-layout.is-compact > .toolbar-row--compact {
+      display:flex !important;
+      width:auto !important;
+    }
+    .toolbar-layout.is-compact .controls-row--compact {
+      width:104px !important;
+      max-width:104px !important;
+      justify-content:center !important;
+      overflow:visible !important;
+      gap:4px !important;
+    }
+    .toolbar-layout.is-compact .icon-btn {
+      flex:0 0 32px !important;
+      width:32px !important;
+      height:32px !important;
+    }
+    .row-left,
+    .row-center,
+    .row-right {
+      width:100% !important;
+      max-width:100% !important;
+      min-width:0 !important;
+      padding:0 !important;
+      display:flex !important;
+      align-items:center !important;
+      justify-content:center !important;
+      gap:6px !important;
+      flex-wrap:wrap !important;
+      overflow:visible !important;
+    }
+    .controls-row,
+    .controls-row--expanded,
+    .toolbar-actions {
+      width:auto !important;
+      max-width:100% !important;
+      display:flex !important;
+      align-items:center !important;
+      justify-content:center !important;
+      gap:6px !important;
+      flex-wrap:nowrap !important;
+      overflow-x:auto !important;
+      overflow-y:hidden !important;
+      scrollbar-width:none;
+      -ms-overflow-style:none;
+    }
+    .controls-row::-webkit-scrollbar,
+    .toolbar-actions::-webkit-scrollbar { display:none; }
+    .icon-btn {
+      flex:0 0 34px !important;
+      width:34px !important;
+      height:34px !important;
+    }
+    .btn {
+      min-height:34px !important;
+      padding:6px 9px !important;
+    }
+    .preset-select-wrap.with-actions,
+    .preset-trigger-wrap,
+    .playback-stack,
+    .playback-dropdown,
+    .toolbar-field,
+    .toolbar-field--name,
+    .toolbar-frame,
+    .playback-input-row,
+    .playback-comment.playback-input-row {
+      width:100% !important;
+      max-width:100% !important;
+      min-width:0 !important;
+    }
+    .preset-trigger,
+    .playback-comment .input,
+    .input-with-icon .input {
+      width:100% !important;
+      max-width:100% !important;
+      box-sizing:border-box !important;
+    }
+    .sequence-dropdown {
+      width:auto !important;
+      max-width:100% !important;
+      justify-content:center !important;
+    }
+    .menu-popup.memory-menu {
+      position:fixed !important;
+      left:0 !important;
+      right:0 !important;
+      top:0 !important;
+      bottom:0 !important;
+      width:auto !important;
+      max-width:none !important;
+      height:auto !important;
+      max-height:none !important;
+      min-width:0 !important;
+      padding:0 !important;
+      overflow:hidden !important;
+      z-index:120 !important;
+      box-sizing:border-box !important;
+      background:rgba(248,250,252,0.98) !important;
+    }
+    .memory-menu .memory-panel {
+      width:100% !important;
+      height:100% !important;
+      max-height:none !important;
+      min-width:0 !important;
+      padding:max(14px, env(safe-area-inset-top)) 12px max(16px, env(safe-area-inset-bottom)) !important;
+      border-radius:0 !important;
+      border:0 !important;
+      overflow-y:auto !important;
+      overflow-x:hidden !important;
+      box-sizing:border-box !important;
+      -webkit-overflow-scrolling:touch;
+    }
+    .memory-panel-head {
+      align-items:flex-start !important;
+      padding:6px 0 10px !important;
+    }
+    .memory-close-btn {
+      display:inline-flex !important;
+      order:3;
+    }
+    .memory-total {
+      order:2;
+    }
+    .memory-summary {
+      grid-template-columns:1fr !important;
+    }
+    .memory-menu .memory-stats,
+    .memory-status-counts {
+      grid-template-columns:repeat(2, minmax(0, 1fr)) !important;
+    }
+    .memory-status-counts {
+      gap:6px !important;
+    }
+    .training-day-grid {
+      grid-template-columns:repeat(7, minmax(28px, 1fr)) !important;
+      gap:5px !important;
+    }
+    .training-day {
+      width:100% !important;
+      min-width:0 !important;
+      height:34px !important;
+    }
+  }
+
+  @media (pointer: coarse) and (max-height: 620px), (max-width: 420px) {
+    .preset-ui.bottom {
+      max-height:min(28dvh, 184px) !important;
+      padding-right:34px !important;
+    }
+    .icon-btn {
+      flex-basis:34px !important;
+      width:34px !important;
+      height:34px !important;
+    }
+    .btn {
+      min-height:32px !important;
+      padding:5px 8px !important;
+      font-size:12px !important;
+    }
+    .memory-menu .memory-stats,
+    .memory-status-counts {
+      grid-template-columns:1fr !important;
+    }
+  }
+
+  @media (pointer: coarse), (max-width: 720px) {
+    .preset-ui,
+    .preset-ui.bottom {
+      backdrop-filter:none !important;
+      -webkit-backdrop-filter:none !important;
+    }
+    .preset-ui.bottom.toolbar-menu-open {
+      z-index:160 !important;
+      overflow:visible !important;
+      contain:none !important;
+    }
+    .preset-ui.bottom:not(.toolbar-compact) {
+      width:max-content !important;
+      max-width:calc(100vw - 12px) !important;
+      max-height:min(58dvh, 420px) !important;
+      padding:6px 34px 6px 8px !important;
+      overflow-y:visible !important;
+      overflow-x:hidden !important;
+    }
+    .toolbar-layout:not(.is-compact),
+    .toolbar-layout.expanded-grid:not(.is-compact) {
+      display:flex !important;
+      flex-direction:row !important;
+      flex-wrap:wrap !important;
+      align-items:center !important;
+      justify-content:center !important;
+      gap:5px !important;
+      width:auto !important;
+      max-width:calc(100vw - 54px) !important;
+      max-height:none !important;
+      overflow:visible !important;
+      padding:0 !important;
+    }
+    .toolbar-layout:not(.is-compact) > .toolbar-row:not(.toolbar-row--compact) {
+      display:contents !important;
+    }
+    .toolbar-layout:not(.is-compact) .row-left,
+    .toolbar-layout:not(.is-compact) .row-center,
+    .toolbar-layout:not(.is-compact) .row-right {
+      width:auto !important;
+      max-width:calc(100vw - 54px) !important;
+      flex:0 1 auto !important;
+      display:flex !important;
+      flex-direction:row !important;
+      flex-wrap:nowrap !important;
+      align-items:center !important;
+      justify-content:center !important;
+      gap:5px !important;
+      overflow:visible !important;
+      padding:0 !important;
+    }
+    .toolbar-layout:not(.is-compact) .preset-select-wrap.with-actions,
+    .toolbar-layout:not(.is-compact) .preset-trigger-wrap {
+      width:auto !important;
+      max-width:136px !important;
+      flex:0 0 auto !important;
+    }
+    .toolbar-layout:not(.is-compact) .preset-trigger {
+      width:132px !important;
+      max-width:132px !important;
+      min-width:0 !important;
+      height:34px !important;
+      padding:5px 34px 5px 8px !important;
+      box-sizing:border-box !important;
+    }
+    .toolbar-layout:not(.is-compact) .toolbar-actions,
+    .toolbar-layout:not(.is-compact) .controls-row,
+    .toolbar-layout:not(.is-compact) .controls-row--expanded {
+      width:auto !important;
+      max-width:calc(100vw - 54px) !important;
+      flex:0 0 auto !important;
+      gap:5px !important;
+      overflow:visible !important;
+    }
+    .toolbar-layout:not(.is-compact) .sequence-dropdown {
+      width:auto !important;
+      max-width:none !important;
+      flex:0 0 auto !important;
+    }
+    .toolbar-layout:not(.is-compact) .sequence-trigger {
+      width:auto !important;
+      max-width:124px !important;
+      min-width:0 !important;
+      height:34px !important;
+      padding:5px 8px !important;
+      white-space:nowrap !important;
+      overflow:hidden !important;
+      text-overflow:ellipsis !important;
+    }
+    .toolbar-layout:not(.is-compact) .memory-trigger {
+      max-width:126px !important;
+      overflow:visible !important;
+    }
+    .memory-trigger-badge {
+      right:-8px !important;
+      top:-9px !important;
+      z-index:4 !important;
+    }
+    .toolbar-layout:not(.is-compact) .playback-stack,
+    .toolbar-layout:not(.is-compact) .playback-input-row,
+    .toolbar-layout:not(.is-compact) .playback-comment.playback-input-row,
+    .toolbar-layout:not(.is-compact) .toolbar-field,
+    .toolbar-layout:not(.is-compact) .toolbar-field--name,
+    .toolbar-layout:not(.is-compact) .toolbar-frame {
+      width:auto !important;
+      max-width:128px !important;
+      min-width:0 !important;
+      flex:0 1 128px !important;
+    }
+    .toolbar-layout:not(.is-compact) .playback-stack {
+      display:none !important;
+    }
+    .toolbar-layout:not(.is-compact) .icon-btn {
+      flex:0 0 32px !important;
+      width:32px !important;
+      height:32px !important;
+    }
+    .toolbar-layout:not(.is-compact) .btn--toggle {
+      flex:0 0 70px !important;
+      width:70px !important;
+      max-width:70px !important;
+      height:34px !important;
+    }
+    .menu-popup.memory-menu {
+      position:fixed !important;
+      inset:0 !important;
+      width:100vw !important;
+      height:100dvh !important;
+      max-width:none !important;
+      max-height:none !important;
+      min-width:0 !important;
+      margin:0 !important;
+      padding:0 !important;
+      transform:none !important;
+      overflow:hidden !important;
+      z-index:9999 !important;
+      border:0 !important;
+      border-radius:0 !important;
+      box-shadow:none !important;
+    }
+    .memory-menu .memory-panel {
+      width:100vw !important;
+      height:100dvh !important;
+      max-width:none !important;
+      max-height:none !important;
+      border-radius:0 !important;
+      border:0 !important;
+    }
+    .menu-popup.sequence-menu.sequence-menu--movable:not(.memory-menu) {
+      position:fixed !important;
+      left:50% !important;
+      right:auto !important;
+      bottom:max(74px, calc(env(safe-area-inset-bottom) + 74px)) !important;
+      top:auto !important;
+      width:min(320px, calc(100vw - 18px)) !important;
+      max-width:min(320px, calc(100vw - 18px)) !important;
+      max-height:min(58dvh, 420px) !important;
+      min-width:0 !important;
+      margin:0 !important;
+      transform:translate(calc(-50% + var(--sequence-drag-x, 0px)), var(--sequence-drag-y, 0px)) !important;
+      z-index:9998 !important;
+      overflow:auto !important;
+      box-sizing:border-box !important;
+    }
+    :global(body > .menu-popup.sequence-menu.sequence-menu--movable) {
+      position:fixed !important;
+      left:50% !important;
+      right:auto !important;
+      bottom:max(74px, calc(env(safe-area-inset-bottom) + 74px)) !important;
+      top:auto !important;
+      width:min(320px, calc(100vw - 18px)) !important;
+      max-width:min(320px, calc(100vw - 18px)) !important;
+      max-height:min(58dvh, 420px) !important;
+      transform:translate(calc(-50% + var(--sequence-drag-x, 0px)), var(--sequence-drag-y, 0px)) !important;
+      z-index:9998 !important;
+      overflow:auto !important;
+      box-sizing:border-box !important;
+    }
+    :global(body > .menu-popup.preset-menu) {
+      position:fixed !important;
+      left:50% !important;
+      right:auto !important;
+      bottom:max(74px, calc(env(safe-area-inset-bottom) + 74px)) !important;
+      top:auto !important;
+      width:min(320px, calc(100vw - 18px)) !important;
+      min-width:0 !important;
+      max-width:min(320px, calc(100vw - 18px)) !important;
+      max-height:min(62dvh, 460px) !important;
+      grid-template-columns:1fr !important;
+      transform:translateX(-50%) !important;
+      z-index:9997 !important;
+      overflow:auto !important;
+      box-sizing:border-box !important;
+    }
+  }
+
+  @media (pointer: coarse) and (orientation: landscape), (max-width: 720px) and (orientation: landscape) {
+    .mobile-floating-tools {
+      left:max(144px, calc(env(safe-area-inset-left) + 144px)) !important;
+      bottom:max(10px, env(safe-area-inset-bottom)) !important;
+      z-index:9 !important;
+    }
+    .preset-ui.bottom:not(.toolbar-compact) {
+      top:max(44px, env(safe-area-inset-top)) !important;
+      bottom:auto !important;
+      left:max(6px, env(safe-area-inset-left)) !important;
+      right:auto !important;
+      width:max-content !important;
+      max-width:132px !important;
+      max-height:calc(100dvh - 52px) !important;
+      padding:6px !important;
+      overflow-y:auto !important;
+      overflow-x:visible !important;
+    }
+    .toolbar-layout:not(.is-compact),
+    .toolbar-layout.expanded-grid:not(.is-compact) {
+      display:grid !important;
+      grid-template-columns:repeat(3, 34px) !important;
+      grid-auto-rows:minmax(34px, auto) !important;
+      align-items:center !important;
+      justify-content:center !important;
+      justify-items:center !important;
+      width:112px !important;
+      max-width:112px !important;
+      max-height:none !important;
+      gap:5px !important;
+    }
+    .toolbar-layout:not(.is-compact) > .toolbar-row:not(.toolbar-row--compact) {
+      display:contents !important;
+    }
+    .toolbar-layout:not(.is-compact) .row-left,
+    .toolbar-layout:not(.is-compact) .row-right,
+    .toolbar-layout:not(.is-compact) .toolbar-actions {
+      display:contents !important;
+    }
+    .toolbar-layout:not(.is-compact) .row-center {
+      display:block !important;
+      grid-column:1 / -1 !important;
+      width:112px !important;
+      max-width:112px !important;
+      justify-self:stretch !important;
+    }
+    .toolbar-layout:not(.is-compact) .controls-row,
+    .toolbar-layout:not(.is-compact) .controls-row--expanded {
+      display:grid !important;
+      grid-template-columns:repeat(3, 34px) !important;
+      grid-auto-rows:34px !important;
+      gap:5px !important;
+      width:112px !important;
+      max-width:112px !important;
+      justify-content:center !important;
+      align-items:center !important;
+      overflow:visible !important;
+    }
+    .toolbar-layout:not(.is-compact) .controls-row .icon-btn:nth-child(4) {
+      grid-column:1 !important;
+    }
+    .toolbar-layout:not(.is-compact) .controls-row .icon-btn:nth-child(5) {
+      grid-column:2 !important;
+    }
+    .toolbar-layout:not(.is-compact) .preset-select-wrap.with-actions,
+    .toolbar-layout:not(.is-compact) .preset-trigger-wrap,
+    .toolbar-layout:not(.is-compact) .sequence-dropdown {
+      grid-column:1 / -1 !important;
+      width:112px !important;
+      max-width:112px !important;
+      justify-self:stretch !important;
+    }
+    .toolbar-layout:not(.is-compact) .preset-trigger,
+    .toolbar-layout:not(.is-compact) .sequence-trigger,
+    .toolbar-layout:not(.is-compact) .memory-trigger,
+    .toolbar-layout:not(.is-compact) .btn--toggle {
+      width:112px !important;
+      max-width:112px !important;
+      min-width:0 !important;
+      justify-content:center !important;
+      padding:5px 6px !important;
+      font-size:10px !important;
+      box-sizing:border-box !important;
+    }
+    .toolbar-layout:not(.is-compact) .btn--toggle {
+      grid-column:1 / -1 !important;
+      justify-self:stretch !important;
+      flex:0 0 auto !important;
+    }
+    .toolbar-layout:not(.is-compact) .preset-trigger {
+      padding-right:24px !important;
+    }
+    .toolbar-layout:not(.is-compact) .memory-trigger {
+      grid-column:1 / -1 !important;
+      justify-self:stretch !important;
+    }
+    .toolbar-layout:not(.is-compact) .memory-trigger {
+      overflow:visible !important;
+      padding-right:22px !important;
+    }
+    .toolbar-layout:not(.is-compact) .memory-trigger-badge {
+      right:4px !important;
+      top:3px !important;
+      min-width:15px !important;
+      height:15px !important;
+      padding:0 4px !important;
+      font-size:9px !important;
+      box-shadow:0 2px 6px rgba(255,59,48,0.32) !important;
+    }
+    .toolbar-layout:not(.is-compact) .preset-trigger__label,
+    .toolbar-layout:not(.is-compact) .sequence-trigger {
+      white-space:nowrap !important;
+      overflow:hidden !important;
+      text-overflow:ellipsis !important;
+    }
+    .toolbar-layout:not(.is-compact) .icon-btn {
+      width:34px !important;
+      height:34px !important;
+      flex:0 0 34px !important;
+      align-self:center !important;
+      justify-self:center !important;
+    }
   }
 </style>
