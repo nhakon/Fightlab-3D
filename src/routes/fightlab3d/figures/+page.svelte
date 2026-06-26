@@ -368,6 +368,7 @@
   let meshyRigTwistDrag = null;
   let meshyRigBodyTwistDrag = null;
   let meshyRigShiftRightModifierActive = false;
+  let rigJointMarkerMode = 'few'; // 'few' | 'all' | 'hidden'
   let mobileCrosshair = {
     visible: false,
     active: false,
@@ -385,6 +386,7 @@
   let mobileJointMode = 'normal'; // 'normal' | 'rotate'
   let mobileSelectedRigHandle = null;
   let mobileDepthHoldTimer = null;
+  let mobileRotateHoldTimer = null;
   let lastMobileFigureTap = { rig: null, time: 0, x: 0, y: 0, count: 0 };
   const meshyRigRaycaster = new THREE.Raycaster();
   const meshyRigPointer = new THREE.Vector2();
@@ -429,6 +431,16 @@
     transparent: true,
     opacity: 0.95,
     roughness: 0.28,
+    metalness: 0
+  });
+  const meshyRigActiveJointMaterial = new THREE.MeshStandardMaterial({
+    color: 0xef4444,
+    emissive: 0x7f1d1d,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.96,
+    roughness: 0.26,
     metalness: 0
   });
   const meshyRigRotationIconTopMaterial = new THREE.MeshBasicMaterial({
@@ -660,15 +672,7 @@ function isLocked(person, key){
       return;
     }
     if (isLandscapeSideRailViewport()){
-      if (compactToolbar){
-        mobileViewportLeftInset = 0;
-        mobileViewportBottomInset = 0;
-        return;
-      }
-      const toolbarRight = toolbarEl?.getBoundingClientRect?.().right;
-      mobileViewportLeftInset = Number.isFinite(toolbarRight)
-        ? Math.max(0, toolbarRight + 8)
-        : 0;
+      mobileViewportLeftInset = 0;
       mobileViewportBottomInset = 0;
       return;
     }
@@ -2640,9 +2644,55 @@ function isLocked(person, key){
 
   function shouldShowMeshyRigMarker(bone) {
     const name = bone?.name?.toLowerCase?.() || '';
+    if (rigJointMarkerMode === 'hidden') return false;
+    if (rigJointMarkerMode === 'all') return true;
     if (isMeshyRigCoreLowerMarkerBone(bone)) return true;
-    if (name.includes('spine')) return true;
-    return name.includes('head') || name.includes('chin') || name.includes('neck');
+    if (isMeshyRigSpineMarkerBone(bone)) return true;
+    if (name.includes('shoulder')) return true;
+    if (name.includes('chin') || name.includes('headfront')) return false;
+    return name.includes('head');
+  }
+
+  function isMeshyRigSpineMarkerBone(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    return name.includes('spine') || name.includes('neck');
+  }
+
+  function refreshMeshyRigMarkerVisibility() {
+    for (const rig of meshyRigFigures || []) updateMeshyRigHandles(rig);
+  }
+
+  function setRigJointMarkerMode(mode) {
+    rigJointMarkerMode = mode;
+    refreshMeshyRigMarkerVisibility();
+  }
+
+  function setMobileSelectedRigHandle(handle) {
+    if (mobileSelectedRigHandle && mobileSelectedRigHandle !== handle) {
+      const previousMarker = mobileSelectedRigHandle.userData?.marker;
+      const previousBase = mobileSelectedRigHandle.userData?.markerBaseMaterial;
+      if (previousMarker && previousBase && previousMarker.material === meshyRigActiveJointMaterial) {
+        previousMarker.material = previousBase;
+      }
+    }
+    mobileSelectedRigHandle = handle || null;
+    if (handle) {
+      const marker = handle.userData?.marker;
+      if (marker) {
+        marker.material = meshyRigActiveJointMaterial;
+        marker.visible = true;
+        marker.renderOrder = 6000;
+        marker.frustumCulled = false;
+        marker.material.needsUpdate = true;
+      }
+      selectedMeshyRig = handle.userData?.meshyRig || selectedMeshyRig;
+      mobileCrosshair = {
+        ...mobileCrosshair,
+        handle,
+        rig: handle.userData?.meshyRig || null,
+        mode: 'joint'
+      };
+    }
   }
 
   function isMeshyRigCoreLowerMarkerBone(bone) {
@@ -3020,14 +3070,16 @@ function isLocked(person, key){
         if (marker) {
           marker.position.set(0, 0, 0);
           marker.quaternion.identity();
-          marker.visible = marker.userData.alwaysVisibleMarker || shouldShowMeshyRigMarker(bone);
+          const isActiveMarker = handle === mobileSelectedRigHandle;
+          if (isActiveMarker && marker.material !== meshyRigActiveJointMaterial) marker.material = meshyRigActiveJointMaterial;
+          marker.visible = isActiveMarker || shouldShowMeshyRigMarker(bone);
           if (marker.visible) {
-            marker.renderOrder = (isMeshyRigCoreLowerMarkerBone(bone) || (bone?.name?.toLowerCase?.() || '').includes('spine')) ? 5000 : 3;
+            marker.renderOrder = isActiveMarker ? 6000 : ((isMeshyRigCoreLowerMarkerBone(bone) || (bone?.name?.toLowerCase?.() || '').includes('spine')) ? 5000 : 3);
             marker.frustumCulled = false;
             marker.material.depthTest = false;
             marker.material.depthWrite = false;
             marker.material.transparent = true;
-            marker.material.opacity = marker.material === meshyRigSelectedJointMaterial ? 0.95 : 0.88;
+            marker.material.opacity = (marker.material === meshyRigSelectedJointMaterial || marker.material === meshyRigActiveJointMaterial) ? 0.95 : 0.88;
             marker.material.needsUpdate = true;
           }
         }
@@ -3934,6 +3986,7 @@ function isLocked(person, key){
     const bone = handle?.userData?.bone;
     if (!rig || !bone) return false;
     resetMeshySubfloorOutlineState(rig);
+    setMobileSelectedRigHandle(handle);
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     if (handle.userData.marker) handle.userData.marker.material = meshyRigSelectedJointMaterial;
     meshyRigBodyTwistDrag = {
@@ -4036,7 +4089,9 @@ function isLocked(person, key){
     if (!meshyRigBodyTwistDrag) return false;
     if (event?.pointerId != null && meshyRigBodyTwistDrag.pointerId != null && event.pointerId !== meshyRigBodyTwistDrag.pointerId) return true;
     if (meshyRigBodyTwistDrag.handle.userData.marker) {
-      meshyRigBodyTwistDrag.handle.userData.marker.material = meshyRigBodyTwistDrag.handle.userData.markerBaseMaterial;
+      meshyRigBodyTwistDrag.handle.userData.marker.material = meshyRigBodyTwistDrag.handle === mobileSelectedRigHandle
+        ? meshyRigActiveJointMaterial
+        : meshyRigBodyTwistDrag.handle.userData.markerBaseMaterial;
     }
     try {
       if (renderer?.domElement?.hasPointerCapture(meshyRigBodyTwistDrag.pointerId)) renderer.domElement.releasePointerCapture(meshyRigBodyTwistDrag.pointerId);
@@ -4055,7 +4110,7 @@ function isLocked(person, key){
     if (!rig || !bone) return false;
     resetMeshySubfloorOutlineState(rig);
     selectedMeshyRig = rig;
-    mobileSelectedRigHandle = handle;
+    setMobileSelectedRigHandle(handle);
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     if (handle.userData.marker) handle.userData.marker.material = meshyRigSelectedJointMaterial;
     meshyRigTwistDrag = {
@@ -4088,7 +4143,9 @@ function isLocked(person, key){
     if (!meshyRigTwistDrag) return false;
     if (event?.pointerId != null && meshyRigTwistDrag.pointerId != null && event.pointerId !== meshyRigTwistDrag.pointerId) return true;
     if (meshyRigTwistDrag.handle.userData.marker) {
-      meshyRigTwistDrag.handle.userData.marker.material = meshyRigTwistDrag.handle.userData.markerBaseMaterial;
+      meshyRigTwistDrag.handle.userData.marker.material = meshyRigTwistDrag.handle === mobileSelectedRigHandle
+        ? meshyRigActiveJointMaterial
+        : meshyRigTwistDrag.handle.userData.markerBaseMaterial;
     }
     try {
       if (renderer?.domElement?.hasPointerCapture(meshyRigTwistDrag.pointerId)) renderer.domElement.releasePointerCapture(meshyRigTwistDrag.pointerId);
@@ -4270,6 +4327,31 @@ function isLocked(person, key){
     dragSnapshotTaken = false;
   }
 
+  function rotateSelectedMobileJoint(direction = 1) {
+    const handle = mobileSelectedRigHandle || mobileCrosshair.handle;
+    if (!handle?.userData?.meshyRig || !handle?.userData?.bone) return false;
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    setMobileSelectedRigHandle(handle);
+    applyMeshyRigTwistFromPixels(handle, 7 * direction, 0);
+    updateMeshyRigHandles(handle.userData.meshyRig);
+    return true;
+  }
+
+  function startMobileRotateButton(event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    rotateSelectedMobileJoint(1);
+    stopMobileRotateButton();
+    mobileRotateHoldTimer = setInterval(() => rotateSelectedMobileJoint(1), 55);
+  }
+
+  function stopMobileRotateButton() {
+    if (!mobileRotateHoldTimer) return;
+    try { clearInterval(mobileRotateHoldTimer); } catch(e) {}
+    mobileRotateHoldTimer = null;
+    dragSnapshotTaken = false;
+  }
+
   function applyMobileCrosshairWholeFigureRotation(dx, dy) {
     const rig = mobileCrosshair.rig;
     if (!rig?.object) return false;
@@ -4418,7 +4500,7 @@ function isLocked(person, key){
     if (!rig || !bone) return false;
     resetMeshySubfloorOutlineState(rig);
     selectedMeshyRig = rig;
-    mobileSelectedRigHandle = handle;
+    setMobileSelectedRigHandle(handle);
     const world = handle.position.clone();
     const normal = camera.getWorldDirection(new THREE.Vector3()).negate();
     meshyRigDragPlane.setFromNormalAndCoplanarPoint(normal, world);
@@ -4676,7 +4758,9 @@ function isLocked(person, key){
     if (!meshyRigDrag) return false;
     if (event?.pointerId != null && meshyRigDrag.pointerId != null && event.pointerId !== meshyRigDrag.pointerId) return true;
     if (meshyRigDrag.handle.userData.marker) {
-      meshyRigDrag.handle.userData.marker.material = meshyRigDrag.handle.userData.markerBaseMaterial;
+      meshyRigDrag.handle.userData.marker.material = meshyRigDrag.handle === mobileSelectedRigHandle
+        ? meshyRigActiveJointMaterial
+        : meshyRigDrag.handle.userData.markerBaseMaterial;
     }
     try {
       if (renderer?.domElement?.hasPointerCapture(meshyRigDrag.pointerId)) renderer.domElement.releasePointerCapture(meshyRigDrag.pointerId);
@@ -10464,6 +10548,37 @@ function clampToDragLengths(person, jointKey, target){
     startDepthNudge(dir);
   }
 
+  async function focusMobileViewport() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    try {
+      const active = document.activeElement;
+      if (active && typeof active.blur === 'function') active.blur();
+    } catch (_) {}
+    try {
+      const root = document.documentElement;
+      const requestFullscreen =
+        root.requestFullscreen ||
+        root.webkitRequestFullscreen ||
+        root.msRequestFullscreen;
+      if (requestFullscreen && !document.fullscreenElement && !document.webkitFullscreenElement) {
+        await requestFullscreen.call(root);
+      }
+    } catch (_) {
+      // Mobile Safari often rejects fullscreen for normal pages; the scroll nudge below is the fallback.
+    }
+    try {
+      const scrollTarget = Math.max(1, Math.min(48, document.documentElement.scrollHeight - window.innerHeight));
+      window.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+      setTimeout(() => {
+        try { window.scrollTo({ top: scrollTarget, behavior: 'auto' }); } catch (_) {}
+      }, 120);
+    } catch (_) {}
+    try {
+      updateMobileViewportInset();
+      onResize();
+    } catch (_) {}
+  }
+
   const DEPTH_NUDGE_MS = 16;
   let depthNudgeDir = 0;
   let depthNudgeTimer = null;
@@ -10522,6 +10637,16 @@ function clampToDragLengths(person, jointKey, target){
   </div>
 
   <div class="scene-gradient" aria-hidden="true"></div>
+  <button
+    type="button"
+    class="mobile-focus-btn"
+    aria-label="Focus view"
+    title="Focus view"
+    on:click={focusMobileViewport}>
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 3H3v5M3 3l6 6M16 3h5v5M21 3l-6 6M8 21H3v-5M3 21l6-6M16 21h5v-5M21 21l-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
   <div class="account-anchor">
     <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; showSequenceMenu = false; showMemoryMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
       <svg class="icon account-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -10618,6 +10743,17 @@ function clampToDragLengths(person, jointKey, target){
               <option value="protanopia">Protanopia</option>
               <option value="tritanopia">Tritanopia</option>
             </select>
+          </div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span class="name">Joint markers</span>
+              <span>Choose which rig joint dots are visible.</span>
+            </div>
+            <div class="settings-segment">
+              <button type="button" class="btn settings-segment-btn" class:is-active={rigJointMarkerMode === 'few'} on:click={() => setRigJointMarkerMode('few')}>Few</button>
+              <button type="button" class="btn settings-segment-btn" class:is-active={rigJointMarkerMode === 'all'} on:click={() => setRigJointMarkerMode('all')}>All</button>
+              <button type="button" class="btn settings-segment-btn" class:is-active={rigJointMarkerMode === 'hidden'} on:click={() => setRigJointMarkerMode('hidden')}>Hide</button>
+            </div>
           </div>
           <div class="settings-row">
             <div class="settings-label">
@@ -11280,11 +11416,12 @@ function clampToDragLengths(person, jointKey, target){
       <button
         type="button"
         class="mobile-mode-control"
-        class:is-active={mobileJointMode === 'rotate'}
-        aria-pressed={mobileJointMode === 'rotate'}
-        aria-label="Rotate joint mode"
-        title="Rotate joint mode"
-        on:click={() => mobileJointMode = mobileJointMode === 'rotate' ? 'normal' : 'rotate'}>
+        aria-label="Rotate selected joint"
+        title="Rotate selected joint"
+        on:pointerdown={startMobileRotateButton}
+        on:pointerup={stopMobileRotateButton}
+        on:pointercancel={stopMobileRotateButton}
+        on:pointerleave={stopMobileRotateButton}>
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M21 12a9 9 0 1 1-2.64-6.36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           <path d="M21 4v6h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -11295,7 +11432,7 @@ function clampToDragLengths(person, jointKey, target){
         class="mobile-mode-control"
         aria-label="Move selected joint toward camera"
         title="Move selected joint toward camera"
-        on:pointerdown={(e) => startMobileDepthButton(-1, e)}
+        on:pointerdown={(e) => startMobileDepthButton(1, e)}
         on:pointerup={stopMobileDepthButton}
         on:pointercancel={stopMobileDepthButton}
         on:pointerleave={stopMobileDepthButton}>
@@ -11309,7 +11446,7 @@ function clampToDragLengths(person, jointKey, target){
         class="mobile-mode-control"
         aria-label="Move selected joint away from camera"
         title="Move selected joint away from camera"
-        on:pointerdown={(e) => startMobileDepthButton(1, e)}
+        on:pointerdown={(e) => startMobileDepthButton(-1, e)}
         on:pointerup={stopMobileDepthButton}
         on:pointercancel={stopMobileDepthButton}
         on:pointerleave={stopMobileDepthButton}>
@@ -12490,6 +12627,26 @@ function clampToDragLengths(person, jointKey, target){
     background:#eff6ff;
     color:#1d4ed8;
   }
+  .settings-segment {
+    display:inline-grid;
+    grid-template-columns:repeat(3, minmax(42px, auto));
+    gap:3px;
+    padding:3px;
+    border:1px solid rgba(148,163,184,0.32);
+    border-radius:9px;
+    background:rgba(255,255,255,0.72);
+  }
+  .settings-segment-btn {
+    min-height:28px;
+    padding:5px 8px;
+    border-radius:7px;
+    font-weight:800;
+  }
+  .settings-segment-btn.is-active {
+    border-color:#2563eb;
+    background:#eff6ff;
+    color:#1d4ed8;
+  }
   .input { font: 12px/1.2 system-ui, sans-serif; padding: 5px 7px; border:1px solid #d0d7de; border-radius:8px; }
   .input:focus-visible { outline: 2px solid #0b5bd3; outline-offset: 2px; }
   .icon { width: 18px; height: 18px; display: block; }
@@ -12650,6 +12807,7 @@ function clampToDragLengths(person, jointKey, target){
   .save-action:hover { background:#e5f0ff; border-color:#3b82f6; color:#0b5bd3; }
   .btn--primary:hover { background:#dbe8ff; border-color:#2f6fe0; }
   .mobile-only-control { display: none; }
+  .mobile-focus-btn { display:none; }
   .mobile-floating-tools { display:none; }
   .mobile-crosshair { display:none; }
   .mobile-undo-control { color:#1f2937; background: transparent; border-color: #cbd5e1; }
@@ -12770,6 +12928,26 @@ function clampToDragLengths(person, jointKey, target){
     background:#172554;
     border-color:#60a5fa;
     color:#bfdbfe;
+  }
+  :global(body.dark-mode) .settings-segment {
+    background:rgba(2,6,23,0.42);
+    border-color:rgba(71,85,105,0.68);
+  }
+  :global(body.dark-mode) .settings-segment-btn {
+    background:#111827;
+    border-color:#334155;
+    color:#e5e7eb;
+  }
+  :global(body.dark-mode) .settings-segment-btn.is-active {
+    background:#172554;
+    border-color:#60a5fa;
+    color:#bfdbfe;
+  }
+  :global(body.dark-mode) .mobile-focus-btn {
+    background:rgba(15,23,42,0.88);
+    border-color:rgba(71,85,105,0.72);
+    color:#e5e7eb;
+    box-shadow:0 8px 18px rgba(0,0,0,0.35);
   }
   :global(body.dark-mode) .shortcut-row {
     background:rgba(15,23,42,0.72);
@@ -12938,6 +13116,30 @@ function clampToDragLengths(person, jointKey, target){
   }
   @media (pointer: coarse), (max-width: 768px){
     .mobile-only-control { display: inline-flex; }
+    .mobile-focus-btn {
+      position:fixed;
+      top:max(12px, env(safe-area-inset-top));
+      right:max(12px, env(safe-area-inset-right));
+      z-index:11;
+      width:36px;
+      height:36px;
+      padding:0;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border:1px solid rgba(148,163,184,0.62);
+      border-radius:10px;
+      background:rgba(248,250,252,0.92);
+      color:#0f172a;
+      box-shadow:0 6px 16px rgba(15,23,42,0.14);
+      backdrop-filter:saturate(150%) blur(4px);
+      -webkit-backdrop-filter:saturate(150%) blur(4px);
+      cursor:pointer;
+    }
+    .mobile-focus-btn .icon {
+      width:18px;
+      height:18px;
+    }
     .mobile-floating-tools {
       position:fixed;
       left:max(10px, env(safe-area-inset-left));
@@ -13829,17 +14031,50 @@ function clampToDragLengths(person, jointKey, target){
       bottom:max(10px, env(safe-area-inset-bottom)) !important;
       z-index:9 !important;
     }
+    .preset-ui.bottom.toolbar-compact {
+      top:max(44px, env(safe-area-inset-top)) !important;
+      bottom:auto !important;
+      left:max(6px, env(safe-area-inset-left)) !important;
+      right:auto !important;
+      width:48px !important;
+      max-width:48px !important;
+      padding:6px !important;
+      box-sizing:border-box !important;
+    }
+    .preset-ui.bottom.toolbar-compact .toolbar-collapse-toggle {
+      position:static !important;
+      width:32px !important;
+      height:28px !important;
+      margin:0 0 5px 0 !important;
+    }
+    .preset-ui.bottom.toolbar-compact .toolbar-layout.is-compact,
+    .preset-ui.bottom.toolbar-compact .toolbar-row--compact,
+    .preset-ui.bottom.toolbar-compact .row-center--compact,
+    .preset-ui.bottom.toolbar-compact .controls-row--compact {
+      width:34px !important;
+      max-width:34px !important;
+      min-width:0 !important;
+    }
+    .preset-ui.bottom.toolbar-compact .controls-row--compact {
+      display:flex !important;
+      flex-direction:column !important;
+      flex-wrap:nowrap !important;
+      gap:5px !important;
+      align-items:center !important;
+      justify-content:flex-start !important;
+    }
     .preset-ui.bottom:not(.toolbar-compact) {
       top:max(44px, env(safe-area-inset-top)) !important;
       bottom:auto !important;
       left:max(6px, env(safe-area-inset-left)) !important;
       right:auto !important;
       width:max-content !important;
-      max-width:132px !important;
+      max-width:124px !important;
       max-height:calc(100dvh - 52px) !important;
       padding:6px !important;
+      box-sizing:border-box !important;
       overflow-y:auto !important;
-      overflow-x:visible !important;
+      overflow-x:hidden !important;
     }
     .toolbar-layout:not(.is-compact),
     .toolbar-layout.expanded-grid:not(.is-compact) {
