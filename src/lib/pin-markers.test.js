@@ -1,0 +1,8 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {parse} from 'svelte/compiler';import * as THREE from 'three';
+const s=readFileSync(new URL('../routes/fightlab3d/figures/+page.svelte',import.meta.url),'utf8');const n=parse(s).instance.content.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='updateMeshyRigHandles');
+for(const [name,radius] of [['Hips',.034],['Spine',.028],['Spine01',.028],['LeftHand',.019]])test(name+' pin ring surrounds its marker and disappears after unpinning',()=>{
+ const bone=new THREE.Bone();bone.name=name;const marker=new THREE.Mesh(new THREE.SphereGeometry(radius),new THREE.MeshBasicMaterial());const handle=new THREE.Group();handle.add(marker);handle.userData={bone,marker};const rig={handles:[handle],jointPins:[{bone:name}]};
+ const env={THREE,singleJointMode:false,maintainJointPins:()=>({limited:false}),meshyRigFigures:[rig],pinsAtLimit:false,pinCount:0,isJointPinned:()=>rig.jointPins.length>0,torsoHandleSelectable:()=>true,rigJointMarkerMode:'all',camera:new THREE.PerspectiveCamera(),mobileSelectedRigHandle:null,shouldShowMeshyRigMarker:()=>true,isMeshyRigCoreLowerMarkerBone:()=>false,meshyRigSelectedJointMaterial:null,isMeshyRigActiveJointMaterial:()=>false};
+ const update=new Function('env','with(env){'+s.slice(n.start,n.end)+';return updateMeshyRigHandles;}')(env);update(rig);const ring=handle.userData.pinRing;
+ assert.equal(ring.visible,true);assert.ok(ring.geometry.parameters.radius-ring.geometry.parameters.tube>radius);assert.ok(ring.renderOrder>marker.renderOrder);rig.jointPins=[];update(rig);assert.equal(ring.visible,false);
+});

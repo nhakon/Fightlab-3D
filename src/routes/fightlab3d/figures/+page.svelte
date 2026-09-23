@@ -1,7 +1,16 @@
-﻿<script>
+<script>
   import { onMount, tick, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import * as THREE from "three";
+  import { isPelvisDragJoint, capturePelvisDrag, applyPelvisDrag } from "$lib/pelvis-drag.js";
+  import { torsoBones, torsoMarkerVisible, torsoHandleSelectable, captureTorsoDrag, applyTorsoDrag } from "$lib/torso-control.js";
+  import SavedFigurePoses from '$lib/SavedFigurePoses.svelte';
+  import FigurePoseWheel from '$lib/FigurePoseWheel.svelte';
+  import { FIGURE_POSES, applyFigurePose } from '$lib/figure-poses.js';
+  import { captureJointMove, applyJointMove } from '$lib/joint-move.js';
+  import { captureJointPivot, applyJointPivot, applyJointPivotTarget } from '$lib/joint-pivot.js';
+  import { isJointPinned, toggleJointPin, releaseJointPins, maintainJointPins } from '$lib/joint-pins.js';
+  import { releaseGripLink } from '$lib/grip-link.js';
   import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
   import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
   import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils";
@@ -16,6 +25,7 @@
   import poseKneeShieldPreset from "./jiu-jitsu-assets/pose-kneeShield.json";
   import poseHalfGuardPreset from "./jiu-jitsu-assets/pose-halfGuard.json";
   import poseMountPreset from "./jiu-jitsu-assets/pose-mount.json";
+
 
   // ---------- Config / State ----------
   const MESHY_FIGURE_URL = '/fightlab3d/meshy/Meshy_AI_Low_Poly_Humanoid_Fig_biped/Meshy_AI_Low_Poly_Humanoid_Fig_biped_Character_output.glb';
@@ -197,7 +207,9 @@
   let uiHidden = false;
   // Hide only the preset selector/label in the top-left bar
   let hidePresetControls = false;
-  let singleJointMode = false; // false = Natural (IK) mode (default); true = Single-Joint mode
+  let highlightSelectedJoint = true;
+  let pivotJointMode = false;
+  let singleJointMode = false; // Natural by default; Pivot is the alternate direct manipulation mode.
   let toolbarEl; // toolbar element for measuring height
   // Comment overlay state
   let commentEl;
@@ -298,15 +310,15 @@
 
   // Controls/settings
   let showControlSettings = false;
-  let scrollSensitivity = 0.04; // world-units per wheel step for joint Z movement
+  let scrollSensitivity = 0.015; // world-units per wheel step for joint Z movement
 
   // Colorblind display modes for figure body colors
   let colorblindMode = 'normal';
   const COLORBLIND_SCHEMES = {
-    normal:      { label: 'Normal',       A: TORSO_NORMAL_COLOR_A, B: TORSO_NORMAL_COLOR_B },
-    deuteranopia:{ label: 'Deuteranopia', A: 0x4c9bce, B: 0xe3a24c },
-    protanopia:  { label: 'Protanopia',   A: 0x2f9e93, B: 0xb174d6 },
-    tritanopia:  { label: 'Tritanopia',   A: 0x3b82f6, B: 0xd97757 }
+    normal:      { label: 'Normal',       A: TORSO_NORMAL_COLOR_A, B: TORSO_NORMAL_COLOR_B, activeA: 0xef4444, activeB: 0xa855f7 },
+    deuteranopia:{ label: 'Deuteranopia', A: 0x4c9bce, B: 0xe3a24c, activeA: 0xf97316, activeB: 0x2563eb },
+    protanopia:  { label: 'Protanopia',   A: 0x2f9e93, B: 0xb174d6, activeA: 0xf59e0b, activeB: 0x0ea5e9 },
+    tritanopia:  { label: 'Tritanopia',   A: 0x3b82f6, B: 0xd97757, activeA: 0xdc2626, activeB: 0x14b8a6 }
   };
 
   let dragTorsoAnchorA = null, dragTorsoAnchorB = null; // per-drag torso anchors
@@ -365,6 +377,18 @@
   let meshyRigDrag = null;
   let meshyFigureDrag = null;
   let selectedMeshyRig = null;
+  let toolPerson = 'A';
+  let poseWheel = null;
+  let poseWheelHover = -1;
+  let lastFigurePointer = null;
+  let savedFigurePoses = [];
+  let poseLibraryPerson = null;
+  let lastJointTap = null;
+  let jointTapStart = null;
+  let pinCount = 0;
+  let pinsAtLimit = false;
+  let gripNotice = '';
+  let poseSelectionBox = null;
   let meshyRigTwistDrag = null;
   let meshyRigBodyTwistDrag = null;
   let meshyRigShiftRightModifierActive = false;
@@ -433,7 +457,7 @@
     roughness: 0.28,
     metalness: 0
   });
-  const meshyRigActiveJointMaterial = new THREE.MeshStandardMaterial({
+  const meshyRigActiveJointMaterialA = new THREE.MeshStandardMaterial({
     color: 0xef4444,
     emissive: 0x7f1d1d,
     depthTest: false,
@@ -443,6 +467,9 @@
     roughness: 0.26,
     metalness: 0
   });
+  const meshyRigActiveJointMaterialB = meshyRigActiveJointMaterialA.clone();
+  meshyRigActiveJointMaterialB.color.setHex(0xa855f7);
+  meshyRigActiveJointMaterialB.emissive.setHex(0x4c1d95);
   const meshyRigRotationIconTopMaterial = new THREE.MeshBasicMaterial({
     color: 0x67e8f9,
     depthTest: false,
@@ -510,7 +537,6 @@ let shoulderCenterToNeckLenB = 0;
   let highlightB = {};
   let debugLinesGroup = null;
   const HIGHLIGHT_MS = 500;
-  const HIGHLIGHT_COLOR = 0xff2d2d;
   const JOINT_BASE_COLOR_LIGHT = 0x111111;
   const JOINT_BASE_COLOR_DARK = 0xffffff;
   const JOINT_COLOR_A = 0x000000;
@@ -519,6 +545,10 @@ let shoulderCenterToNeckLenB = 0;
     if (person === 'A') return JOINT_COLOR_A;
     if (person === 'B') return JOINT_COLOR_B;
     return darkMode ? JOINT_BASE_COLOR_DARK : JOINT_BASE_COLOR_LIGHT;
+  }
+  function getJointHighlightColor(person){
+    const scheme = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
+    return person === 'B' ? (scheme.activeB || 0xa855f7) : (scheme.activeA || 0xef4444);
   }
   function applyJointDefaultColors(){
     for (const m of jointMeshesA || []){
@@ -631,17 +661,20 @@ function isLocked(person, key){
     { keys: 'Ctrl + Z', desc: 'Undo last move' },
     { keys: 'Ctrl + S', desc: 'Save current frame' },
     { keys: 'W A S D', desc: 'Orbit the camera' },
-    { keys: 'Ctrl + drag', desc: 'Move the whole figure' },
-    { keys: 'Ctrl + Shift + drag', desc: 'Rotate the whole figure' },
+    { keys: 'J', desc: 'Show joints' },
+    { keys: 'Hold Q over a figure', desc: 'Choose its pose; release Q to apply' },
+    { keys: '2x click / tap', desc: 'Pin or unpin a joint (maximum two per figure)' },
+    { keys: 'Ctrl + drag', desc: 'Move the figure' },
+    { keys: 'Ctrl + Shift + left-drag', desc: 'Rotate the figure' },
+    { keys: 'Ctrl + Shift + right-drag', desc: 'Spin the figure around its spine axis' },
     { keys: 'Right-click + drag', desc: 'Twist/rotate the selected joint' },
     { keys: 'Mouse wheel or Space / C while dragging', desc: 'Move the selected joint toward or away from the camera' },
-    { keys: 'Ctrl + F', desc: 'Drop the figure to the floor' }
   ];
   const mobileShortcuts = [
     { keys: 'Rotate button', desc: 'Make joint drags twist like right-click drag' },
     { keys: 'Toward / Away buttons', desc: 'Move the selected joint toward or away from the camera' },
-    { keys: 'Double-tap figure', desc: 'Move the whole figure like Ctrl + drag' },
-    { keys: 'Triple-tap joint', desc: 'Rotate the whole figure like Ctrl + Shift + drag' },
+    { keys: 'Double-tap figure', desc: 'Move the figure like Ctrl + drag' },
+    { keys: '2x tap joint', desc: 'Pin or unpin (maximum two per figure)' },
     { keys: 'Two-finger gesture', desc: 'Orbit, pan, and zoom the camera view' }
   ];
   function isLandscapeSideRailViewport(){
@@ -761,6 +794,12 @@ function isLocked(person, key){
       if (t.isContentEditable) return true;
       return false;
     } catch(e){ return false; }
+  }
+  function blurActiveTextField(){
+    try {
+      const active = document?.activeElement;
+      if (isTypingFocus(active) && typeof active.blur === 'function') active.blur();
+    } catch(e) {}
   }
   function handleWASDKeyDown(e){
     if (isTypingFocus(e.target)) return;
@@ -1336,12 +1375,15 @@ function isLocked(person, key){
   ];
   let editingPlaybackIdx = -1;
   let editingPlaybackName = "";
+  let editingFrameCommentInline = false;
+  let inlineFrameCommentDraft = '';
   let editingPlaybackFolder = "";
   let reopenSavedSequencesAfterPlaybackEdit = false;
   let newPlaybackName = "";
   let draggingPlaybackIdx = null;
   let playbackFolderView = null; // null = folder list; otherwise folder name
   let openPlaybackFolders = [];
+  let playbackFolderDropTarget = null;
   let playbacksMenuEl;
   let playbacksToggleEl;
   let sequenceMenuEl;
@@ -1397,6 +1439,7 @@ function isLocked(person, key){
   let showAccountShortcuts = false;
   let showAccountSettings = false;
   let showMobileShortcutList = false;
+  let showShortcutOverlay = false;
   let darkMode = false;
   let uiReady = false;
   let navOpen = false;
@@ -1418,12 +1461,20 @@ function isLocked(person, key){
   function updateShortcutViewportMode(){
     showMobileShortcutList = isMobileViewport();
   }
+  const SHORTCUT_OVERLAY_STORAGE_KEY = 'fightlabShortcutOverlayV1';
+  function setShortcutOverlay(value){
+    showShortcutOverlay = !!value;
+    try{ localStorage.setItem(SHORTCUT_OVERLAY_STORAGE_KEY, showShortcutOverlay ? 'true' : 'false'); }catch(_){}
+  }
+  function toggleShortcutOverlay(){
+    setShortcutOverlay(!showShortcutOverlay);
+  }
   // Pinned controls (custom toolbar). Persisted to localStorage
   let pinnedControls = [];
   const SHOW_SAVE_PRESET_BUTTON = false;
   const AVAILABLE_CONTROLS = [
     { key: 'mirror_pose', label: 'Mirror Pose', action: () => { try{ mirrorPoseYZPlane(); }catch(_){} } },
-    { key: 'movement_mode', label: 'Natural/Single-Joint Mode', action: () => { try{ toggleSingleJointMode(); }catch(_){} } },
+    { key: 'movement_mode', label: 'Natural / Single Joint / Pivot', action: () => { try{ toggleSingleJointMode(); }catch(_){} } },
     { key: 'control_settings', label: 'Control Settings', action: () => { showControlSettings = !showControlSettings; } }
   ];
   const CONTROL_MAP = new Map(AVAILABLE_CONTROLS.map(c=> [c.key, c]));
@@ -1520,6 +1571,12 @@ function isLocked(person, key){
       const saved = localStorage.getItem('darkMode');
       if (saved === 'true') darkMode = true;
     }catch(_){}
+    try{
+      savedFigurePoses = JSON.parse(localStorage.getItem('fightlabUserFigurePosesV1') || '[]');
+      savedFigurePoses=normalizeSavedFigurePoses(savedFigurePoses);
+      highlightSelectedJoint = localStorage.getItem('fightlabHighlightSelectedJointV1') !== 'false';
+      showShortcutOverlay = localStorage.getItem(SHORTCUT_OVERLAY_STORAGE_KEY) === 'true';
+    }catch(_){}
     applyDarkMode();
     applySceneTheme();
     return ()=>{
@@ -1537,8 +1594,8 @@ function isLocked(person, key){
   // floor
   const FLOOR_Y = -0.55; // floor plane y
   const SUBFLOOR_OUTLINE_CAMERA_CLEARANCE = 0.12;
-  const SUBFLOOR_OUTLINE_DEPTH_THRESHOLD = 0.05;
-  const SUBFLOOR_OUTLINE_EDIT_DEPTH_THRESHOLD = 0.08;
+  const SUBFLOOR_OUTLINE_DEPTH_THRESHOLD = 0.10;
+  const SUBFLOOR_OUTLINE_EDIT_DEPTH_THRESHOLD = 0.16;
   const SUBFLOOR_OUTLINE_HYSTERESIS = 0.015;
   const subfloorOutlineClipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), FLOOR_Y);
   // edge rotation threshold as fraction of canvas dimension
@@ -2642,15 +2699,14 @@ function isLocked(person, key){
     return bones;
   }
 
-  function shouldShowMeshyRigMarker(bone) {
-    const name = bone?.name?.toLowerCase?.() || '';
-    if (rigJointMarkerMode === 'hidden') return false;
-    if (rigJointMarkerMode === 'all') return true;
-    if (isMeshyRigCoreLowerMarkerBone(bone)) return true;
-    if (isMeshyRigSpineMarkerBone(bone)) return true;
-    if (name.includes('shoulder')) return true;
-    if (name.includes('chin') || name.includes('headfront')) return false;
-    return name.includes('head');
+  function shouldShowMeshyRigMarker(handle) {
+    return torsoHandleSelectable(handle, rigJointMarkerMode) && (isJointPinned(handle.userData.meshyRig, handle.userData.bone) || torsoMarkerVisible(handle, rigJointMarkerMode, handle === mobileSelectedRigHandle, highlightSelectedJoint));
+  }
+
+  function toggleSelectedJointHighlight() {
+    highlightSelectedJoint = !highlightSelectedJoint;
+    try { localStorage.setItem('fightlabHighlightSelectedJointV1', String(highlightSelectedJoint)); } catch (_) {}
+    refreshMeshyRigMarkerVisibility();
   }
 
   function isMeshyRigSpineMarkerBone(bone) {
@@ -2664,14 +2720,150 @@ function isLocked(person, key){
 
   function setRigJointMarkerMode(mode) {
     rigJointMarkerMode = mode;
+    if (mobileSelectedRigHandle && !torsoHandleSelectable(mobileSelectedRigHandle, mode)) {
+      setMobileSelectedRigHandle(null);
+      hideMobileCrosshair();
+    }
     refreshMeshyRigMarkerVisibility();
+  }
+
+  function selectToolFigure(person) {
+    toolPerson = person;
+    selectedMeshyRig = meshyRigByPerson(person);
+  }
+
+  function poseButtonStyle(person, mode) {
+    const color=new THREE.Color((COLORBLIND_SCHEMES[mode]||COLORBLIND_SCHEMES.normal)[person]);
+    const light=.2126*color.r+.7152*color.g+.0722*color.b;
+    return 'background:#'+color.getHexString()+';color:'+(light>.38?'#102030':'#ffffff');
+  }
+  function openPersonPose(person,event) { selectToolFigure(person);openFigurePoseWheel(event); }
+  function openSavedFigurePoses() { poseLibraryPerson=poseWheel?.person||toolPerson;closeFigurePoseWheel(); }
+  function persistFigurePoses() { try { localStorage.setItem('fightlabUserFigurePosesV1',JSON.stringify(savedFigurePoses)); } catch (_) { gripNotice='Could not save poses in this browser.'; } }
+  function normalizeSavedFigurePoses(items) {
+    if (!Array.isArray(items)) return [];
+    return items.flatMap((item,index)=>{
+      if (!item?.data) return [];
+      if (item.scope !== 'both') return ['A','B'].includes(item.scope) && item.data[item.scope] ? [item] : [];
+      // Preserve old pairs as two reusable poses instead of discarding saved work.
+      return ['A','B'].filter(person=>item.data[person]).map(person=>({
+        ...item, id: String(item.id ?? index)+'-'+person, name: String(item.name || 'Pose')+' ('+person+')',
+        scope:person, data:{[person]:item.data[person]}
+      }));
+    });
+  }
+  function saveFigurePose(name,scope) {
+    if (!['A','B'].includes(scope)) return;
+    const snapshot=serializeMeshyRigPose();
+    for(const data of Object.values(snapshot)){data.pins=[];data.grip=null;}
+    const data={[scope]:snapshot[scope]};
+    savedFigurePoses=[...savedFigurePoses,{id:Date.now().toString(36)+Math.random().toString(36).slice(2,7),name,scope,data}];persistFigurePoses();
+  }
+  function deleteFigurePose(index) { savedFigurePoses=savedFigurePoses.filter((_,i)=>i!==index);persistFigurePoses(); }
+  function loadFigurePose(index, target = poseLibraryPerson) {
+    const item=savedFigurePoses[index];if(!item?.data || !['A','B'].includes(item.scope))return;
+    const people=target==='both'?['A','B']:[target];
+    const anchors=new Map();const snapshot=serializeMeshyRigPose();
+    for(const person of people){
+      const rig=meshyRigByPerson(person),saved=item.data[item.scope];
+      if(!rig||!saved)continue;
+      const hips=rig.object.getObjectByName('Hips')||rig.object;
+      anchors.set(person,hips.getWorldPosition(new THREE.Vector3()));
+      const data=JSON.parse(JSON.stringify(saved));
+      const currentYaw=new THREE.Euler().setFromQuaternion(rig.object.quaternion,'YXZ').y;
+      const savedQ=new THREE.Quaternion().setFromEuler(new THREE.Euler(...data.object.rotation));
+      const savedYaw=new THREE.Euler().setFromQuaternion(savedQ,'YXZ').y;
+      const adjusted=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),currentYaw-savedYaw).multiply(savedQ);
+      const e=new THREE.Euler().setFromQuaternion(adjusted);
+      data.object.rotation=[e.x,e.y,e.z];data.object.position=rig.object.position.toArray();data.object.scale=rig.object.scale.toArray();data.pins=[];data.grip=null;
+      snapshot[person]=data;
+    }
+    if(!anchors.size)return;
+    pushUndoSnapshot();applyMeshyRigPose(snapshot);
+    for(const [person,anchor] of anchors){
+      const rig=meshyRigByPerson(person),hips=rig.object.getObjectByName('Hips')||rig.object;
+      rig.object.updateMatrixWorld(true);
+      const now=hips.getWorldPosition(new THREE.Vector3());
+      const root=rig.object.getWorldPosition(new THREE.Vector3());root.x+=anchor.x-now.x;root.z+=anchor.z-now.z;
+      rig.object.position.copy(rig.object.parent?rig.object.parent.worldToLocal(root):root);
+      rig.object.updateMatrixWorld(true);
+      rig.object.traverse(node=>{if(node.isSkinnedMesh){node.skeleton.update();node.computeBoundingBox();}});
+      // Measure deformed vertices in world space: a rotated local box includes empty space below the body.
+      const bounds=new THREE.Box3().setFromObject(rig.object, true);
+      if(Number.isFinite(bounds.min.y))rig.object.position.y+=FLOOR_Y + 0.015 - bounds.min.y;
+      rig.object.updateMatrixWorld(true);
+    }
+    updateAllMeshyRigHandles();poseLibraryPerson=null;
+  }
+  function openFigurePoseWheel(event = null, held = false) {
+    if (meshyRigDrag || meshyFigureDrag || meshyRigTwistDrag || meshyRigBodyTwistDrag || playing) return;
+    let rig = selectedMeshyRig || meshyRigByPerson(toolPerson);
+    if (held && lastFigurePointer) {
+      rig = pickMeshyRigJoint(lastFigurePointer)?.userData?.meshyRig || pickMeshyRigFigure(lastFigurePointer)?.rig || rig;
+    }
+    if (!rig) return;
+    selectToolFigure(rig.person);
+    gripNotice = '';
+    const half = Math.min(170, (window.innerWidth-16)/2, (window.innerHeight-16)/2);
+    const point = held && lastFigurePointer ? lastFigurePointer : {clientX:window.innerWidth/2,clientY:window.innerHeight/2};
+    poseWheel = {person:rig.person,held,x:Math.max(half+8,Math.min(window.innerWidth-half-8,point.clientX)),y:Math.max(half+8,Math.min(window.innerHeight-half-8,point.clientY))};
+    poseWheelHover = -1;
+    if (controls) controls.enabled = false;
+    if (!poseSelectionBox) { poseSelectionBox = new THREE.BoxHelper(rig.object,0x60a5fa); scene.add(poseSelectionBox); }
+    poseSelectionBox.setFromObject(rig.object); poseSelectionBox.visible = true;
+  }
+
+  function closeFigurePoseWheel() {
+    poseWheel = null; poseWheelHover = -1;
+    if (poseSelectionBox) poseSelectionBox.visible = false;
+    if (controls) controls.enabled = orbitEnabled;
+  }
+
+  function chooseFigurePose(id) {
+    const rig = meshyRigByPerson(poseWheel?.person);
+    if (!rig || !FIGURE_POSES.some(pose => pose.id === id)) { closeFigurePoseWheel(); return; }
+    pushUndoSnapshot();
+    releaseGripLink(meshyRigFigures);
+    const hadPins = !!rig.jointPins?.length;
+    releaseJointPins(meshyRigFigures, rig);
+    applyFigurePose(rig,id,FLOOR_Y);
+    updateAllMeshyRigHandles();
+    gripNotice = hadPins ? 'Pins for the new pose were released. Undo restores them.' : '';
+    closeFigurePoseWheel();
+  }
+
+
+  function choosePinEndpoint(handle) {
+    if (!handle || !torsoHandleSelectable(handle, rigJointMarkerMode)) return;
+    const rig=handle.userData.meshyRig, bone=handle.userData.bone;
+    if (!isJointPinned(rig,bone) && (rig.jointPins?.length||0)>=2) { gripNotice='Maximum two pins per figure. Double-click a pinned joint to release it.'; return; }
+    pushUndoSnapshot();
+    toggleJointPin(meshyRigFigures,rig,bone); gripNotice='';
+    setMobileSelectedRigHandle(handle); updateAllMeshyRigHandles();
+  }
+
+
+  function cycleRigJointMarkerMode() {
+    const modes = ['few', 'all', 'hidden'];
+    const currentIndex = modes.indexOf(rigJointMarkerMode);
+    setRigJointMarkerMode(modes[(currentIndex + 1) % modes.length]);
+  }
+
+  function activeMeshyRigJointMaterialFor(handle) {
+    return handle?.userData?.meshyRig?.person === 'B'
+      ? meshyRigActiveJointMaterialB
+      : meshyRigActiveJointMaterialA;
+  }
+
+  function isMeshyRigActiveJointMaterial(material) {
+    return material === meshyRigActiveJointMaterialA || material === meshyRigActiveJointMaterialB;
   }
 
   function setMobileSelectedRigHandle(handle) {
     if (mobileSelectedRigHandle && mobileSelectedRigHandle !== handle) {
       const previousMarker = mobileSelectedRigHandle.userData?.marker;
       const previousBase = mobileSelectedRigHandle.userData?.markerBaseMaterial;
-      if (previousMarker && previousBase && previousMarker.material === meshyRigActiveJointMaterial) {
+      if (previousMarker && previousBase && isMeshyRigActiveJointMaterial(previousMarker.material)) {
         previousMarker.material = previousBase;
       }
     }
@@ -2679,13 +2871,14 @@ function isLocked(person, key){
     if (handle) {
       const marker = handle.userData?.marker;
       if (marker) {
-        marker.material = meshyRigActiveJointMaterial;
-        marker.visible = true;
+        marker.material = activeMeshyRigJointMaterialFor(handle);
+        marker.visible = shouldShowMeshyRigMarker(handle);
         marker.renderOrder = 6000;
         marker.frustumCulled = false;
         marker.material.needsUpdate = true;
       }
       selectedMeshyRig = handle.userData?.meshyRig || selectedMeshyRig;
+      if (selectedMeshyRig) toolPerson = selectedMeshyRig.person;
       mobileCrosshair = {
         ...mobileCrosshair,
         handle,
@@ -2834,9 +3027,10 @@ function isLocked(person, key){
     for (const mesh of outline.meshes || []) mesh.visible = visible;
   }
 
-  function resetMeshySubfloorOutlineState(rig) {
+  function resetMeshySubfloorOutlineState(rig, options = {}) {
     const outline = rig?.floorOutline;
     if (!outline) return;
+    const hide = options.hide !== false;
     const { box, samples } = meshyRigFloorSamples(rig);
     outline.interactionStartMinY = box.isEmpty() || !Number.isFinite(box.min.y) ? null : box.min.y;
     outline.interactionStartProbeDepth = new WeakMap();
@@ -2845,7 +3039,7 @@ function isLocked(person, key){
         outline.interactionStartProbeDepth.set(sample.probe, sample.depth);
       }
     }
-    setMeshySubfloorOutlineVisible(outline, false);
+    if (hide) setMeshySubfloorOutlineVisible(outline, false);
   }
 
   function resetAllMeshySubfloorOutlineStates() {
@@ -3023,15 +3217,23 @@ function isLocked(person, key){
       rig.bindQuaternions.set(child, child.quaternion.clone());
     });
 
-    for (const bone of collectMeshyRigBones(object)) {
-      const geometry = new THREE.SphereGeometry(meshyRigHandleRadius(bone), 20, 14);
+    const chest = torsoBones(rig).at(-1);
+    const controlBones = collectMeshyRigBones(object).map(bone => ({ bone, torsoControl: false }));
+    if (chest) {
+      controlBones.push({ bone: chest, torsoControl: 'bend' });
+      const abdomen = torsoBones(rig).find(bone => bone.name === 'Spine01');
+      if (abdomen) controlBones.push({ bone: abdomen, torsoControl: 'lean' });
+    }
+    for (const { bone, torsoControl } of controlBones) {
+      const geometry = new THREE.SphereGeometry(torsoControl ? 0.08 : meshyRigHandleRadius(bone), 20, 14);
       const handle = new THREE.Mesh(geometry, meshyRigJointMaterial.clone());
       const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(meshyRigMarkerRadius(bone), 16, 10),
+        new THREE.SphereGeometry(torsoControl ? 0.028 : meshyRigMarkerRadius(bone), 16, 10),
         (person === 'A' ? meshyRigJointMarkerMaterialB : meshyRigJointMarkerMaterialA).clone()
       );
       handle.userData.meshyRig = rig;
       handle.userData.bone = bone;
+      handle.userData.torsoControl = torsoControl;
       handle.userData.baseMaterial = handle.material;
       handle.userData.marker = marker;
       handle.userData.markerBaseMaterial = marker.material;
@@ -3043,9 +3245,9 @@ function isLocked(person, key){
       handle.material.transparent = true;
       marker.renderOrder = 3;
       marker.frustumCulled = false;
-      marker.visible = shouldShowMeshyRigMarker(bone);
+      marker.visible = shouldShowMeshyRigMarker(handle);
       if (isMeshyRigCoreLowerMarkerBone(bone) || (bone?.name?.toLowerCase?.() || '').includes('spine')) marker.renderOrder = 5000;
-      marker.userData.alwaysVisibleMarker = shouldShowMeshyRigMarker(bone);
+      marker.userData.alwaysVisibleMarker = shouldShowMeshyRigMarker(handle);
       handle.add(marker);
       rig.jointGroup.add(handle);
       rig.handles.push(handle);
@@ -3061,25 +3263,41 @@ function isLocked(person, key){
     return rig;
   }
 
-  function updateMeshyRigHandles(rig) {
+  function updateMeshyRigHandles(rig, { singleJointEdit = false } = {}) {
+    const directEdit = singleJointEdit || (singleJointMode && (meshyRigDrag || meshyRigTwistDrag));
+    const constraintResult = maintainJointPins(meshyRigFigures, () => ({link:null,limited:false}), { allowAdjustment: !directEdit });
+
+    pinsAtLimit = constraintResult.limited;
+    pinCount = meshyRigFigures.reduce((sum, figure) => sum + (figure.jointPins?.length || 0), 0);
+
+
     for (const handle of rig.handles) {
       const bone = handle.userData.bone;
       if (bone) {
         bone.getWorldPosition(handle.position);
         const marker = handle.userData.marker;
         if (marker) {
+          const pinned = isJointPinned(rig, bone) && torsoHandleSelectable(handle, rigJointMarkerMode);
+          if (pinned && !handle.userData.pinRing) {
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(Math.max(.024, (marker.geometry?.parameters?.radius || .019) + .009), .004, 8, 24), new THREE.MeshBasicMaterial({color:0xffc247, depthTest:false, depthWrite:false}));
+            ring.renderOrder = 7000; handle.add(ring); handle.userData.pinRing = ring;
+          }
+          if (handle.userData.pinRing) {
+            handle.userData.pinRing.visible = pinned;
+            if (camera) handle.userData.pinRing.quaternion.copy(camera.quaternion);
+          }
           marker.position.set(0, 0, 0);
           marker.quaternion.identity();
-          const isActiveMarker = handle === mobileSelectedRigHandle;
-          if (isActiveMarker && marker.material !== meshyRigActiveJointMaterial) marker.material = meshyRigActiveJointMaterial;
-          marker.visible = isActiveMarker || shouldShowMeshyRigMarker(bone);
+          const isActiveMarker = handle === mobileSelectedRigHandle && torsoHandleSelectable(handle, rigJointMarkerMode);
+          if (isActiveMarker && marker.material !== activeMeshyRigJointMaterialFor(handle)) marker.material = activeMeshyRigJointMaterialFor(handle);
+          marker.visible = shouldShowMeshyRigMarker(handle);
           if (marker.visible) {
             marker.renderOrder = isActiveMarker ? 6000 : ((isMeshyRigCoreLowerMarkerBone(bone) || (bone?.name?.toLowerCase?.() || '').includes('spine')) ? 5000 : 3);
             marker.frustumCulled = false;
             marker.material.depthTest = false;
             marker.material.depthWrite = false;
             marker.material.transparent = true;
-            marker.material.opacity = (marker.material === meshyRigSelectedJointMaterial || marker.material === meshyRigActiveJointMaterial) ? 0.95 : 0.88;
+            marker.material.opacity = (marker.material === meshyRigSelectedJointMaterial || isMeshyRigActiveJointMaterial(marker.material)) ? 0.95 : 0.88;
             marker.material.needsUpdate = true;
           }
         }
@@ -3117,6 +3335,7 @@ function isLocked(person, key){
       updateMeshyRigHandles(rig);
       updateMeshySubfloorOutline(rig);
     }
+
   }
 
   function findMeshyRigBone(rig, name) {
@@ -3232,6 +3451,14 @@ function isLocked(person, key){
     rig.object.position.set(0, 0, 0);
     rig.object.rotation.set(0, person === 'A' ? Math.PI / 2 : -Math.PI / 2, 0);
     rig.object.updateMatrixWorld(true);
+    // Pose-wheel poses cache skinned bounds. Refresh them after resetting bones.
+    rig.object.traverse(mesh => {
+      if (mesh.isSkinnedMesh) {
+        mesh.skeleton.update();
+        mesh.computeBoundingBox();
+        mesh.computeBoundingSphere();
+      }
+    });
     const box = new THREE.Box3().setFromObject(rig.object);
     const center = box.getCenter(new THREE.Vector3());
     const targetX = person === 'A' ? -0.55 : 0.55;
@@ -3288,6 +3515,8 @@ function isLocked(person, key){
         }
       });
       out[rig.person] = {
+        pins: JSON.parse(JSON.stringify(rig.jointPins || [])),
+        grip: null,
         bones,
         positions,
         object: {
@@ -3307,10 +3536,13 @@ function isLocked(person, key){
       return false;
     }
 
+    for (const rig of meshyRigFigures) rig.restoringPose = true;
     for (const person of ['A', 'B']) {
       const rig = meshyRigByPerson(person);
       const data = meshyRigPose[person];
       if (!rig || !data) continue;
+      rig.jointPins = Array.isArray(data.pins) ? JSON.parse(JSON.stringify(data.pins)).slice(0,2) : [];
+      rig.gripLink = null;
       if (Array.isArray(data.object?.position)) {
         rig.object.position.fromArray(data.object.position);
       }
@@ -3328,6 +3560,11 @@ function isLocked(person, key){
           const p = data.positions[child.name];
           child.position.set(p[0] || 0, p[1] || 0, p[2] || 0);
           rig.positionOverrides?.set?.(child, child.position.clone());
+        } else {
+          // An absent override means the saved pose used the bind position.
+          // Clear translations introduced after the snapshot (including hips).
+          const bindPosition = rig.bindPositions?.get(child);
+          if (bindPosition) child.position.copy(bindPosition);
         }
         if (!Array.isArray(q) || q.length < 4) return;
         child.quaternion.set(q[0] || 0, q[1] || 0, q[2] || 0, q[3] ?? 1);
@@ -3335,6 +3572,7 @@ function isLocked(person, key){
       rig.object.updateMatrixWorld(true);
       updateMeshyRigHandles(rig);
     }
+    for (const rig of meshyRigFigures) rig.restoringPose = false;
     pendingMeshyRigPose = null;
     return true;
   }
@@ -3407,15 +3645,28 @@ function isLocked(person, key){
     return name === 'LeftLeg' || name === 'RightLeg';
   }
 
-  function meshyRigIkChainForBone(bone) {
+  function isMeshyRigShoulderControlBone(bone) {
+    const name = bone?.name?.toLowerCase?.() || '';
+    return name === 'leftshoulder' || name === 'rightshoulder';
+  }
+
+  function meshyRigTargetDragSensitivity(bone) {
+    return isMeshyRigShoulderControlBone(bone) ? 0.42 : 1;
+  }
+
+  function meshyRigIkChainForBone(bone, rig = null) {
     const targetName = bone?.name?.toLowerCase?.() || '';
+    const headControl = isMeshyRigHeadOrChinBone(bone);
     const side = targetName.includes('left') ? 'left' : targetName.includes('right') ? 'right' : '';
     const chain = [];
     let cursor = bone?.parent;
     while (cursor?.isBone) {
       const name = cursor.name.toLowerCase();
       if (name === 'hips') break;
+      // Head/chin edits may bend the neck, but must not recruit the torso.
+      if (headControl && !name.includes('head') && !name.includes('chin') && !name.includes('neck')) break;
       chain.push(cursor);
+      if (rig && isJointPinned(rig,cursor)) break;
       if (singleJointMode) break;
       if (side && name === `${side}shoulder`) break;
       if (side && name === `${side}upleg`) break;
@@ -3617,15 +3868,34 @@ function isLocked(person, key){
     const axis = meshyRigTwistAxisForBone(bone);
     const cameraDirection = camera.getWorldDirection(new THREE.Vector3()).normalize();
     const sign = axis.dot(cameraDirection) >= 0 ? -1 : 1;
+    if (!singleJointMode && handle.userData.torsoControl) {
+      applyMeshyRigTorsoControl(handle, { twist: sign * THREE.MathUtils.degToRad(15) });
+      dragSnapshotTaken = false;
+      return true;
+    }
     const deltaWorld = new THREE.Quaternion().setFromAxisAngle(axis, sign * THREE.MathUtils.degToRad(15));
     applyMeshyRigWorldRotationDelta(rig, bone, deltaWorld);
     restoreMeshyRigBindOffsets(rig);
-    updateMeshyRigHandles(rig);
+    updateMeshyRigHandles(rig, { singleJointEdit: singleJointMode });
     dragSnapshotTaken = false;
     return true;
   }
 
+  function applyMeshyRigTorsoControl(handle, angles) {
+    const rig = handle?.userData?.meshyRig;
+    if (!applyTorsoDrag(captureTorsoDrag(rig, handle.userData.torsoControl), angles)) return false;
+    updateMeshyRigHandles(rig);
+    // Modifier/button edits become the starting pose when a held drag resumes.
+    if (meshyRigDrag?.handle === handle && meshyRigDrag.torsoPose) {
+      meshyRigDrag.torsoPose = captureTorsoDrag(rig, handle.userData.torsoControl);
+      meshyRigDrag.startX = meshyRigDrag.clientX;
+      meshyRigDrag.startY = meshyRigDrag.clientY;
+    }
+    return true;
+  }
+
   function applyMeshyRigJointTwist(handle, radians) {
+    if (!singleJointMode && handle?.userData?.torsoControl) return applyMeshyRigTorsoControl(handle, { twist: radians });
     const rig = handle?.userData?.meshyRig;
     const bone = handle?.userData?.bone;
     if (!rig || !bone || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
@@ -3636,7 +3906,7 @@ function isLocked(person, key){
     const deltaWorld = new THREE.Quaternion().setFromAxisAngle(axis, radians);
     applyMeshyRigWorldRotationDelta(rig, bone, deltaWorld);
     restoreMeshyRigBindOffsets(rig);
-    updateMeshyRigHandles(rig);
+    updateMeshyRigHandles(rig, { singleJointEdit: singleJointMode });
     return true;
   }
 
@@ -3783,6 +4053,7 @@ function isLocked(person, key){
   }
 
   function applyMeshyRigUpperBodyTwist(handle, radians, unclamped = false) {
+    if (handle?.userData?.torsoControl) return applyMeshyRigTorsoControl(handle, { twist: radians });
     const rig = handle?.userData?.meshyRig;
     if (!rig || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
     const frame = meshyRigShoulderFrame(rig);
@@ -3835,6 +4106,7 @@ function isLocked(person, key){
   }
 
   function applyMeshyRigTorsoSideBend(handle, radians) {
+    if (handle?.userData?.torsoControl) return applyMeshyRigTorsoControl(handle, { side: radians });
     const rig = handle?.userData?.meshyRig;
     const bone = handle?.userData?.bone;
     if (!rig || !bone || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
@@ -3854,6 +4126,7 @@ function isLocked(person, key){
   }
 
   function applyMeshyRigBodyTwist(handle, radians) {
+    if (handle?.userData?.torsoControl) return applyMeshyRigTorsoControl(handle, { twist: radians });
     const rig = handle?.userData?.meshyRig;
     const bone = handle?.userData?.bone;
     if (!rig || !bone || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
@@ -3935,6 +4208,7 @@ function isLocked(person, key){
   }
 
   function applyMeshyRigTorsoBend(handle, radians, unclamped = false) {
+    if (handle?.userData?.torsoControl) return applyMeshyRigTorsoControl(handle, { pitch: radians });
     const rig = handle?.userData?.meshyRig;
     const bone = handle?.userData?.bone;
     if (!rig || !bone || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
@@ -3981,11 +4255,38 @@ function isLocked(person, key){
     return true;
   }
 
+  function applyMeshyRigSpineSpin(handle, radians) {
+    const rig = handle?.userData?.meshyRig;
+    if (!rig?.object || !Number.isFinite(radians) || Math.abs(radians) < 1e-6) return false;
+    const hips = findMeshyRigBone(rig, 'Hips');
+    const chest = findMeshyRigBone(rig, 'Spine');
+    if (!hips || !chest) return false;
+    rig.object.updateWorldMatrix(true, true);
+    const pivot = hips.getWorldPosition(new THREE.Vector3());
+    const axis = chest.getWorldPosition(new THREE.Vector3()).sub(pivot);
+    if (axis.lengthSq() < 1e-8) return false;
+    const delta = new THREE.Quaternion().setFromAxisAngle(axis.normalize(), radians);
+    const root = rig.object;
+    const position = root.getWorldPosition(new THREE.Vector3()).sub(pivot).applyQuaternion(delta).add(pivot);
+    const rotation = root.getWorldQuaternion(new THREE.Quaternion()).premultiply(delta);
+    if (root.parent) {
+      root.position.copy(root.parent.worldToLocal(position));
+      root.quaternion.copy(root.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(rotation));
+    } else {
+      root.position.copy(position);
+      root.quaternion.copy(rotation);
+    }
+    root.updateMatrixWorld(true);
+    // Keep the pose rigid: pins limit the spin instead of bending limbs to follow it.
+    updateMeshyRigHandles(rig, { singleJointEdit: true });
+    return true;
+  }
+
   function startMeshyRigBodyTwistDrag(event, handle, mode = 'body') {
     const rig = handle?.userData?.meshyRig;
     const bone = handle?.userData?.bone;
     if (!rig || !bone) return false;
-    resetMeshySubfloorOutlineState(rig);
+    resetMeshySubfloorOutlineState(rig, { hide: !rig.floorOutline?.visible });
     setMobileSelectedRigHandle(handle);
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     if (handle.userData.marker) handle.userData.marker.material = meshyRigSelectedJointMaterial;
@@ -4030,7 +4331,9 @@ function isLocked(person, key){
     const dy = event.clientY - meshyRigBodyTwistDrag.lastY;
     meshyRigBodyTwistDrag.lastX = event.clientX;
     meshyRigBodyTwistDrag.lastY = event.clientY;
-    if (meshyRigBodyTwistDrag.mode === 'whole') {
+    if (meshyRigBodyTwistDrag.mode === 'spine-spin') {
+      applyMeshyRigSpineSpin(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx));
+    } else if (meshyRigBodyTwistDrag.mode === 'whole') {
       applyMeshyRigWholeFigureRotation(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx), meshyRigGestureRadians(-dy));
     } else if (meshyRigBodyTwistDrag.mode === 'icon-upper') {
       applyMeshyRigUpperBodyTwist(meshyRigBodyTwistDrag.handle, meshyRigGestureRadians(dx), true);
@@ -4090,7 +4393,7 @@ function isLocked(person, key){
     if (event?.pointerId != null && meshyRigBodyTwistDrag.pointerId != null && event.pointerId !== meshyRigBodyTwistDrag.pointerId) return true;
     if (meshyRigBodyTwistDrag.handle.userData.marker) {
       meshyRigBodyTwistDrag.handle.userData.marker.material = meshyRigBodyTwistDrag.handle === mobileSelectedRigHandle
-        ? meshyRigActiveJointMaterial
+        ? activeMeshyRigJointMaterialFor(meshyRigBodyTwistDrag.handle)
         : meshyRigBodyTwistDrag.handle.userData.markerBaseMaterial;
     }
     try {
@@ -4108,7 +4411,7 @@ function isLocked(person, key){
     const rig = handle?.userData?.meshyRig;
     const bone = handle?.userData?.bone;
     if (!rig || !bone) return false;
-    resetMeshySubfloorOutlineState(rig);
+    resetMeshySubfloorOutlineState(rig, { hide: !rig.floorOutline?.visible });
     selectedMeshyRig = rig;
     setMobileSelectedRigHandle(handle);
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
@@ -4116,6 +4419,9 @@ function isLocked(person, key){
     meshyRigTwistDrag = {
       handle,
       pointerId: event.pointerId,
+      torsoPose: !singleJointMode && handle.userData.torsoControl ? captureTorsoDrag(rig, handle.userData.torsoControl) : null,
+      startX: event.clientX,
+      startY: event.clientY,
       lastX: event.clientX,
       lastY: event.clientY
     };
@@ -4133,6 +4439,13 @@ function isLocked(person, key){
     const dy = event.clientY - meshyRigTwistDrag.lastY;
     meshyRigTwistDrag.lastX = event.clientX;
     meshyRigTwistDrag.lastY = event.clientY;
+    if (meshyRigTwistDrag.torsoPose) {
+      applyTorsoDrag(meshyRigTwistDrag.torsoPose, {
+        twist: ((event.clientX - meshyRigTwistDrag.startX) - (event.clientY - meshyRigTwistDrag.startY)) * 0.012
+      });
+      updateMeshyRigHandles(meshyRigTwistDrag.handle.userData.meshyRig);
+      return true;
+    }
     const bone = meshyRigTwistDrag.handle?.userData?.bone;
     const radians = isMeshyRigHipsBone(bone) ? dx * 0.012 : (dx - dy) * 0.012;
     applyMeshyRigJointTwist(meshyRigTwistDrag.handle, radians);
@@ -4144,7 +4457,7 @@ function isLocked(person, key){
     if (event?.pointerId != null && meshyRigTwistDrag.pointerId != null && event.pointerId !== meshyRigTwistDrag.pointerId) return true;
     if (meshyRigTwistDrag.handle.userData.marker) {
       meshyRigTwistDrag.handle.userData.marker.material = meshyRigTwistDrag.handle === mobileSelectedRigHandle
-        ? meshyRigActiveJointMaterial
+        ? activeMeshyRigJointMaterialFor(meshyRigTwistDrag.handle)
         : meshyRigTwistDrag.handle.userData.markerBaseMaterial;
     }
     try {
@@ -4277,11 +4590,12 @@ function isLocked(person, key){
   }
 
   function nudgeMobileCrosshairRigDepth(dir) {
+    if (singleJointMode) return nudgeSelectedMobileJointDepth(dir);
     const rig = mobileCrosshair.handle?.userData?.meshyRig;
     if (!rig || !camera || !dir) return false;
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     const depthDirection = camera.getWorldDirection(new THREE.Vector3()).normalize();
-    const delta = depthDirection.multiplyScalar(-dir * 0.045);
+    const delta = depthDirection.multiplyScalar(-dir * Number(scrollSensitivity));
     rig.object.position.add(delta);
     rig.object.updateMatrixWorld(true);
     updateMeshyRigHandles(rig);
@@ -4295,12 +4609,14 @@ function isLocked(person, key){
     const bone = handle?.userData?.bone;
     if (!handle || !rig || !bone || !camera || !direction) return false;
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
-    resetMeshySubfloorOutlineState(rig);
+    resetMeshySubfloorOutlineState(rig, { hide: !rig.floorOutline?.visible });
     const cameraForward = camera.getWorldDirection(new THREE.Vector3()).normalize();
-    const step = 0.045 * direction;
+    const step = Number(scrollSensitivity) * direction;
     const targetWorld = handle.position.clone().addScaledVector(cameraForward, step);
-    solveMeshyRigBoneToTarget(rig, bone, targetWorld);
-    updateMeshyRigHandles(rig);
+    if (pivotJointMode) applyJointPivotTarget(captureJointPivot(rig, bone, camera), targetWorld);
+    else if (singleJointMode) applyJointMove(captureJointMove(rig, bone), targetWorld);
+    else solveMeshyRigBoneToTarget(rig, bone, targetWorld);
+    updateMeshyRigHandles(rig, { singleJointEdit: singleJointMode });
     mobileSelectedRigHandle = handle;
     mobileCrosshair = {
       ...mobileCrosshair,
@@ -4378,11 +4694,18 @@ function isLocked(person, key){
   }
 
   function solveMeshyRigBoneToTarget(rig, bone, targetWorld) {
+    if (isPelvisDragJoint(bone)) return applyPelvisDrag(capturePelvisDrag(rig, bone, FLOOR_Y), targetWorld);
     if (isMeshyRigKneeBone(bone) && solveMeshyRigSingleJointToTarget(rig, bone, targetWorld)) return true;
     if (isMeshyRigSpineBendControl(bone)) return false;
+    if (isMeshyRigHeadOrChinBone(bone)) {
+      // Pivot the head at the neck (or a face control at the head), even when
+      // the pointer is beyond its reach. Never pull the spine toward it.
+      return meshyRigIkChainForBone(bone).length > 0
+        && solveMeshyRigSingleJointToTarget(rig, bone, targetWorld);
+    }
     if (singleJointMode && solveMeshyRigSingleJointToTarget(rig, bone, targetWorld)) return true;
     restoreMeshyRigBindOffsets(rig);
-    const chain = meshyRigIkChainForBone(bone);
+    const chain = meshyRigIkChainForBone(bone, rig);
     if (!chain.length) return false;
     const singleJointSnapshot = singleJointMode
       ? snapshotMeshyRigBoneRotations(rig)
@@ -4430,7 +4753,8 @@ function isLocked(person, key){
   }
 
   function pickMeshyRigJoint(event) {
-    const handles = meshyRigFigures.flatMap((rig) => rig.handles);
+    const handles = meshyRigFigures.flatMap((rig) => rig.handles)
+      .filter(handle => torsoHandleSelectable(handle, rigJointMarkerMode));
     if (!handles.length) return null;
     setMeshyRigPointerFromEvent(event);
     meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
@@ -4441,7 +4765,7 @@ function isLocked(person, key){
       const object = hit.object;
       const marker = object?.userData?.marker;
       return hit.distance <= firstDistance + 0.08
-        && marker?.visible
+        && (marker?.visible || object?.userData?.torsoControl)
         && isMeshyRigSpineBendControl(object?.userData?.bone);
     });
     return visibleSpineHit?.object || hits[0].object;
@@ -4498,7 +4822,7 @@ function isLocked(person, key){
     const rig = handle.userData.meshyRig;
     const bone = handle.userData.bone;
     if (!rig || !bone) return false;
-    resetMeshySubfloorOutlineState(rig);
+    resetMeshySubfloorOutlineState(rig, { hide: !rig.floorOutline?.visible });
     selectedMeshyRig = rig;
     setMobileSelectedRigHandle(handle);
     const world = handle.position.clone();
@@ -4520,7 +4844,13 @@ function isLocked(person, key){
       clientX: event.clientX,
       clientY: event.clientY,
       lastTarget: world.clone(),
-      mode: isMeshyRigHipsBone(bone) ? 'pelvis-pitch' : (isMeshyRigSpineBendControl(bone) ? 'spine-bend' : 'target')
+      startX: event.clientX,
+      startY: event.clientY,
+      torsoPose: !singleJointMode && handle.userData.torsoControl ? captureTorsoDrag(rig, handle.userData.torsoControl) : null,
+      jointMovePose: singleJointMode && !pivotJointMode ? captureJointMove(rig, bone) : null,
+      pivotPose: pivotJointMode ? captureJointPivot(rig, bone, camera) : null,
+      pelvisPose: !singleJointMode && isPelvisDragJoint(bone) ? capturePelvisDrag(rig, bone, FLOOR_Y) : null,
+      mode: singleJointMode ? 'target' : handle.userData.torsoControl ? 'torso-bend' : (isMeshyRigHipsBone(bone) ? 'pelvis-pitch' : (isMeshyRigSpineBendControl(bone) ? 'spine-bend' : 'target'))
     };
     if (handle.userData.marker) handle.userData.marker.material = meshyRigSelectedJointMaterial;
     orbitEnabled = false;
@@ -4535,6 +4865,16 @@ function isLocked(person, key){
     if (event.pointerId != null && meshyRigDrag.pointerId != null && event.pointerId !== meshyRigDrag.pointerId) return true;
     event.preventDefault();
     event.stopPropagation();
+    if (meshyRigDrag.mode === 'torso-bend') {
+      meshyRigDrag.clientX = event.clientX;
+      meshyRigDrag.clientY = event.clientY;
+      applyTorsoDrag(meshyRigDrag.torsoPose, {
+        side: (event.clientX - meshyRigDrag.startX) * 0.006,
+        pitch: (meshyRigDrag.startY - event.clientY) * 0.006
+      });
+      updateMeshyRigHandles(meshyRigDrag.rig);
+      return true;
+    }
     if (meshyRigDrag.mode === 'spine-bend') {
       const dx = event.clientX - meshyRigDrag.clientX;
       const dy = event.clientY - meshyRigDrag.clientY;
@@ -4558,16 +4898,29 @@ function isLocked(person, key){
     setMeshyRigPointerFromEvent(event);
     meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
     if (!meshyRigRaycaster.ray.intersectPlane(meshyRigDragPlane, meshyRigDragTarget)) return true;
-    const targetWorld = meshyRigDragTarget.clone().add(meshyRigDrag.offset);
-    solveMeshyRigBoneToTarget(meshyRigDrag.rig, meshyRigDrag.bone, targetWorld);
+    let targetWorld = meshyRigDragTarget.clone().add(meshyRigDrag.offset);
+    const sensitivity = singleJointMode ? 1 : meshyRigTargetDragSensitivity(meshyRigDrag.bone);
+    if (sensitivity < 1 && meshyRigDrag.lastTarget) {
+      targetWorld = meshyRigDrag.lastTarget.clone().lerp(targetWorld, sensitivity);
+    }
+    if (meshyRigDrag.jointMovePose) {
+      applyJointMove(meshyRigDrag.jointMovePose, targetWorld);
+    } else if (meshyRigDrag.pivotPose) {
+      applyJointPivotTarget(meshyRigDrag.pivotPose, targetWorld);
+    } else if (meshyRigDrag.pelvisPose) {
+      applyPelvisDrag(meshyRigDrag.pelvisPose, targetWorld);
+    } else {
+      solveMeshyRigBoneToTarget(meshyRigDrag.rig, meshyRigDrag.bone, targetWorld);
+    }
+    meshyRigDrag.lastTarget = targetWorld.clone();
     updateMeshyRigHandles(meshyRigDrag.rig);
     return true;
   }
 
   function nudgeMeshyRigDragDepth(dir) {
     if (!meshyRigDrag || dir === 0) return false;
-    if (meshyRigDrag.mode === 'spine-bend' || meshyRigDrag.mode === 'pelvis-pitch') return true;
-    meshyRigDragPlane.constant -= 0.045 * dir;
+    if (meshyRigDrag.mode === 'joint-pivot' || meshyRigDrag.mode === 'torso-bend' || meshyRigDrag.mode === 'spine-bend' || meshyRigDrag.mode === 'pelvis-pitch') return true;
+    meshyRigDragPlane.constant -= Number(scrollSensitivity) * dir;
     const replayEvent = {
       clientX: meshyRigDrag.clientX,
       clientY: meshyRigDrag.clientY,
@@ -4579,7 +4932,7 @@ function isLocked(person, key){
     return moveMeshyRigJointDrag(replayEvent);
   }
 
-  const MESHY_DEPTH_NUDGE_MS = 16;
+  const MESHY_DEPTH_NUDGE_MS = 50;
   let meshyDepthNudgeDir = 0;
   let meshyDepthNudgeTimer = null;
   function nudgeActiveMeshyDepth(dir) {
@@ -4632,7 +4985,7 @@ function isLocked(person, key){
 
   function startMeshyFigureDrag(event, rig, hit) {
     if (!rig || !hit) return false;
-    resetMeshySubfloorOutlineState(rig);
+    resetMeshySubfloorOutlineState(rig, { hide: !rig.floorOutline?.visible });
     selectedMeshyRig = rig;
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     const normal = camera.getWorldDirection(new THREE.Vector3()).negate();
@@ -4721,13 +5074,15 @@ function isLocked(person, key){
     setMeshyRigPointerFromEvent(event);
     meshyRigRaycaster.setFromCamera(meshyRigPointer, camera);
     const depthDirection = meshyRigRaycaster.ray.direction.clone().normalize();
-    const delta = depthDirection.multiplyScalar(-dir * 0.12);
+    const delta = depthDirection.multiplyScalar(-dir * Number(scrollSensitivity));
+    const before = rig.object.position.clone();
     rig.object.position.add(delta);
-    if (meshyFigureDrag?.rig === rig || meshyRigDrag?.rig === rig) {
-      meshyRigDragPlane.constant -= meshyRigDragPlane.normal.dot(delta);
-    }
     rig.object.updateMatrixWorld(true);
     updateMeshyRigHandles(rig);
+    const acceptedDelta = rig.object.position.clone().sub(before);
+    if (meshyFigureDrag?.rig === rig || meshyRigDrag?.rig === rig) {
+      meshyRigDragPlane.constant -= meshyRigDragPlane.normal.dot(acceptedDelta);
+    }
     if (meshyRigDrag?.rig === rig) reanchorMeshyRigJointDrag();
     if (meshyFigureDrag?.rig === rig) reanchorMeshyFigureDrag();
     return true;
@@ -4759,7 +5114,7 @@ function isLocked(person, key){
     if (event?.pointerId != null && meshyRigDrag.pointerId != null && event.pointerId !== meshyRigDrag.pointerId) return true;
     if (meshyRigDrag.handle.userData.marker) {
       meshyRigDrag.handle.userData.marker.material = meshyRigDrag.handle === mobileSelectedRigHandle
-        ? meshyRigActiveJointMaterial
+        ? activeMeshyRigJointMaterialFor(meshyRigDrag.handle)
         : meshyRigDrag.handle.userData.markerBaseMaterial;
     }
     try {
@@ -4777,7 +5132,19 @@ function isLocked(person, key){
   }
 
   function handleMeshyRigPointerDown(event) {
+    blurActiveTextField();
     if (!renderer || !camera || !meshyRigFigures.length) return;
+    if (poseWheel || poseLibraryPerson) return;
+    if (event.button !== 2 && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      const handle = pickMeshyRigJoint(event);
+      const now = Date.now();
+      if (handle && lastJointTap?.handle === handle && now-lastJointTap.time < 350 && Math.hypot(event.clientX-lastJointTap.x,event.clientY-lastJointTap.y)<14) {
+        event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.();
+        lastJointTap = null; jointTapStart = null;
+        choosePinEndpoint(handle); return;
+      }
+      jointTapStart = handle ? {handle,time:now,x:event.clientX,y:event.clientY} : null;
+    } else { lastJointTap=null; jointTapStart=null; }
     const isMobilePointer = event.pointerType === 'touch' || (isMobileViewport() && event.pointerType !== 'mouse');
     if (isMobilePointer && event.button !== 2 && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
       const jointHandle = pickMeshyRigJoint(event);
@@ -4790,8 +5157,8 @@ function isLocked(person, key){
         && Math.hypot(event.clientX - lastMobileFigureTap.x, event.clientY - lastMobileFigureTap.y) < 34;
       const tapCount = sameTapTarget ? Math.min(3, (lastMobileFigureTap.count || 1) + 1) : 1;
       lastMobileFigureTap = { rig: tapRig, time: now, x: event.clientX, y: event.clientY, count: tapCount };
-      const isTripleTap = !!jointHandle && tapCount >= 3;
-      const isDoubleTap = !!tapRig && tapCount === 2;
+      const isTripleTap = false;
+      const isDoubleTap = !jointHandle && !!tapRig && tapCount === 2;
       if (isTripleTap) {
         event.preventDefault();
         event.stopPropagation();
@@ -4823,18 +5190,16 @@ function isLocked(person, key){
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
-      resetAllMeshySubfloorOutlineStates();
       const handle = pickMeshyRigJoint(event);
       if (handle) {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
-        startMeshyRigBodyTwistDrag(event, handle, 'whole');
+        startMeshyRigBodyTwistDrag(event, handle, event.button === 2 ? 'spine-spin' : 'whole');
       }
       return;
     }
     if (event.ctrlKey || event.metaKey) {
-      resetAllMeshySubfloorOutlineStates();
       const figureHit = pickMeshyRigFigure(event);
       const jointHandle = figureHit ? null : pickMeshyRigJoint(event);
       const jointRig = jointHandle?.userData?.meshyRig;
@@ -4869,6 +5234,14 @@ function isLocked(person, key){
   }
 
   function handleMeshyRigPointerMove(event) {
+    if (jointTapStart && Math.hypot(event.clientX-jointTapStart.x,event.clientY-jointTapStart.y)>=6) { jointTapStart=null; lastJointTap=null; }
+    lastFigurePointer = {clientX:event.clientX,clientY:event.clientY};
+    if (poseWheel) return;
+    if (!meshyRigBodyTwistDrag && !meshyRigTwistDrag && !meshyFigureDrag && !meshyRigDrag) {
+      const torsoControl = pickMeshyRigJoint(event)?.userData?.torsoControl;
+      renderer.domElement.title = torsoControl === 'lean' ? 'Lean' : torsoControl ? 'Bend' : '';
+      return;
+    }
     if (meshyRigBodyTwistDrag) {
       moveMeshyRigBodyTwistDrag(event);
       event.stopImmediatePropagation?.();
@@ -4891,6 +5264,10 @@ function isLocked(person, key){
   }
 
   function handleMeshyRigPointerUp(event) {
+    if (jointTapStart) {
+      lastJointTap = event.type !== 'pointercancel' && Date.now()-jointTapStart.time<350 && Math.hypot(event.clientX-jointTapStart.x,event.clientY-jointTapStart.y)<6 ? {...jointTapStart,time:Date.now()} : null;
+      jointTapStart=null;
+    }
     if (meshyRigBodyTwistDrag) {
       stopMeshyRigBodyTwistDrag(event);
       event.stopImmediatePropagation?.();
@@ -4946,6 +5323,10 @@ function isLocked(person, key){
   }
 
   function handleMeshyRigContextMenuModifier(event) {
+    if (meshyRigBodyTwistDrag || ((event.ctrlKey || event.metaKey) && event.shiftKey && event.target === renderer?.domElement)) {
+      event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.();
+      return;
+    }
     if (!meshyRigDrag) return;
     event.preventDefault();
     event.stopPropagation();
@@ -5001,7 +5382,10 @@ function isLocked(person, key){
       applyColorblindScheme();
       clearPendingMeshyRigPose();
       if (startPosition === 'neutral') placeAllMeshyRigsNeutralStanding();
-      else syncMeshyRigsFromCurrentJoints();
+      else {
+        syncMeshyRigsFromCurrentJoints();
+        if (importedPoses[startPosition]?.meshyRig) applyMeshyRigPose(importedPoses[startPosition].meshyRig);
+      }
       updateAllMeshyRigHandles();
     } catch (error) {
       console.error('Could not load Meshy FightLab figures', error);
@@ -5096,6 +5480,8 @@ function isLocked(person, key){
   }
 
   function resetTransientPoseInteractionState(){
+    releaseGripLink(meshyRigFigures); releaseJointPins(meshyRigFigures);
+    closeFigurePoseWheel(); gripNotice = '';
     dragTorsoAnchorA = null;
     dragTorsoAnchorB = null;
     dragTorsoForwardA = null;
@@ -5166,6 +5552,14 @@ function isLocked(person, key){
   // Apply current colorblind scheme to figure body materials
   function applyColorblindScheme(){
     const scheme = COLORBLIND_SCHEMES[colorblindMode] || COLORBLIND_SCHEMES.normal;
+    try {
+      meshyRigActiveJointMaterialA.color.setHex(scheme.activeA || 0xef4444);
+      meshyRigActiveJointMaterialA.emissive?.setHex(scheme.activeA || 0xef4444);
+      meshyRigActiveJointMaterialA.needsUpdate = true;
+      meshyRigActiveJointMaterialB.color.setHex(scheme.activeB || 0xa855f7);
+      meshyRigActiveJointMaterialB.emissive?.setHex(scheme.activeB || 0xa855f7);
+      meshyRigActiveJointMaterialB.needsUpdate = true;
+    } catch(e) {}
     const applyToGroup = (group, which, opts = {})=>{
       if (!group) return;
       const bodyColor = (which === 'A') ? scheme.A : scheme.B;
@@ -5199,7 +5593,7 @@ function isLocked(person, key){
           const marker = handle?.userData?.marker;
           const baseMaterial = handle?.userData?.markerBaseMaterial;
           for (const material of [baseMaterial, marker?.material]) {
-            if (!material?.color || material === meshyRigSelectedJointMaterial) continue;
+            if (!material?.color || material === meshyRigSelectedJointMaterial || isMeshyRigActiveJointMaterial(material)) continue;
             material.color.setHex(markerColor);
             if (material.emissive) material.emissive.setHex(markerColor);
             material.needsUpdate = true;
@@ -5662,6 +6056,31 @@ function isLocked(person, key){
     const candidateA = center.clone().add(perp.clone().multiplyScalar(h));
     const candidateB = center.clone().add(perp.clone().multiplyScalar(-h));
     return candidateA.distanceTo(kneeOld) <= candidateB.distanceTo(kneeOld) ? candidateA : candidateB;
+  }
+
+  function clampSingleJointHandToElbowLength(person, jointKey, target) {
+    if (jointKey !== 'handL' && jointKey !== 'handR') return target;
+    const joints = person === 'A' ? jointsA : jointsB;
+    const elbowKey = jointKey === 'handL' ? 'elbowL' : 'elbowR';
+    const elbowArr = joints?.[elbowKey];
+    if (!elbowArr) return target;
+    const elbow = new THREE.Vector3(...elbowArr);
+    const currentHand = joints?.[jointKey] ? new THREE.Vector3(...joints[jointKey]) : null;
+    const savedLen = dragLengthConstraint.active
+      && dragLengthConstraint.person === person
+      && dragLengthConstraint.jointKey === jointKey
+      ? dragLengthConstraint.lParent
+      : 0;
+    const fallbackLen = currentHand ? currentHand.distanceTo(elbow) : 0;
+    const length = savedLen > 1e-6 ? savedLen : fallbackLen;
+    if (!(length > 1e-6)) return target;
+    const direction = target.clone().sub(elbow);
+    if (direction.lengthSq() < 1e-8) {
+      const fallbackDirection = currentHand ? currentHand.clone().sub(elbow) : new THREE.Vector3(0, 1, 0);
+      if (fallbackDirection.lengthSq() < 1e-8) fallbackDirection.set(0, 1, 0);
+      return elbow.clone().add(fallbackDirection.normalize().multiplyScalar(length));
+    }
+    return elbow.clone().add(direction.normalize().multiplyScalar(length));
   }
 
   // New: strict clamp where shoulders behave exactly like hips (fixed radius to center)
@@ -6298,7 +6717,7 @@ function clampToDragLengths(person, jointKey, target){
   }
 
   // ---------- Picking ----------
-  
+
   // Raycast hips/torso body (pelvis/chest) to allow bridge-style dragging when clicking the structure
   function pickHipBody(event){
     const el = renderer?.domElement;
@@ -6544,16 +6963,15 @@ function clampToDragLengths(person, jointKey, target){
         }
       };
       const kd = (e)=>{
+        if (poseLibraryPerson) { if (e.key==='Escape') poseLibraryPerson=null; return; }
         // Ignore single-key shortcuts while typing in inputs (allow Ctrl/Cmd combos)
         if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
-        if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
-          if (dropActiveMeshyRigToFloor()) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation?.();
-          }
+        if (e.code === 'KeyQ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          if (!e.repeat && !poseWheel) openFigurePoseWheel(e,true);
           return;
         }
+        if (poseWheel) return;
         if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undoLastFigureMove(); return; }
         if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); try{ saveCurrentFrame(); }catch(_){} return; }
         if (e.key === 'Escape') {
@@ -6568,17 +6986,25 @@ function clampToDragLengths(person, jointKey, target){
         if (dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); startDepthNudge(-1); return; }
         if (!dragging && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); togglePlayback(); return; }
         if (dragging && (e.key === 'c' || e.key === 'C' || e.code === 'KeyC')) { e.preventDefault(); startDepthNudge(1); return; }
+        if (e.key === 'j' || e.key === 'J' || e.code === 'KeyJ') { e.preventDefault(); cycleRigJointMarkerMode(); return; }
         if (e.key === 'h' || e.key === 'H') { e.preventDefault(); toggleUI(); return; }
         if (e.key === 'e' || e.key === 'E') { e.preventDefault(); toggleSingleJointMode(); return; }
         handleWASDKeyDown(e);
       };
       const ku = (e)=>{
+        if (e.code === 'KeyQ' && poseWheel?.held) {
+          e.preventDefault();
+          if (poseWheelHover >= 0) chooseFigurePose(FIGURE_POSES[poseWheelHover].id);
+          else closeFigurePoseWheel();
+          return;
+        }
         if (isTypingTarget(e.target) && !(e.ctrlKey||e.metaKey)) return;
         if (e.code === 'Space' || e.key === ' ' || e.key === 'c' || e.key === 'C' || e.code === 'KeyC') { stopMeshyRigDepthNudge(); }
         if (e.code === 'Space' || e.key === ' ' || e.key === 'c' || e.key === 'C' || e.code === 'KeyC') { stopDepthNudge(); }
         handleWASDKeyUp(e);
       };
       const stopAllDepthNudges = () => {
+        closeFigurePoseWheel();
         stopMeshyRigDepthNudge();
         stopDepthNudge();
       };
@@ -6611,7 +7037,7 @@ function clampToDragLengths(person, jointKey, target){
       };
       window.addEventListener('pointerdown', handleGlobalPointer, true);
       // Pointer lock disabled to keep OS cursor visible while dragging
-      onDestroy(()=>{
+      cleanupEditorListeners = () => {
         window.removeEventListener('resize', onResize);
         window.removeEventListener('keydown', meshyDepthKeyCapture, true);
         window.removeEventListener('keydown', kd);
@@ -6624,7 +7050,7 @@ function clampToDragLengths(person, jointKey, target){
         try{ window.visualViewport?.removeEventListener('resize', onResize); }catch(e){}
         try{ toolbarResizeObserver?.disconnect(); }catch(e){}
         toolbarResizeObserver = null;
-      });
+      };
 
       // Build live GUI pose editor
       if (ENABLE_LIL_GUI){
@@ -6684,7 +7110,7 @@ function clampToDragLengths(person, jointKey, target){
     }catch(_) { return false; }
   };
 
-  
+
   function animate(){
     requestAnimationFrame(animate);
     controls.enabled = orbitEnabled;
@@ -6779,7 +7205,8 @@ function clampToDragLengths(person, jointKey, target){
   // --- Comment overlay placement (right of figures, follows camera) ---
   function getActiveCommentText(){
     const typed = String(comment || '').trim();
-    if (typed.length > 0) return typed;
+    // A revisited frame owns the input, including an intentionally empty note.
+    if (typed.length > 0 || (frameSaveTarget === currentFrame && poses?.[currentFrame])) return typed;
     if (!showFrameComments) return '';
     try{
       const saved = poses && poses[currentFrame] && String(poses[currentFrame].comment || '').trim();
@@ -6792,7 +7219,7 @@ function clampToDragLengths(person, jointKey, target){
     try{
       commentText = getActiveCommentText();
       // Show comments whenever the current frame has text
-      commentVisible = (commentText.length > 0);
+      commentVisible = commentText.length > 0 || editingPlaybackIdx >= 0;
       if (!commentVisible) return;
       const el = renderer?.domElement; if (!el) return;
       const rect = el.getBoundingClientRect();
@@ -7007,13 +7434,13 @@ function clampToDragLengths(person, jointKey, target){
     for (const m of jointMeshesA){
       const k = m.userData.key;
       const active = (highlightA[k]||0) > now;
-      if (active) m.material.color.setHex(HIGHLIGHT_COLOR); else m.material.color.setHex(m.userData.defaultColor);
+      if (active) m.material.color.setHex(getJointHighlightColor('A')); else m.material.color.setHex(m.userData.defaultColor);
       if (m.userData.locked && m.material?.emissive) m.material.emissive.setHex(0x661111);
     }
     for (const m of jointMeshesB){
       const k = m.userData.key;
       const active = (highlightB[k]||0) > now;
-      if (active) m.material.color.setHex(HIGHLIGHT_COLOR); else m.material.color.setHex(m.userData.defaultColor);
+      if (active) m.material.color.setHex(getJointHighlightColor('B')); else m.material.color.setHex(m.userData.defaultColor);
       if (m.userData.locked && m.material?.emissive) m.material.emissive.setHex(0x661111);
     }
   }
@@ -7311,9 +7738,14 @@ function clampToDragLengths(person, jointKey, target){
   }
 
   // ----- Playback helpers -----
-  function saveCurrentFrame(){
+  let frameSaveTarget = -1;
+  $: if (!poses.length) frameSaveTarget = -1;
+  function saveCurrentFrame(addNew = false){
     const data = buildPoseSnapshot();
-    if (!poses || poses.length===0){
+    if (addNew !== true && frameSaveTarget >= 0 && poses[frameSaveTarget]) {
+      poses = poses.map((frame,i)=>i===frameSaveTarget ? { ...frame, data, comment: comment||'' } : frame);
+      currentFrame=frameSaveTarget;
+    } else if (!poses || poses.length===0){
       poses = [{ data, comment: (comment||'') }];
       currentFrame = 0;
     } else {
@@ -7325,7 +7757,11 @@ function clampToDragLengths(person, jointKey, target){
       showSequenceMenu = true;
       showSavedPlaybacksMenu = false;
     }
-    comment = '';
+    if (addNew === true) frameSaveTarget=-1;
+    if (frameSaveTarget < 0) comment='';
+    commentText = comment;
+    commentVisible = !!comment;
+    blurActiveTextField();
     playMemorySaveSound("frame");
   }
   function applyFrame(idx){
@@ -7333,11 +7769,16 @@ function clampToDragLengths(person, jointKey, target){
     showFrameComments = true;
     const i = Math.max(0, Math.min(poses.length-1, idx|0));
     currentFrame = i;
+    frameSaveTarget = i;
+    comment = poses[i].comment || '';
+    editingFrameCommentInline = false;
     const snap = poses[i].data;
     playbackApplying = true;
     try{ applyLoadedPose(snap); }finally{ playbackApplying = false; }
   }
-  function nextFrame(){
+  function nextFrame(automatic = false){
+    if (automatic === true) { if (!playing) return; }
+    else stopPlayback();
     if (!poses.length) return;
     const wasLastReviewFrame = activeReviewPlaybackIdx >= 0 && activeReviewFrameCount > 0 && currentFrame >= activeReviewFrameCount - 1;
     applyFrame((currentFrame+1)%poses.length);
@@ -7348,10 +7789,10 @@ function clampToDragLengths(person, jointKey, target){
       markSavedPlaybackReviewed(reviewedIdx);
     }
   }
-  function prevFrame(){ if (!poses.length) return; applyFrame((currentFrame-1+poses.length)%poses.length); }
+  function prevFrame(){ stopPlayback(); if (!poses.length) return; applyFrame((currentFrame-1+poses.length)%poses.length); }
   function commitLivePoseToCurrentFrame(){
     if (!poses || !poses[currentFrame]) return;
-    poses[currentFrame] = { ...poses[currentFrame], data: buildPoseSnapshot() };
+    poses[currentFrame] = { ...poses[currentFrame], data: buildPoseSnapshot(), ...(frameSaveTarget === currentFrame ? {comment: comment || ''} : {}) };
   }
   function selectPlaybackEditFrame(value){
     if (editingPlaybackIdx < 0 || !poses || poses.length === 0) return;
@@ -7366,17 +7807,39 @@ function clampToDragLengths(person, jointKey, target){
   function updatePlaybackEditFrameText(value){
     if (editingPlaybackIdx < 0 || !poses || !poses[currentFrame]) return;
     const text = String(value ?? '');
+    comment = text;
     poses[currentFrame] = { ...poses[currentFrame], comment: text };
     if (commentVisible || showFrameComments) {
       commentText = text.trim();
-      commentVisible = commentText.length > 0;
+      commentVisible = commentText.length > 0 || editingPlaybackIdx >= 0;
     }
+  }
+  function startInlineFrameCommentEdit(){
+    if (editingPlaybackIdx < 0 || !poses?.[currentFrame]) return;
+    inlineFrameCommentDraft = String(poses[currentFrame].comment || '');
+    editingFrameCommentInline = true;
+  }
+  function saveInlineFrameCommentEdit(){
+    updatePlaybackEditFrameText(inlineFrameCommentDraft);
+    editingFrameCommentInline = false;
+  }
+  function cancelInlineFrameCommentEdit(){
+    editingFrameCommentInline = false;
+  }
+  function addPlaybackEditFrameAfterCurrent(){
+    if (editingPlaybackIdx < 0 || !poses?.length) return;
+    stopPlayback();
+    commitLivePoseToCurrentFrame();
+    const insertAt = currentFrame + 1;
+    const nextFrame = { data: buildPoseSnapshot(), comment: '' };
+    poses = [...poses.slice(0, insertAt), nextFrame, ...poses.slice(insertAt)];
+    applyFrame(insertAt);
   }
   function restartPlaybackTimer(){
     if (!playing) return;
     try{ if (intervalId) clearInterval(intervalId); }catch(e){}
     intervalId = setInterval(()=>{
-      try{ nextFrame(); }catch(e){}
+      try{ nextFrame(true); }catch(e){}
     }, Math.max(100, playbackIntervalMs|0));
   }
   function startPlayback(){
@@ -7404,6 +7867,11 @@ function clampToDragLengths(person, jointKey, target){
   playbackSpeedPct = intervalToPct(playbackIntervalMs);
   function clearPlaybackQueue(){
     stopPlayback();
+    editingPlaybackIdx = -1;
+    editingPlaybackName = '';
+    editingPlaybackFolder = '';
+    editingFrameCommentInline = false;
+    reopenSavedSequencesAfterPlaybackEdit = false;
     activeReviewPlaybackIdx = -1;
     activeReviewFrameCount = 0;
     poses = [];
@@ -7487,6 +7955,12 @@ function clampToDragLengths(person, jointKey, target){
     let parent = null;
     let placeholder = null;
     let moved = false;
+    const fitViewport = () => {
+      if (!enabled || typeof window === 'undefined') return;
+      const viewport = window.visualViewport;
+      node.style.setProperty('--sheet-top', (viewport?.offsetTop || 0) + 'px');
+      node.style.setProperty('--sheet-height', (viewport?.height || window.innerHeight) + 'px');
+    };
     const move = () => {
       if (typeof document === 'undefined' || !node) return;
       if (enabled && !moved) {
@@ -7496,6 +7970,7 @@ function clampToDragLengths(person, jointKey, target){
         parent.insertBefore(placeholder, node);
         document.body.appendChild(node);
         moved = true;
+        fitViewport();
       } else if (!enabled && moved) {
         if (placeholder?.parentNode) placeholder.parentNode.insertBefore(node, placeholder);
         placeholder?.remove?.();
@@ -7504,12 +7979,18 @@ function clampToDragLengths(person, jointKey, target){
       }
     };
     move();
+    window.visualViewport?.addEventListener('resize', fitViewport);
+    window.visualViewport?.addEventListener('scroll', fitViewport);
+    window.addEventListener('resize', fitViewport);
     return {
       update(value) {
         enabled = !!value;
         move();
       },
       destroy() {
+        window.visualViewport?.removeEventListener('resize', fitViewport);
+        window.visualViewport?.removeEventListener('scroll', fitViewport);
+        window.removeEventListener('resize', fitViewport);
         if (moved) {
           if (node?.parentNode) node.parentNode.removeChild(node);
           placeholder?.remove?.();
@@ -7563,9 +8044,15 @@ function clampToDragLengths(person, jointKey, target){
     showAccountMenu = false;
     if (!next) showSavedPlaybacksMenu = false;
   }
-  function toggleMemoryMenu(){
+  async function toggleMemoryMenu(){
     const next = !showMemoryMenu;
-    if (next && !memoryReviewSessionStarted) startMemoryReviewSession();
+    if (next) {
+      savedPlaybacks = [...savedPlaybacks]; // Refresh date-based status when reopening.
+      const gap = daysBetweenKeys(memoryReviewStats.last_review_date, todayKey());
+      if (gap == null || gap > 1) memoryReviewStats = { ...memoryReviewStats, current_streak: 0 };
+      await tick();
+      startMemoryReviewSession();
+    }
     showMemoryMenu = next;
     showSequenceMenu = false;
     showSavedPlaybacksMenu = false;
@@ -7677,7 +8164,7 @@ function clampToDragLengths(person, jointKey, target){
   function todayKey(date = new Date()){
     const d = date instanceof Date ? date : new Date(date);
     if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString().slice(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   }
   function addDaysIso(base, days){
     const d = base ? new Date(base) : new Date();
@@ -7812,7 +8299,7 @@ function clampToDragLengths(person, jointKey, target){
       next_review_at: pb.next_review_at || nextReviewAt(intervalDays, lastReviewedAt || createdAt),
       current_streak: Math.max(0, Number.parseInt(pb.current_streak, 10) || 0),
       best_streak: Math.max(0, Number.parseInt(pb.best_streak, 10) || 0),
-      last_review_date: pb.last_review_date || (lastReviewedAt ? todayKey(lastReviewedAt) : null)
+      last_review_date: lastReviewedAt ? todayKey(lastReviewedAt) : (pb.last_review_date || null)
     };
   }
   function createMemoryPlaybackRecord(record){
@@ -7892,7 +8379,6 @@ function clampToDragLengths(person, jointKey, target){
     }catch(e){}
   }
   function normalizeTrainingReminderSettings(settings){
-    const lead = Number.parseInt(settings?.lead_mins, 10);
     const savedEmail = typeof settings?.email === "string" ? settings.email : "";
     const useAccountEmail = typeof settings?.use_account_email === "boolean"
       ? settings.use_account_email
@@ -7906,8 +8392,7 @@ function clampToDragLengths(person, jointKey, target){
     if (settings?.day_configs && typeof settings.day_configs === "object"){
       Object.entries(settings.day_configs).forEach(([key, value])=>{
         const day = Number.parseInt(key, 10);
-        const configLead = Number.parseInt(value?.lead_mins, 10);
-        if (day >= 0 && day <= 6 && /^\d{2}:\d{2}$/.test(value?.time || "")){
+        if (day >= 0 && day <= 6 && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value?.time || "")){
           configs[day] = {
             time: value.time,
             lead_mins: TRAINING_REMINDER_LEAD_MINS,
@@ -7916,7 +8401,7 @@ function clampToDragLengths(person, jointKey, target){
         }
       });
     }
-    if (!Object.keys(configs).length && settings?.enabled && migratedDays.length && /^\d{2}:\d{2}$/.test(settings?.time || "")){
+    if (!Object.keys(configs).length && settings?.enabled && migratedDays.length && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(settings?.time || "")){
       migratedDays.forEach((day)=>{
         configs[day] = {
           time: settings.time,
@@ -7926,7 +8411,7 @@ function clampToDragLengths(person, jointKey, target){
       });
     }
     return {
-      time: /^\d{2}:\d{2}$/.test(settings?.time || "") ? settings.time : "",
+      time: /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(settings?.time || "") ? settings.time : "",
       email: useAccountEmail ? "" : savedEmail,
       lead_mins: TRAINING_REMINDER_LEAD_MINS,
       days: migratedDays,
@@ -7961,6 +8446,12 @@ function clampToDragLengths(person, jointKey, target){
       if (trainingReminderEnabled && Object.keys(trainingReminderConfigs).length) trainingReminderDays = [];
     }catch(e){}
   }
+  let cleanupEditorListeners = () => {};
+  onDestroy(() => {
+    cleanupEditorListeners();
+    clearTrainingReminderTimer();
+  });
+
   function clearTrainingReminderTimer(){
     if (trainingReminderTimer) clearTimeout(trainingReminderTimer);
     trainingReminderTimer = null;
@@ -7980,7 +8471,7 @@ function clampToDragLengths(person, jointKey, target){
         lead_mins: TRAINING_REMINDER_LEAD_MINS,
         email: config?.email || trainingReminderRecipientEmail()
       }))
-      .filter((config)=> config.day >= 0 && config.day <= 6 && /^\d{2}:\d{2}$/.test(config.time || ""));
+      .filter((config)=> config.day >= 0 && config.day <= 6 && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(config.time || ""));
     if (!trainingReminderEnabled || !configEntries.length) {
       if (trainingReminderEnabled && !configEntries.length) trainingReminderNotice = "Choose at least one training day.";
       return;
@@ -7990,7 +8481,9 @@ function clampToDragLengths(person, jointKey, target){
       return;
     }
     if (Notification.permission !== "granted") {
-      trainingReminderNotice = "Save again and allow browser notifications.";
+      trainingReminderNotice = Notification.permission === "denied"
+        ? "Notifications are blocked. Allow them in your browser site settings, then save again."
+        : "Reminder saved. Save again to allow browser notifications.";
       return;
     }
     const now = new Date();
@@ -8018,6 +8511,8 @@ function clampToDragLengths(person, jointKey, target){
     const delay = Math.min(Math.max(target.getTime() - Date.now(), 1000), 2147483647);
     trainingReminderTimer = setTimeout(() => {
       try{
+        // A sleeping tab must not deliver a reminder after training has started.
+        if (Date.now() - target.getTime() >= TRAINING_REMINDER_LEAD_MINS * 60000) { scheduleTrainingReminder(); return; }
         const recommendedCount = reviewTodayPlaybacks.length || savedPlaybacks.length;
         if (recommendedCount > 0) {
           new Notification("Fightlab 3D review", {
@@ -8034,8 +8529,14 @@ function clampToDragLengths(person, jointKey, target){
     trainingReminderNotice = `Next browser reminder: ${target.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}.`;
   }
   async function enableTrainingReminder(){
+    const requestReminderPermission = async () => {
+      if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
+      if (Notification.permission === 'default') return Notification.requestPermission();
+      return Notification.permission;
+    };
     const hasExistingReminders = Object.keys(trainingReminderConfigs || {}).length > 0;
     if (!trainingReminderDays.length && trainingReminderEnabled && hasExistingReminders) {
+      await requestReminderPermission();
       scheduleTrainingReminder();
       return;
     }
@@ -8043,7 +8544,7 @@ function clampToDragLengths(person, jointKey, target){
       trainingReminderNotice = "Choose at least one training day first.";
       return;
     }
-    if (!trainingReminderTime) {
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(trainingReminderTime)) {
       trainingReminderNotice = "Choose when training starts first.";
       return;
     }
@@ -8058,10 +8559,8 @@ function clampToDragLengths(person, jointKey, target){
       trainingReminderDays = [];
       trainingReminderEnabled = true;
       playbacksMenuVersion += 1;
-      let permission = "unsupported";
-      if (typeof window !== "undefined" && "Notification" in window) {
-        permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
-      }
+      writeTrainingReminderSettings();
+      const permission = await requestReminderPermission();
       trainingReminderNotice = permission === "granted"
         ? "Browser reminder enabled."
         : "Reminder saved. Browser notifications were not allowed.";
@@ -8095,7 +8594,7 @@ function clampToDragLengths(person, jointKey, target){
   }
   function trainingReminderDayTimeLabel(day){
     const config = trainingReminderConfigs?.[day];
-    return config ? trainingReminderTimeLabel(config.time, config.lead_mins) : "";
+    return config?.time || "";
   }
   function deleteTrainingReminderDay(day){
     const value = Number.parseInt(day, 10);
@@ -8138,7 +8637,9 @@ function clampToDragLengths(person, jointKey, target){
   }
   function bumpMemoryReviewStreak(){
     const today = todayKey();
-    const yesterday = todayKey(new Date(Date.now() - DAY_MS));
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterday = todayKey(yesterdayDate);
     const previous = memoryReviewStats?.last_review_date || null;
     let current = previous === today
       ? memoryReviewStats.current_streak
@@ -8635,6 +9136,7 @@ function clampToDragLengths(person, jointKey, target){
       return { ...part, joints, ...(rootPos ? { rootPos } : {}) };
     };
     const cloned = { A: clonePart(data.A), B: clonePart(data.B) };
+    if (data.meshyRig) cloned.meshyRig = cloneJson(data.meshyRig);
     if (data.torsoExtras){
       const extras = { ...data.torsoExtras };
       if (data.torsoExtras.A) extras.A = { ...data.torsoExtras.A };
@@ -8861,18 +9363,39 @@ function clampToDragLengths(person, jointKey, target){
   }, { strong: 0, good: 0, review: 0, weak: 0 });
   $: reviewTodayVisibleTechniques = reviewTodayPlaybacks.filter((pb)=> memoryReviewSessionIndices.includes(pb._idx));
   $: reviewTodayBacklogCount = Math.max(0, reviewTodayPlaybacks.length - reviewTodayVisibleTechniques.length);
-  $: memoryScore = memorySavedTechniques.length
-    ? Math.round(memorySavedTechniques.reduce((total, pb)=> {
+  $: techniqueRetentionScore = memorySavedTechniques.length
+    ? memorySavedTechniques.reduce((total, pb)=> {
         const tone = memoryStatusFor(pb).tone;
         const value = tone === "strong" ? 100 : tone === "good" ? 75 : tone === "review" ? 45 : 20;
         return total + value;
-      }, 0) / memorySavedTechniques.length)
+      }, 0) / memorySavedTechniques.length
     : 0;
   $: recentlySavedTechniques = [...memorySavedTechniques].sort((a, b)=> {
     const av = new Date(a.saved_at || a.created_at || 0).getTime() || 0;
     const bv = new Date(b.saved_at || b.created_at || 0).getTime() || 0;
     return bv - av;
   }).slice(0, 3);
+  $: latestTechniqueSavedAt = recentlySavedTechniques.length
+    ? new Date(recentlySavedTechniques[0].saved_at || recentlySavedTechniques[0].created_at || 0).getTime()
+    : 0;
+  $: daysSinceNewTechnique = latestTechniqueSavedAt
+    ? Math.max(0, Math.floor((Date.now() - latestTechniqueSavedAt) / 86400000))
+    : null;
+  $: creationScore = daysSinceNewTechnique === null ? 0
+    : daysSinceNewTechnique <= 7 ? 100
+    : daysSinceNewTechnique <= 14 ? 70
+    : daysSinceNewTechnique <= 30 ? 35
+    : 10;
+  $: memoryScore = memorySavedTechniques.length
+    ? Math.round((techniqueRetentionScore * 0.8) + (creationScore * 0.2))
+    : 0;
+  $: creationFeedback = daysSinceNewTechnique === null
+    ? { tone: "start", label: "Save your first technique" }
+    : daysSinceNewTechnique <= 7
+      ? { tone: "fresh", label: "Creation rhythm on track" }
+      : daysSinceNewTechnique <= 14
+        ? { tone: "soon", label: `Last added ${daysSinceNewTechnique}d ago · Add one soon` }
+        : { tone: "due", label: `Last added ${daysSinceNewTechnique}d ago · Build one today` };
   $: topPlaybackGroups = Array.isArray(playbackGroups) ? playbackGroups.filter(g => !g.folder || g.folder.indexOf('/') === -1) : [];
   $: topPlaybackFolders = Array.from(
     new Set([
@@ -8999,6 +9522,33 @@ function clampToDragLengths(person, jointKey, target){
     playbacksMenuVersion += 1;
     syncOpenPlaybackFolders();
   }
+  function startPlaybackDrag(event, idx) {
+    draggingPlaybackIdx = idx;
+    playbackFolderDropTarget = null;
+    try {
+      event?.dataTransfer?.setData?.('text/plain', String(idx));
+      event.dataTransfer.effectAllowed = 'move';
+    } catch(e) {}
+  }
+  function finishPlaybackDrag() {
+    draggingPlaybackIdx = null;
+    playbackFolderDropTarget = null;
+  }
+  function hoverPlaybackFolderDrop(event, folderName) {
+    if (draggingPlaybackIdx == null) return;
+    playbackFolderDropTarget = folderKey(folderName);
+    try { event.dataTransfer.dropEffect = 'move'; } catch(e) {}
+  }
+  function leavePlaybackFolderDrop(folderName) {
+    if (playbackFolderDropTarget === folderKey(folderName)) playbackFolderDropTarget = null;
+  }
+  function dropPlaybackOnFolder(event, folderName) {
+    if (draggingPlaybackIdx == null) return;
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    movePlaybackToFolder(draggingPlaybackIdx, folderName);
+    finishPlaybackDrag();
+  }
   const folderKey = (name)=>{
     const parts = String(name||'').split('/').map(p=> p.trim()).filter(Boolean);
     return parts.join('/') || '';
@@ -9065,10 +9615,20 @@ function clampToDragLengths(person, jointKey, target){
     reopenSavedSequencesAfterEdit(folder);
   }
   function cancelPlaybackEdit(){
-    const folder = editingPlaybackIdx >= 0 && editingPlaybackIdx < savedPlaybacks.length
-      ? folderKey(savedPlaybacks[editingPlaybackIdx].folder)
+    const cancelledIdx = editingPlaybackIdx;
+    const folder = cancelledIdx >= 0 && cancelledIdx < savedPlaybacks.length
+      ? folderKey(savedPlaybacks[cancelledIdx].folder)
       : playbackFolderView;
+    if (cancelledIdx >= 0 && cancelledIdx < savedPlaybacks.length) {
+      const savedFrames = deepCopyFrames(savedPlaybacks[cancelledIdx].frames);
+      poses = savedFrames;
+      currentFrame = Math.min(currentFrame, Math.max(savedFrames.length - 1, 0));
+      if (savedFrames.length) {
+        try{ applyFrame(currentFrame); }catch(_) {}
+      }
+    }
     editingPlaybackIdx = -1;
+    editingFrameCommentInline = false;
     sequenceDraftActive = false;
     editingPlaybackName = "";
     editingPlaybackFolder = "";
@@ -9077,28 +9637,26 @@ function clampToDragLengths(person, jointKey, target){
   }
   function startPlaybackEdit(idx){
     if (idx<0 || idx>=savedPlaybacks.length) return;
+    const playback = savedPlaybacks[idx];
+    loadSavedPlayback(idx);
     reopenSavedSequencesAfterPlaybackEdit = true;
     sequenceDraftActive = false;
     editingPlaybackIdx = idx;
-    editingPlaybackName = savedPlaybacks[idx].name || `Playback ${idx+1}`;
-    editingPlaybackFolder = folderKey(savedPlaybacks[idx].folder) || "";
+    editingPlaybackName = playback.name || `Playback ${idx+1}`;
+    editingPlaybackFolder = folderKey(playback.folder) || "";
     showSavedPlaybacksMenu = false;
     showSequenceMenu = false;
     showSavedPresetsMenu = false;
     showMemoryMenu = false;
-    try{
-      const frames = deepCopyFrames(savedPlaybacks[idx].frames);
-      poses = frames;
-      currentFrame = 0;
-      applyFrame(0);
-    }catch(e){}
+    if (isCoarsePointer()) compactToolbar = false;
+    showFrameComments = true;
   }
   function saveCurrentPlayback(){
     if (!poses || poses.length === 0) {
       poses = [{ data: buildPoseSnapshot(), comment: (comment || '') }];
       currentFrame = 0;
     }
-    commitLivePoseToCurrentFrame();
+    // Export saved frames only; Add/Update frame explicitly captures live edits.
     const name = (newPlaybackName||"").trim() || `Playback ${savedPlaybacks.length+1}`;
     const folder = folderKey(playbackFolderView);
     const frames = deepCopyFrames(poses);
@@ -9124,6 +9682,10 @@ function clampToDragLengths(person, jointKey, target){
     activeReviewPlaybackIdx = -1;
     activeReviewFrameCount = 0;
     sequenceDraftActive = false;
+    editingPlaybackIdx = -1;
+    editingPlaybackName = "";
+    editingPlaybackFolder = "";
+    reopenSavedSequencesAfterPlaybackEdit = false;
     const pb = savedPlaybacks[i];
     const frames = deepCopyFrames(pb.frames);
     poses = frames;
@@ -9243,6 +9805,7 @@ function clampToDragLengths(person, jointKey, target){
     }catch(e){ headPreferredB = null; }
     syncMeshesNoSolve();
     syncMeshyRigsFromCurrentJoints();
+    if (data.meshyRig) applyMeshyRigPose(data.meshyRig);
     refreshGuiFromSkeletons();
   }
 
@@ -9340,7 +9903,9 @@ function clampToDragLengths(person, jointKey, target){
   }
 
   function toggleSingleJointMode(){
-    singleJointMode = !singleJointMode;
+    if (!singleJointMode) { singleJointMode = true; pivotJointMode = false; }
+    else if (!pivotJointMode) pivotJointMode = true;
+    else { singleJointMode = false; pivotJointMode = false; }
     try { updateAllMeshyRigHandles(); } catch(e) {}
   }
 
@@ -9840,6 +10405,7 @@ function clampToDragLengths(person, jointKey, target){
       let tgt = clampToDragLengthsStrict(activePerson, jointKey, target.clone());
       tgt = applyJointConstraints(activePerson, jointKey, tgt);
       tgt = clampToDragLengthsStrict(activePerson, jointKey, tgt);
+      if (singleJointMode) tgt = clampSingleJointHandToElbowLength(activePerson, jointKey, tgt);
       // For head/neck drags, apply torso constraints last so the head
       // cannot end up inside the torso after length clamping.
       if (isHeadDrag){
@@ -10351,7 +10917,7 @@ function clampToDragLengths(person, jointKey, target){
 
   function wheelHandler(event){
     const dir = Math.sign(event.deltaY || 0);
-    if (dir !== 0 && (event.ctrlKey || event.metaKey) && nudgeMeshyFigureAtPointerDepth(event, dir)) {
+    if (dir !== 0 && (meshyFigureDrag || event.ctrlKey || event.metaKey) && nudgeMeshyFigureAtPointerDepth(event, dir)) {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();
@@ -10396,7 +10962,7 @@ function clampToDragLengths(person, jointKey, target){
       if (camUse){
         if (event?.preventDefault) event.preventDefault();
         const viewDir = camUse.getWorldDirection(new THREE.Vector3()).normalize();
-        const step = scrollSensitivity * 5;
+        const step = scrollSensitivity;
         const delta = viewDir.multiplyScalar(-dir * step);
         const skel = person==='A' ? skeletonA : skeletonB;
         if (skel){
@@ -10548,38 +11114,7 @@ function clampToDragLengths(person, jointKey, target){
     startDepthNudge(dir);
   }
 
-  async function focusMobileViewport() {
-    if (typeof window === 'undefined' || typeof document === 'undefined') return;
-    try {
-      const active = document.activeElement;
-      if (active && typeof active.blur === 'function') active.blur();
-    } catch (_) {}
-    try {
-      const root = document.documentElement;
-      const requestFullscreen =
-        root.requestFullscreen ||
-        root.webkitRequestFullscreen ||
-        root.msRequestFullscreen;
-      if (requestFullscreen && !document.fullscreenElement && !document.webkitFullscreenElement) {
-        await requestFullscreen.call(root);
-      }
-    } catch (_) {
-      // Mobile Safari often rejects fullscreen for normal pages; the scroll nudge below is the fallback.
-    }
-    try {
-      const scrollTarget = Math.max(1, Math.min(48, document.documentElement.scrollHeight - window.innerHeight));
-      window.scrollTo({ top: scrollTarget, behavior: 'smooth' });
-      setTimeout(() => {
-        try { window.scrollTo({ top: scrollTarget, behavior: 'auto' }); } catch (_) {}
-      }, 120);
-    } catch (_) {}
-    try {
-      updateMobileViewportInset();
-      onResize();
-    } catch (_) {}
-  }
-
-  const DEPTH_NUDGE_MS = 16;
+  const DEPTH_NUDGE_MS = 50;
   let depthNudgeDir = 0;
   let depthNudgeTimer = null;
   function startDepthNudge(dir){
@@ -10637,16 +11172,12 @@ function clampToDragLengths(person, jointKey, target){
   </div>
 
   <div class="scene-gradient" aria-hidden="true"></div>
-  <button
-    type="button"
-    class="mobile-focus-btn"
-    aria-label="Focus view"
-    title="Focus view"
-    on:click={focusMobileViewport}>
-    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M8 3H3v5M3 3l6 6M16 3h5v5M21 3l-6 6M8 21H3v-5M3 21l6-6M16 21h5v-5M21 21l-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-  </button>
+  {#if poseWheel}
+    <FigurePoseWheel x={poseWheel.x} y={poseWheel.y} person={poseWheel.person} hovered={poseWheelHover}
+      onhover={(index) => poseWheelHover = index} onchoose={chooseFigurePose} oncancel={closeFigurePoseWheel} onsaved={openSavedFigurePoses} />
+    {#if pinCount}<div class="pose-grip-notice">Choosing a new pose releases its pins. Undo restores them.</div>{/if}
+  {/if}
+  {#if poseLibraryPerson}<SavedFigurePoses items={savedFigurePoses} person={poseLibraryPerson} onsave={saveFigurePose} onload={loadFigurePose} ondelete={deleteFigurePose} onclose={()=>poseLibraryPerson=null}/>{/if}
   <div class="account-anchor">
     <button class="btn account-btn" bind:this={accountToggleEl} on:click={() => { const next = !showAccountMenu; showAccountMenu = next; showSavedPresetsMenu = false; showSavedPlaybacksMenu = false; showSequenceMenu = false; showMemoryMenu = false; if (!next) closeAllSettingTabs(); if (next) { closeAllSettingTabs(); } }} title="Menu / Login">
       <svg class="icon account-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -10707,12 +11238,12 @@ function clampToDragLengths(person, jointKey, target){
         <div id="account-settings" class="menu-item panel-block settings-panel">
           <div class="settings-row settings-row--stack">
             <div class="settings-label">
-              <span class="name">Scroll sensitivity</span>
+              <span class="name">Depth sensitivity</span>
               <span>Depth movement speed for wheel and keyboard nudges.</span>
             </div>
             <div class="settings-control settings-control--split">
-              <input class="settings-range" type="range" min="0.005" max="0.2" step="0.005" bind:value={scrollSensitivity} aria-label="Scroll sensitivity" />
-              <input class="input settings-number" type="number" step="0.005" min="0.005" max="0.5" bind:value={scrollSensitivity} aria-label="Scroll sensitivity value" />
+              <input class="settings-range" type="range" min="0.005" max="0.2" step="0.005" bind:value={scrollSensitivity} aria-label="Depth sensitivity" />
+              <input class="input settings-number" type="number" step="0.005" min="0.005" max="0.5" bind:value={scrollSensitivity} aria-label="Depth sensitivity value" />
             </div>
           </div>
           <div class="settings-row settings-row--stack">
@@ -10750,10 +11281,17 @@ function clampToDragLengths(person, jointKey, target){
               <span>Choose which rig joint dots are visible.</span>
             </div>
             <div class="settings-segment">
-              <button type="button" class="btn settings-segment-btn" class:is-active={rigJointMarkerMode === 'few'} on:click={() => setRigJointMarkerMode('few')}>Few</button>
-              <button type="button" class="btn settings-segment-btn" class:is-active={rigJointMarkerMode === 'all'} on:click={() => setRigJointMarkerMode('all')}>All</button>
-              <button type="button" class="btn settings-segment-btn" class:is-active={rigJointMarkerMode === 'hidden'} on:click={() => setRigJointMarkerMode('hidden')}>Hide</button>
+              <button type="button" class="btn settings-segment-btn" class:is-active={rigJointMarkerMode === 'few'} title="Show Lean, Bend and pelvis. Other useful joints remain selectable. Shortcut: J" on:click={() => setRigJointMarkerMode('few')}>Few</button>
+              <button type="button" class="btn settings-segment-btn" class:is-active={rigJointMarkerMode === 'all'} title="Show all usable joints, including Lean and Bend. Shortcut: J" on:click={() => setRigJointMarkerMode('all')}>All</button>
+              <button type="button" class="btn settings-segment-btn" class:is-active={rigJointMarkerMode === 'hidden'} title="Shortcut: J" on:click={() => setRigJointMarkerMode('hidden')}>Hide</button>
             </div>
+          </div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <span class="name">Highlight selected joint</span>
+              <span>Keep the selected joint visible, even with markers hidden.</span>
+            </div>
+            <button type="button" class="btn settings-toggle-btn" class:is-active={highlightSelectedJoint} aria-pressed={highlightSelectedJoint} on:click={toggleSelectedJointHighlight}>{highlightSelectedJoint ? 'On' : 'Off'}</button>
           </div>
           <div class="settings-row">
             <div class="settings-label">
@@ -10779,12 +11317,19 @@ function clampToDragLengths(person, jointKey, target){
           {#each (showMobileShortcutList ? mobileShortcuts : desktopShortcuts) as shortcut}
             <div class="shortcut-row"><span class="keys">{shortcut.keys}</span><span class="desc">{shortcut.desc}</span></div>
           {/each}
+          <button
+            type="button"
+            class="btn shortcut-overlay-menu-btn"
+            class:is-active={showShortcutOverlay}
+            on:click={toggleShortcutOverlay}>
+            {showShortcutOverlay ? 'Hide editor shortcut text' : 'Show editor shortcut text'}
+          </button>
         </div>
         {/if}
     </div>
     {/if}
   </div>
-  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu || showSequenceMenu || showMemoryMenu} class:toolbar-compact={compactToolbar} class:toolbar-crosshair-active={mobileCrosshair.visible} bind:this={toolbarEl}>
+  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu || showSequenceMenu || showMemoryMenu} class:toolbar-compact={compactToolbar} class:toolbar-has-editor={editingPlaybackIdx >= 0} class:toolbar-crosshair-active={mobileCrosshair.visible} bind:this={toolbarEl}>
       {#if mobileCrosshair.visible}
         <div
           class="mobile-crosshair mobile-crosshair--toolbar"
@@ -10827,7 +11372,29 @@ function clampToDragLengths(person, jointKey, target){
           {/if}
         </svg>
       </button>
+      <div class="person-pose-tools">
+        <button class="btn" style={poseButtonStyle('A',colorblindMode)} on:click={(event)=>openPersonPose('A',event)} disabled={playing}>Pose A</button>
+        <button class="btn" style={poseButtonStyle('B',colorblindMode)} on:click={(event)=>openPersonPose('B',event)} disabled={playing}>Pose B</button>
+        {#if gripNotice}<span role="status">{gripNotice}</span>{/if}
+        {#if pinsAtLimit}<span role="status">Pin reach limit</span>{/if}
+      </div>
       <div class="toolbar-layout expanded-grid" class:is-compact={compactToolbar}>
+        {#if editingPlaybackIdx >= 0}
+          <div class="playback-edit-bar collapse-hide">
+            <span class="playback-edit-bar__label">Editing technique</span>
+            <input
+              class="input edit-flex-input playback-edit-bar__name"
+              type="text"
+              bind:value={editingPlaybackName}
+              placeholder="Technique name"
+              title={editingPlaybackName}
+              on:wheel={(e) => { e.currentTarget.scrollLeft += e.deltaY || e.deltaX; }}
+            />
+            <button class="btn playback-edit-bar__add" on:click={addPlaybackEditFrameAfterCurrent}>Add frame</button>
+            <button class="btn btn--primary" on:click={saveEditsToPlayback}>Save edits</button>
+            <button class="btn" on:click={cancelPlaybackEdit}>Cancel</button>
+          </div>
+        {/if}
         <div class="toolbar-row toolbar-row--compact">
           <div class="row-center row-center--compact">
             <div class="controls-row controls-row--expanded controls-row--compact">
@@ -10849,7 +11416,7 @@ function clampToDragLengths(person, jointKey, target){
           </div>
         </div>
         <div class="toolbar-row">
-          <div class="row-left">
+          <div class="row-left edit-visible-presets">
             {#if !hidePresetControls}
               <div class="preset-select-wrap with-actions">
                 <div class="preset-trigger-wrap">
@@ -10934,9 +11501,11 @@ function clampToDragLengths(person, jointKey, target){
               </div>
             {/if}
             <div class="toolbar-actions wrap-tight">
-              <button class="btn btn--toggle" class:is-active={!singleJointMode}
-                on:click={toggleSingleJointMode}
-                title="Toggle movement mode (E)"><span>{singleJointMode ? 'Single' : 'Multiple'}</span></button>
+              <select class="btn" aria-label="Movement mode" title="Movement mode (E cycles modes)" value={pivotJointMode ? 'pivot' : singleJointMode ? 'single' : 'natural'} on:change={(event) => { singleJointMode = event.currentTarget.value !== 'natural'; pivotJointMode = event.currentTarget.value === 'pivot'; }}>
+                <option value="natural">Natural movement</option>
+                <option value="single">Single joint</option>
+                <option value="pivot">Pivot</option>
+              </select>
             </div>
           </div>
           <div class="row-center">
@@ -10955,7 +11524,7 @@ function clampToDragLengths(person, jointKey, target){
               <button class="icon-btn" on:click={nextFrame} title="Next frame (Right arrow)">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="icon-btn mobile-only-control mobile-undo-control" on:click={undoLastFigureMove} title="Undo (mobile)" aria-label="Undo">
+              <button class="icon-btn mobile-only-control mobile-undo-control edit-visible-undo" on:click={undoLastFigureMove} title="Undo (Ctrl + Z)" aria-label="Undo">
                 <span class="mobile-undo-symbol" aria-hidden="true">↩</span>
               </button>
               <button class="icon-btn" on:click={clearPlaybackQueue} title="Clear sequence queue">
@@ -10972,7 +11541,7 @@ function clampToDragLengths(person, jointKey, target){
                 aria-haspopup="true"
                 aria-expanded={showSequenceMenu}
                 on:click={toggleSequenceMenu}>
-                Sequence
+                Technique
                 <svg class="icon" viewBox="0 0 24 24" style={`transform: rotate(${showSequenceMenu ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               {#if showSequenceMenu && !showSavedPlaybacksMenu}
@@ -10981,9 +11550,9 @@ function clampToDragLengths(person, jointKey, target){
                   style={`--sequence-drag-x:${sequenceWindowOffset.x}px; --sequence-drag-y:${sequenceWindowOffset.y}px;`}
                   use:portalToBody={showMobileShortcutList}
                   bind:this={sequenceMenuEl}>
-                  <div class="sequence-section">
+                  <div class="sequence-section technique-step">
                     <span class="menu-section-title sequence-title-row">
-                      <span>Frame</span>
+                      <span>Technique</span>
                       <span class="sequence-window-tools">
                         <span class="sequence-frame-count">{poses.length ? currentFrame + 1 : 0}/{poses.length}</span>
                         <button
@@ -11011,32 +11580,30 @@ function clampToDragLengths(person, jointKey, target){
                         </button>
                       </span>
                     </span>
-                    <div class="input-with-icon input-row toolbar-field toolbar-field--name playback-input-row playback-comment">
-                      <input class="input" type="text" bind:value={comment} placeholder="Frame note" />
-                      <button class="inline-action save-action" on:click={saveCurrentFrame} title="Save frame">
-                        <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                    <div class="technique-frame-action">
+                      <input class="input" type="text" bind:value={comment} placeholder="Optional frame note" />
+                      <button class="btn btn--primary" on:click={saveCurrentFrame} title="Save frame (Ctrl + S)">
+                        {frameSaveTarget >= 0 && poses[frameSaveTarget] ? 'Update frame ' + (frameSaveTarget + 1) : 'Add frame'}
                       </button>
+                      {#if frameSaveTarget >= 0 && poses[frameSaveTarget]}<button class="btn" on:click={()=>saveCurrentFrame(true)}>Add as new frame</button>{/if}
                     </div>
+                    <div class="technique-frame-nav"><button class="btn" on:click={prevFrame} disabled={!poses.length} aria-label="Previous frame">&larr; Previous</button><button class="btn" on:click={nextFrame} disabled={!poses.length} aria-label="Next frame">Next &rarr;</button><span class="technique-shortcut"><kbd>Ctrl</kbd><span>+</span><kbd>S</kbd></span></div>
                   </div>
-                  <div class="sequence-section">
-                    <span class="menu-section-title">Sequence</span>
-                    <span class="sequence-helper">Save each frame first, then save the whole sequence.</span>
-                    <div class="input-with-icon two-actions input-row playback-input-row playback-name-field">
-                      <input class="input toolbar-field toolbar-field--name" type="text" bind:value={newPlaybackName} placeholder="Sequence name" />
-                      <div class="input-actions playback-input-actions">
-                        <button class="inline-action save-action" on:click={saveCurrentPlayback} title="Save sequence" disabled={!poses.length}>
-                          <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 3v4h8" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="10" height="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-                        </button>
-                        <button class="inline-action" title="Saved sequences" bind:this={playbacksToggleEl} on:pointerdown|stopPropagation on:click={openSavedSequencesMenu}>
-                          <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
-                        </button>
-                      </div>
+                  <div class="sequence-section technique-step">
+                    <span class="menu-section-title">Name &amp; save</span>
+                    <div class="technique-save-action">
+                      <input class="input" type="text" bind:value={newPlaybackName} placeholder="Technique name" />
+                      <button class="btn btn--primary" on:click={saveCurrentPlayback} disabled={!poses.length}>Save technique</button>
                     </div>
+                    <button class="technique-library-link" title="Saved techniques" bind:this={playbacksToggleEl} on:pointerdown|stopPropagation on:click={openSavedSequencesMenu}>
+                      <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+                      Browse saved techniques
+                    </button>
                   </div>
                   {#if sequenceDraftActive}
                     <div class="sequence-actions">
                       <button type="button" class="btn sequence-cancel-action" on:click={cancelSequenceDraft}>
-                        Cancel sequence
+                        Cancel technique
                       </button>
                     </div>
                   {/if}
@@ -11045,11 +11612,13 @@ function clampToDragLengths(person, jointKey, target){
                   {#key playbacksMenuVersion}
                   <div
                     class="menu-popup sequence-file-menu sequence-file-menu--standalone"
+                    use:portalToBody={showMobileShortcutList}
                     role="menu"
-                    aria-label="Playback folders"
+                    aria-label="Saved techniques"
                     tabindex="-1"
                     bind:this={playbacksMenuEl}
                     >
+                    <button type="button" class="mobile-sheet-close" aria-label="Close saved techniques" on:click={closeSequenceWindow}>Close</button>
                   {#if playbackFolderView === null}
                     <div class="menu-item back-breadcrumb">
                       <button
@@ -11058,7 +11627,7 @@ function clampToDragLengths(person, jointKey, target){
                         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                         <span>Back</span>
                       </button>
-                      <span class="name" style="flex:none; color:#555;">Saved sequences</span>
+                      <span class="name" style="flex:none;">Saved techniques</span>
                       <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => {
                         const val = prompt('New folder name'); if (val && val.trim()) { addPlaybackFolder(val); playbackGroups = groupPlaybacks(savedPlaybacks); persistPlaybackFolders(); }
                       }} title="Add folder">
@@ -11071,12 +11640,13 @@ function clampToDragLengths(person, jointKey, target){
                           <button
                             type="button"
                             class="menu-row-btn"
+                            class:is-drop-target={playbackFolderDropTarget === folderKey(folderName)}
                             style="flex:1; text-align:left; display:flex; align-items:center; gap:6px;"
                             on:click={() => playbackFolderView = folderName}
                             on:keydown={(e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); playbackFolderView = folderName; }}}
-                            on:dragover|preventDefault={() => {
-                              if (draggingPlaybackIdx!=null) movePlaybackToFolder(draggingPlaybackIdx, folderName);
-                            }}>
+                            on:dragover|preventDefault={(e) => hoverPlaybackFolderDrop(e, folderName)}
+                            on:dragleave={() => leavePlaybackFolderDrop(folderName)}
+                            on:drop|preventDefault={(e) => dropPlaybackOnFolder(e, folderName)}>
                             <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                             <span class="name">{folderName}</span>
                           </button>
@@ -11090,10 +11660,10 @@ function clampToDragLengths(person, jointKey, target){
                       {/each}
                       {#if playbacksInFolder('').length}
                         {#each playbacksInFolder('') as pb (pb._idx)}
-                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null}>
+                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={(e)=> startPlaybackDrag(e, pb._idx)} on:dragend={finishPlaybackDrag}>
                             <button type="button" class="menu-row-btn" on:click={() => loadSavedPlaybackForReview(pb._idx)}>
                               <span class="saved-sequence-name">
-                                <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
+                                <span class="name" title={pb?.name || `Technique ${pb?._idx ?? ''}`}>{pb?.name || `Technique ${pb?._idx ?? ''}`} <span class="saved-sequence-count">({pb?.frames?.length||0})</span></span>
                                 <span class={`memory-status-combo memory-status-combo--${memoryStatusFor(pb).tone}`} title={memoryStateChangeText(pb)}>
                                   {#if strongProgressLabel(pb)}<span class="memory-status-combo__progress">{strongProgressLabel(pb)}</span>{/if}
                                   <span class="memory-status-combo__label">{memoryStatusFor(pb).label}</span>
@@ -11102,7 +11672,7 @@ function clampToDragLengths(person, jointKey, target){
                               </span>
                             </button>
                             <div style="display:flex; gap:4px; align-items:center;">
-                              <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => startPlaybackEdit(pb._idx)} title="Edit playback">
+                              <button type="button" class="inline-action small edit-action" on:pointerdown|stopPropagation on:click|stopPropagation={() => startPlaybackEdit(pb._idx)} title="Edit technique">
                                 <svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.5 3.5l4 4-10 10H6.5v-4.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                               </button>
                               <button type="button" class="inline-action small danger-action" on:click|stopPropagation={() => deleteSavedPlayback(pb._idx)} title="Delete">
@@ -11125,7 +11695,7 @@ function clampToDragLengths(person, jointKey, target){
                           if (draggingPlaybackIdx != null) {
                             movePlaybackToFolder(draggingPlaybackIdx, '');
                             playbackFolderView = null;
-                            draggingPlaybackIdx = null;
+                            finishPlaybackDrag();
                           }
                         }}>
                         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -11165,9 +11735,12 @@ function clampToDragLengths(person, jointKey, target){
                           <button
                             type="button"
                             class="menu-row-btn"
+                            class:is-drop-target={playbackFolderDropTarget === folderKey(sub)}
                             style="flex:1; text-align:left; display:flex; align-items:center; gap:6px;"
                             on:click={() => playbackFolderView = sub}
-                            on:dragover|preventDefault={() => { if (draggingPlaybackIdx!=null) movePlaybackToFolder(draggingPlaybackIdx, sub); }}>
+                            on:dragover|preventDefault={(e) => hoverPlaybackFolderDrop(e, sub)}
+                            on:dragleave={() => leavePlaybackFolderDrop(sub)}
+                            on:drop|preventDefault={(e) => dropPlaybackOnFolder(e, sub)}>
                             <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                             <span class="name">{sub}</span>
                           </button>
@@ -11182,10 +11755,10 @@ function clampToDragLengths(person, jointKey, target){
                     {/if}
                     {#if playbacksInFolder(playbackFolderView).length}
                       {#each playbacksInFolder(playbackFolderView) as pb (pb._idx)}
-                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={()=> draggingPlaybackIdx = pb._idx} on:dragend={()=> draggingPlaybackIdx = null}>
+                        <div class="menu-item" role="listitem" draggable="true" on:dragstart={(e)=> startPlaybackDrag(e, pb._idx)} on:dragend={finishPlaybackDrag}>
                           <button type="button" class="menu-row-btn" on:click={() => loadSavedPlaybackForReview(pb._idx)}>
                             <span class="saved-sequence-name">
-                              <span class="name">{pb?.name || `Playback ${pb?._idx ?? ''}`} ({pb?.frames?.length||0})</span>
+                              <span class="name" title={pb?.name || `Technique ${pb?._idx ?? ''}`}>{pb?.name || `Technique ${pb?._idx ?? ''}`} <span class="saved-sequence-count">({pb?.frames?.length||0})</span></span>
                               <span class={`memory-status-combo memory-status-combo--${memoryStatusFor(pb).tone}`} title={memoryStateChangeText(pb)}>
                                 {#if strongProgressLabel(pb)}<span class="memory-status-combo__progress">{strongProgressLabel(pb)}</span>{/if}
                                 <span class="memory-status-combo__label">{memoryStatusFor(pb).label}</span>
@@ -11194,7 +11767,7 @@ function clampToDragLengths(person, jointKey, target){
                             </span>
                           </button>
                           <div style="display:flex; gap:4px; align-items:center;">
-                            <button type="button" class="inline-action small edit-action" on:click|stopPropagation={() => startPlaybackEdit(pb._idx)} title="Edit playback">
+                            <button type="button" class="inline-action small edit-action" on:pointerdown|stopPropagation on:click|stopPropagation={() => startPlaybackEdit(pb._idx)} title="Edit technique">
                               <svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.5 3.5l4 4-10 10H6.5v-4.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
                             </button>
                             <button type="button" class="inline-action small danger-action" on:click|stopPropagation={() => deleteSavedPlayback(pb._idx)} title="Delete">
@@ -11226,7 +11799,7 @@ function clampToDragLengths(person, jointKey, target){
                   <svg class="icon" viewBox="0 0 24 24" style={`transform: rotate(${showMemoryMenu ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
                 {#if showMemoryMenu}
-                  <div class="menu-popup sequence-menu memory-menu" bind:this={memoryMenuEl}>
+                  <div class="menu-popup sequence-menu memory-menu" use:portalToBody={showMobileShortcutList} bind:this={memoryMenuEl}>
                     <div class="memory-panel" aria-live="polite">
                       {#if saveConfirmation}
                         <div class="memory-confirmation">{saveConfirmation}</div>
@@ -11234,7 +11807,7 @@ function clampToDragLengths(person, jointKey, target){
                       <div class="memory-panel-head">
                         <div class="memory-titleblock">
                           <span class="menu-section-title">Your memory</span>
-                          <span class="memory-headline">{reviewTodayPlaybacks.length ? `${reviewTodayPlaybacks.length} due today` : "All caught up"}</span>
+                          <span class="memory-headline">{reviewTodayPlaybacks.length ? `${reviewTodayPlaybacks.length} due today` : savedPlaybacks.length ? "All caught up" : "Start now"}</span>
                         </div>
                         <button type="button" class="memory-close-btn" on:click={() => showMemoryMenu = false} aria-label="Close memory">
                           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -11322,6 +11895,10 @@ function clampToDragLengths(person, jointKey, target){
                       </div>
                       <div class="memory-subsection">
                         <div class="memory-subtitle"><span>Recently saved</span><span class="memory-subtitle-count">{recentlySavedTechniques.length}</span></div>
+                        <div class={`memory-creation-feedback memory-creation-feedback--${creationFeedback.tone}`}>
+                          <span class="memory-creation-dot" aria-hidden="true"></span>
+                          <strong>{creationFeedback.label}</strong>
+                        </div>
                         {#if recentlySavedTechniques.length}
                           {#each recentlySavedTechniques as pb (pb._idx)}
                             <div class="memory-recent-row">
@@ -11335,7 +11912,7 @@ function clampToDragLengths(person, jointKey, target){
                       </div>
                       <div class="memory-subsection training-reminder">
                         <div class="memory-subtitle"><span>Training reminder</span></div>
-                        <span class="training-reminder-copy">Choose your training days and start time. Fightlab shows a browser notification 30 minutes before training.</span>
+                        <span class="training-reminder-copy">Get a browser notification 30 minutes before training. Keep this page open; reminders are saved on this device. Email reminders are not available yet.</span>
                         <div class="training-practice-prompt">
                           10 min x 6 days = 1 hour of focused review each week before training.
                         </div>
@@ -11349,7 +11926,7 @@ function clampToDragLengths(person, jointKey, target){
                                   class:is-active={trainingReminderDays.includes(day.value)}
                                   aria-pressed={trainingReminderDays.includes(day.value)}
                                   aria-label={day.name}
-                                  title={day.name}
+                                  title={trainingReminderConfigs[day.value] ? `${day.name}: training at ${trainingReminderConfigs[day.value].time}; reminder at ${trainingReminderTimeLabel(trainingReminderConfigs[day.value].time)}` : day.name}
                                   on:click={() => toggleTrainingReminderDay(day.value)}
                                 >
                                   <span>{day.label}</span>
@@ -11384,17 +11961,6 @@ function clampToDragLengths(person, jointKey, target){
                               aria-label="Training time"
                             />
                           </label>
-                          <div class="training-reminder-field training-email-field">
-                            <span>Email recipient</span>
-                            <input
-                              class="input training-email-input"
-                              type="email"
-                              bind:value={trainingReminderEmail}
-                              on:change={updateTrainingReminder}
-                              placeholder={loginEmail || "you@example.com"}
-                              aria-label="Reminder email"
-                            />
-                          </div>
                           <button type="button" class="btn btn--primary memory-reminder-btn" on:click={enableTrainingReminder}>
                             Save
                           </button>
@@ -11459,48 +12025,6 @@ function clampToDragLengths(person, jointKey, target){
   </div>
 </div>
       </div>
-    {#if editingPlaybackIdx >= 0}
-      <div class="editing-bar collapse-hide">
-        <span class="meta-label" style="font-size:12px; color:#444;">Editing sequence</span>
-        <input
-          class="input edit-flex-input"
-          type="text"
-          bind:value={editingPlaybackName}
-          placeholder="Sequence name"
-          style={`width:${flexibleInputWidth(editingPlaybackName || 'Sequence name', 16, 34)};`}
-        />
-        <label class="frame-edit-field">
-          <span class="meta-label">Frame</span>
-          <input
-            class="input frame-edit-input"
-            type="number"
-            min="1"
-            max={Math.max(poses.length, 1)}
-            value={poses.length ? currentFrame + 1 : 0}
-            disabled={!poses.length}
-            aria-label="Frame to edit"
-            on:change={(e) => selectPlaybackEditFrame(e.currentTarget.value)}
-            on:keydown={(e) => {
-              if (e.key === 'Enter') {
-                e.currentTarget.blur();
-                selectPlaybackEditFrame(e.currentTarget.value);
-              }
-            }}
-          />
-          <span class="meta-label">/ {poses.length}</span>
-        </label>
-        <input
-          class="input"
-          type="text"
-          value={poses?.[currentFrame]?.comment || ''}
-          placeholder="Frame text"
-          style={`width:${flexibleInputWidth(poses?.[currentFrame]?.comment || 'Frame text', 14, 42)};`}
-          on:input={(e) => updatePlaybackEditFrameText(e.currentTarget.value)}
-        />
-        <button class="btn btn--primary" on:click={saveEditsToPlayback}>Save edits</button>
-        <button class="btn" on:click={cancelPlaybackEdit}>Cancel</button>
-      </div>
-    {/if}
     {#if editingPresetIdx >= 0}
     <div class="editing-bar collapse-hide">
       <span class="meta-label" style="font-size:12px; color:#444;">Editing preset {editingPresetIdx + 1}</span>
@@ -11516,9 +12040,57 @@ function clampToDragLengths(person, jointKey, target){
   <div id="figures"></div>
   <canvas bind:this={canvas} class="figures-canvas"></canvas>
 
+  <div class="shortcut-overlay-anchor" aria-live="polite">
+    {#if showShortcutOverlay}
+      <div class="shortcut-overlay-panel">
+        <div class="shortcut-overlay-head">
+          <span>Shortcuts</span>
+          <button type="button" class="shortcut-overlay-toggle" on:click={() => setShortcutOverlay(false)}>Hide</button>
+        </div>
+        <div class="shortcut-overlay-list">
+          {#each (showMobileShortcutList ? mobileShortcuts : desktopShortcuts) as shortcut}
+            <div class="shortcut-overlay-row">
+              <strong>{shortcut.keys}</strong>
+              <span>{shortcut.desc}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {:else}
+      <button type="button" class="shortcut-overlay-toggle shortcut-overlay-toggle--floating" on:click={() => setShortcutOverlay(true)}>
+        Shortcuts
+      </button>
+    {/if}
+  </div>
+
   {#if commentVisible && !showSavedPlaybacksMenu}
     <div class="comment-box" bind:this={commentEl} role="note" aria-live="polite" style="left: {commentPos.left}px; top: {commentPos.top}px;">
-      {commentText}
+      {#if editingPlaybackIdx >= 0}
+        {#if editingFrameCommentInline}
+          <div class="comment-box__editor">
+            <input
+              class="comment-box__input"
+              type="text"
+              bind:value={inlineFrameCommentDraft}
+              placeholder="Frame comment"
+              aria-label={`Edit comment for frame ${currentFrame + 1}`}
+              on:keydown={(e) => {
+                if (e.key === 'Enter') saveInlineFrameCommentEdit();
+                if (e.key === 'Escape') cancelInlineFrameCommentEdit();
+              }}
+            />
+            <button type="button" on:click={saveInlineFrameCommentEdit} aria-label="Save frame comment">✓</button>
+            <button type="button" on:click={cancelInlineFrameCommentEdit} aria-label="Cancel comment editing">×</button>
+          </div>
+        {:else}
+          <span class:comment-box__placeholder={!commentText}>{commentText || 'No frame comment'}</span>
+          <button type="button" class="comment-box__edit" on:click={startInlineFrameCommentEdit} aria-label="Edit frame comment" title="Edit frame comment">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.5 3.5l4 4-10 10H6.5v-4.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </button>
+        {/if}
+      {:else}
+        {commentText}
+      {/if}
     </div>
   {/if}
 
@@ -11548,6 +12120,20 @@ function clampToDragLengths(person, jointKey, target){
 </div>
 
 <style>
+  .person-pose-tools { display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:6px;padding:5px;font:11px system-ui; }
+  .person-pose-tools .btn { min-width:75px; }
+  .figure-tools { position:fixed;top:14px;right:16px;z-index:32;max-width:min(380px,calc(100vw - 100px));font:12px system-ui;color:#334155; }
+  .figure-tools-row { display:flex;align-items:center;justify-content:flex-end;gap:6px; }
+  .figure-tools select { padding:7px;border:1px solid #cbd5e1;border-radius:8px;background:#ffffffed;color:inherit;font:inherit; }
+  .figure-tools .btn { min-height:32px;padding:6px 10px;font-size:12px; }
+  .grip-state,.figure-tool-notice { margin-top:7px;text-align:right;line-height:1.4;text-shadow:0 1px 3px #fff; }
+  .grip-state span { color:#10b981; }.grip-state.at-limit span { color:#d97706; }
+  .figure-tool-notice { max-width:330px; }
+  .pose-grip-notice { position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:142;padding:8px 14px;border-radius:10px;background:#fff;color:#334155;font:12px system-ui;text-align:center;max-width:90vw; }
+  :global(body.dark-mode) .figure-tools { color:#e2e8f0; }
+  :global(body.dark-mode) .figure-tools select { background:#263447;color:#e2e8f0;border-color:#475569; }
+  :global(body.dark-mode) .grip-state,:global(body.dark-mode) .figure-tool-notice { text-shadow:0 1px 3px #111827; }
+  @media(max-width:600px) { .figure-tools { top:12px;right:8px; }.figure-tools-row { gap:4px; }.figure-tools .btn { padding:6px;font-size:11px; }.figure-tools select { max-width:84px;font-size:11px; } }
   :global(html) {
     height: 100%;
     background: radial-gradient(circle at 50% 30%, #e0e7ff 0%, #f8fafc 60%, #ffffff 100%);
@@ -11613,6 +12199,34 @@ function clampToDragLengths(person, jointKey, target){
   /* Responsive toolbar */
   .preset-ui { backdrop-filter: saturate(180%) blur(10px); box-sizing: border-box; }
   .preset-ui.bottom { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); right: auto; z-index: 10; background: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(234,242,255,0.88)); border:1px solid rgba(212,228,255,0.9); border-radius:14px; padding:8px 48px 8px 14px; box-shadow:0 10px 28px rgba(15, 23, 42, 0.12); display:flex; gap:6px; align-items:flex-start; flex-wrap:wrap; width: fit-content; max-width: calc(100vw - 80px); justify-content: center; }
+  .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+  .frame-strip { flex:1 0 100%; display:flex; flex-wrap:wrap; align-items:center; gap:7px 10px; min-width:0; padding:0 34px 7px 2px; border-bottom:1px solid rgba(59,130,246,.13); box-sizing:border-box; }
+  .frame-strip__label { flex:0 0 auto; color:#64748b; font:700 10px/1.2 system-ui, sans-serif; letter-spacing:.08em; text-transform:uppercase; }
+  .frame-strip__track { display:flex; flex:1 1 180px; align-items:center; gap:5px; min-width:0; overflow-x:auto; scrollbar-width:thin; padding:2px; }
+  .frame-chip.is-held { transform:scale(.96); }
+  .frame-chip.is-dragging { border-color:#2563eb; background:#dbeafe; box-shadow:0 4px 12px rgba(37,99,235,.25); cursor:grabbing; }
+  .frame-strip__edit { flex:1 0 100%; display:grid; grid-template-columns:18px minmax(140px, 1fr) auto 30px 30px; align-items:center; gap:6px; min-width:0; padding-top:7px; border-top:1px solid rgba(59,130,246,.12); }
+  .frame-strip__edit-icon { width:16px; height:16px; color:#2563eb; }
+  .frame-strip__name-editor { display:flex; align-items:center; gap:5px; min-width:0; height:30px; padding:0 5px 0 9px; border:1px solid #cbd5e1; border-radius:8px; background:#fff; box-sizing:border-box; }
+  .frame-strip__name { width:100%; min-width:0; height:28px; border:0; padding:0; box-shadow:none; box-sizing:border-box; }
+  .frame-strip__name-text { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#0f172a; font:700 11px/1.2 system-ui, sans-serif; }
+  .frame-strip__name-pencil { flex:0 0 auto; display:grid; place-items:center; width:24px; height:24px; padding:0; border:0; border-radius:6px; background:transparent; color:#64748b; cursor:pointer; }
+  .frame-strip__name-pencil:hover { background:#eff6ff; color:#2563eb; }
+  .frame-strip__name-pencil .icon { width:14px; height:14px; }
+  .frame-strip__movement { min-height:30px; white-space:nowrap; }
+  .frame-strip__edit-action { display:grid; place-items:center; width:30px; height:30px; padding:0; border:1px solid #cbd5e1; border-radius:8px; background:#fff; color:#64748b; cursor:pointer; }
+  .frame-strip__edit-action:hover { border-color:#60a5fa; color:#1d4ed8; background:#eff6ff; }
+  .frame-strip__edit-action--save { border-color:#2563eb; background:#2563eb; color:#fff; }
+  .frame-strip__edit-action--save:hover { border-color:#1d4ed8; background:#1d4ed8; color:#fff; }
+  .frame-strip__edit-action .icon { width:15px; height:15px; }
+  .preset-ui.bottom.toolbar-editing .frame-strip { padding:8px; border:1px solid rgba(59,130,246,.34); border-radius:11px; background:rgba(239,246,255,.82); box-shadow:inset 3px 0 0 #3b82f6; }
+  .preset-ui.bottom.toolbar-editing .frame-strip__label { color:#1d4ed8; }
+  .frame-chip { position:relative; flex:0 0 auto; display:grid; place-items:center; width:34px; height:28px; padding:0; border:1px solid #d0d7de; border-radius:8px; background:rgba(255,255,255,.78); color:#475569; cursor:pointer; font:700 10px/1 system-ui, sans-serif; }
+  .frame-chip:not(:last-child)::after { content:''; position:absolute; left:100%; top:50%; width:6px; height:1px; background:#cbd5e1; }
+  .frame-chip:hover { border-color:#60a5fa; color:#0b5bd3; }
+  .frame-chip.is-active { border-color:#2563eb; background:#2563eb; color:#fff; box-shadow:0 0 0 2px rgba(37,99,235,.14); }
+  .frame-chip.has-note::before { content:''; position:absolute; right:3px; top:3px; width:4px; height:4px; border-radius:50%; background:#f59e0b; }
+  .frame-chip--add { border-style:dashed; color:#0b5bd3; font-size:17px; }
   .preset-ui.bottom.toolbar-compact { width: auto; min-width: 0; padding: 12px 14px 10px; }
   .preset-ui.bottom.toolbar-crosshair-active { padding: 10px 14px; align-items: center; justify-content: center; overflow: visible; }
   .preset-ui.bottom.toolbar-crosshair-active .toolbar-collapse-toggle,
@@ -11720,7 +12334,22 @@ function clampToDragLengths(person, jointKey, target){
     padding:8px;
   }
   .sequence-section { display:flex; flex-direction:column; gap:6px; }
-  .sequence-helper { font:11px/1.25 system-ui, sans-serif; color:#64748b; padding:0 8px; max-width:260px; }
+  .sequence-helper { font:11px/1.35 system-ui, sans-serif; color:#64748b; padding:0 8px; max-width:290px; }
+  .technique-step { gap:10px; min-width:0; padding:10px 4px; border:0; border-radius:0; background:transparent; box-sizing:border-box; }
+  .technique-step .menu-section-title { text-transform:none; font-weight:600; }
+  .technique-step + .technique-step { border-top:1px solid #dbe3ed; }
+  .technique-frame-nav { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .technique-frame-nav .btn { font-size:11px; padding:5px 7px; }
+  .sequence-title-row > span:first-child { white-space:nowrap; }
+  .technique-step-number { display:inline-grid; place-items:center; width:21px; height:21px; margin-right:6px; border-radius:7px; background:#dbeafe; color:#1d4ed8; font:800 10px/1 system-ui, sans-serif; }
+  .technique-frame-action, .technique-save-action { display:grid; grid-template-columns:minmax(0, 1fr); gap:6px; align-items:center; min-width:0; }
+  .technique-frame-action .input, .technique-save-action .input { width:100%; min-width:0; box-sizing:border-box; }
+  .technique-frame-action .btn, .technique-save-action .btn { width:100%; min-height:32px; white-space:nowrap; justify-content:center; font-weight:800; }
+  .technique-shortcut { display:flex; align-items:center; gap:4px; color:#64748b; font:10px/1.3 system-ui, sans-serif; }
+  .technique-shortcut kbd { padding:2px 5px; border:1px solid #cbd5e1; border-bottom-width:2px; border-radius:5px; background:#fff; color:#475569; font:700 9px/1 system-ui, sans-serif; }
+  .technique-library-link { display:inline-flex; align-items:center; align-self:flex-start; gap:6px; padding:2px 0; border:0; background:transparent; color:#2563eb; cursor:pointer; font:700 11px/1.3 system-ui, sans-serif; }
+  .technique-library-link:hover { text-decoration:underline; }
+  .technique-library-link .icon { width:14px; height:14px; }
   .memory-copy { padding:0; display:block; max-width:190px; }
   .memory-panel {
     display:flex;
@@ -12162,6 +12791,18 @@ function clampToDragLengths(person, jointKey, target){
   }
   .memory-recent-row:first-of-type { border-top:0; padding-top:0; }
   .memory-recent-row span:last-child { color:#64748b; white-space:nowrap; }
+  .memory-creation-feedback { display:flex; align-items:center; gap:7px; padding:8px 10px; border:1px solid #bfdbfe; border-radius:9px; background:#eff6ff; color:#1e3a8a; }
+  .memory-creation-feedback strong { min-width:0; color:inherit; font:800 11px/1.3 system-ui, sans-serif; }
+  .memory-creation-dot { flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.14); }
+  .memory-creation-feedback--fresh { border-color:#bbf7d0; border-left-color:#22c55e; background:#f0fdf4; }
+  .memory-creation-feedback--fresh strong { color:#166534; }
+  .memory-creation-feedback--fresh .memory-creation-dot { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.14); }
+  .memory-creation-feedback--soon { border-color:#fde68a; border-left-color:#f59e0b; background:#fffbeb; }
+  .memory-creation-feedback--soon strong { color:#92400e; }
+  .memory-creation-feedback--soon .memory-creation-dot { background:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,.14); }
+  .memory-creation-feedback--due { border-color:#fecdd3; border-left-color:#f43f5e; background:#fff1f2; }
+  .memory-creation-feedback--due strong { color:#9f1239; }
+  .memory-creation-feedback--due .memory-creation-dot { background:#f43f5e; box-shadow:0 0 0 3px rgba(244,63,94,.14); }
   .training-reminder {
     padding-top:11px;
     background:linear-gradient(180deg, #ffffff, #f8fafc);
@@ -12182,7 +12823,7 @@ function clampToDragLengths(person, jointKey, target){
   }
   .training-reminder-row {
     display:grid;
-    grid-template-columns:max-content minmax(150px, 1fr) max-content;
+    grid-template-columns:minmax(0, 1fr) max-content;
     gap:8px;
     align-items:end;
   }
@@ -12775,6 +13416,11 @@ function clampToDragLengths(person, jointKey, target){
   .menu-item .inline-action { position: static; right: auto; top: auto; transform: none; }
   .menu-row-btn { flex:1; text-align:left; border:0; background:transparent; padding:4px 6px; cursor:pointer; }
   .menu-row-btn:focus-visible { outline: 2px solid #0b5bd3; border-radius:6px; }
+  .menu-row-btn.is-drop-target {
+    background:#e0f2fe;
+    box-shadow:inset 0 0 0 1px #38bdf8;
+    border-radius:6px;
+  }
   .back-breadcrumb { gap:8px; align-items:center; background:#f7f9fc; border:1px solid #e2e8f0; border-radius:8px; padding:6px; }
   .back-breadcrumb__btn { display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer; font-size:12px; }
   .back-breadcrumb__btn:hover { background:#eef2f7; }
@@ -12793,12 +13439,151 @@ function clampToDragLengths(person, jointKey, target){
   /* menu styles removed (unused) */
   .counter { font:12px/1.2 system-ui, sans-serif; color:#555; margin-left:8px; }
   .editing-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; background:#ffffff; border:3px solid #0f172a; border-radius:12px; box-shadow: 0 16px 34px rgba(15,23,42,0.30); color:#0f172a; opacity: 1; position: relative; z-index: 20; }
+  .playback-edit-bar {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    position:absolute;
+    left:8px;
+    right:auto;
+    bottom:8px;
+    z-index:22;
+    width:min(300px, calc(100vw - 24px));
+    padding:0 10px 0 0;
+    box-sizing:border-box;
+    align-items:center;
+    background:transparent;
+    border:0;
+    border-right:1px solid rgba(59,130,246,.18);
+    border-radius:0;
+    box-shadow:none;
+  }
+  .preset-ui.bottom.toolbar-has-editor { padding-left:322px; }
+  .playback-edit-bar__label { flex:1 0 100%; color:#475569; font:800 10px/1.1 system-ui, sans-serif; letter-spacing:.06em; text-transform:uppercase; }
+  .playback-edit-bar__name {
+    flex:1 1 120px;
+    width:120px;
+    min-width:0;
+    overflow-x:auto;
+    white-space:nowrap;
+    text-overflow:ellipsis;
+  }
+  .playback-edit-bar__name:not(:focus) { text-overflow:ellipsis; }
+  .playback-edit-bar .btn { flex:0 0 auto; }
+  .playback-edit-bar__add { color:#1d4ed8; border-color:#93c5fd; background:#eff6ff; }
+  :global(body.dark-mode) .playback-edit-bar { background:transparent; border-color:#334155; }
   .frame-edit-field { display:inline-flex; align-items:center; gap:5px; }
   .frame-edit-input { width:68px; text-align:center; }
   .shortcut-list { display:grid; grid-template-columns:1fr; gap:6px; margin:6px 0 10px 0; padding:10px; border:1px solid #eee; border-radius:10px; background:#fafafa; max-height: 390px; overflow-y: auto; overflow-x: hidden; }
   .shortcut-row { display:grid; grid-template-columns:minmax(106px, 42%) minmax(0, 1fr); align-items:center; gap:8px; padding:7px 8px; border-radius:8px; background:rgba(255,255,255,0.72); font:12px/1.3 system-ui, sans-serif; color:#333; }
   .shortcut-row .keys { font-weight:800; color:#0f172a; white-space:normal; width: 100%; overflow-wrap:anywhere; }
   .shortcut-row .desc { color:#444; }
+  .shortcut-overlay-menu-btn {
+    justify-content:center;
+    width:100%;
+    margin-top:4px;
+    border-color:#c7d2fe;
+    background:#eef2ff;
+    color:#1e3a8a;
+    font-weight:800;
+  }
+
+  .saved-sequence-name { overflow:hidden; }
+  .saved-sequence-name .name { display:block; max-width:100%; }
+  .saved-sequence-count { color:#64748b; font-size:10px; }
+  :global(body.dark-mode) .technique-step { border-color:#334155; background:rgba(15,23,42,.72); }
+  :global(body.dark-mode) .technique-shortcut, :global(body.dark-mode) .sequence-helper { color:#94a3b8; }
+  :global(body.dark-mode) .technique-shortcut kbd { border-color:#475569; background:#111827; color:#cbd5e1; }
+  :global(body.dark-mode) .memory-creation-feedback { background:#172554; border-color:#1d4ed8; color:#dbeafe; }
+  :global(body.dark-mode) .memory-creation-feedback strong { color:inherit; }
+  .shortcut-overlay-menu-btn.is-active {
+    background:#dbeafe;
+    border-color:#60a5fa;
+    color:#1d4ed8;
+  }
+  .shortcut-overlay-anchor {
+    position:fixed;
+    top:max(12px, env(safe-area-inset-top));
+    left:calc(max(12px, env(safe-area-inset-left)) + var(--mobile-toolbar-left-inset, 0px));
+    z-index:8;
+    pointer-events:none;
+    max-width:min(360px, calc(100vw - 24px - var(--mobile-toolbar-left-inset, 0px)));
+  }
+  .shortcut-overlay-panel {
+    pointer-events:auto;
+    width:min(340px, calc(100vw - 24px - var(--mobile-toolbar-left-inset, 0px)));
+    display:flex;
+    flex-direction:column;
+    overflow:visible;
+    border:0;
+    border-radius:0;
+    background:transparent;
+    color:#0f172a;
+    box-shadow:none;
+    opacity:0.68;
+  }
+  .shortcut-overlay-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding:0 0 5px 0;
+    border-bottom:0;
+    font:800 11px/1.2 system-ui, sans-serif;
+    text-transform:uppercase;
+    letter-spacing:0.02em;
+  }
+  .shortcut-overlay-list {
+    display:grid;
+    gap:3px;
+    padding:0;
+    overflow:visible;
+  }
+  .shortcut-overlay-row {
+    display:grid;
+    grid-template-columns:minmax(82px, 34%) minmax(0, 1fr);
+    gap:7px;
+    align-items:start;
+    padding:0;
+    border-radius:0;
+    background:transparent;
+    font:11px/1.22 system-ui, sans-serif;
+    text-shadow:0 1px 2px rgba(255,255,255,0.72);
+  }
+  .shortcut-overlay-row strong {
+    color:#0f172a;
+    overflow-wrap:anywhere;
+    font-weight:800;
+  }
+  .shortcut-overlay-row span {
+    min-width:0;
+    color:#475569;
+  }
+  .shortcut-overlay-toggle {
+    pointer-events:auto;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-height:28px;
+    padding:5px 9px;
+    border:1px solid rgba(148,163,184,0.55);
+    border-radius:8px;
+    background:rgba(248,250,252,0.92);
+    color:#0f172a;
+    box-shadow:0 6px 16px rgba(15,23,42,0.12);
+    font:800 12px/1.1 system-ui, sans-serif;
+    cursor:pointer;
+  }
+  .shortcut-overlay-toggle:hover,
+  .shortcut-overlay-toggle:focus-visible {
+    background:#eef2ff;
+    border-color:#93c5fd;
+    outline:none;
+  }
+  .shortcut-overlay-toggle--floating {
+    backdrop-filter:saturate(150%) blur(6px);
+    -webkit-backdrop-filter:saturate(150%) blur(6px);
+  }
   .danger-action { border:1px solid transparent; border-radius:6px; transition: color .15s; }
   .danger-action:hover { color:#dc2626; background:transparent; }
   .edit-action { border:1px solid transparent; border-radius:6px; }
@@ -12807,7 +13592,6 @@ function clampToDragLengths(person, jointKey, target){
   .save-action:hover { background:#e5f0ff; border-color:#3b82f6; color:#0b5bd3; }
   .btn--primary:hover { background:#dbe8ff; border-color:#2f6fe0; }
   .mobile-only-control { display: none; }
-  .mobile-focus-btn { display:none; }
   .mobile-floating-tools { display:none; }
   .mobile-crosshair { display:none; }
   .mobile-undo-control { color:#1f2937; background: transparent; border-color: #cbd5e1; }
@@ -12905,8 +13689,31 @@ function clampToDragLengths(person, jointKey, target){
   :global(body.dark-mode) .menu-item .name,
   :global(body.dark-mode) .menu-section-title { color: #e5e7eb; }
   :global(body.dark-mode) .menu-item:hover { background: rgba(255,255,255,0.04); }
+  :global(body.dark-mode) .back-breadcrumb,
+  :global(body.dark-mode) .back-breadcrumb:hover {
+    background:#111827;
+    border-color:#334155;
+  }
+  :global(body.dark-mode) .back-breadcrumb__btn {
+    background:#0f172a;
+    border-color:#475569;
+    color:#e5e7eb;
+  }
+  :global(body.dark-mode) .back-breadcrumb__btn:hover,
+  :global(body.dark-mode) .back-breadcrumb__btn:focus-visible {
+    background:#1e293b;
+    border-color:#93c5fd;
+  }
+  :global(body.dark-mode) .back-breadcrumb__path {
+    background:#1e293b;
+    color:#cbd5e1;
+  }
   :global(body.dark-mode) .menu-row-btn { color:#e5e7eb; }
   :global(body.dark-mode) .menu-row-btn:hover { background: rgba(255,255,255,0.04); }
+  :global(body.dark-mode) .menu-row-btn.is-drop-target {
+    background:rgba(14,165,233,0.18);
+    box-shadow:inset 0 0 0 1px rgba(56,189,248,0.72);
+  }
   :global(body.dark-mode) .preset-inline-action { color:#e5e7eb; }
   :global(body.dark-mode) .preset-inline-action:hover { color:#c7d2fe; }
   :global(body.dark-mode) .panel-block {
@@ -12943,12 +13750,6 @@ function clampToDragLengths(person, jointKey, target){
     border-color:#60a5fa;
     color:#bfdbfe;
   }
-  :global(body.dark-mode) .mobile-focus-btn {
-    background:rgba(15,23,42,0.88);
-    border-color:rgba(71,85,105,0.72);
-    color:#e5e7eb;
-    box-shadow:0 8px 18px rgba(0,0,0,0.35);
-  }
   :global(body.dark-mode) .shortcut-row {
     background:rgba(15,23,42,0.72);
   }
@@ -12976,6 +13777,56 @@ function clampToDragLengths(person, jointKey, target){
   :global(body.dark-mode) .shortcut-row { color:#e5e7eb; }
   :global(body.dark-mode) .shortcut-row .keys { color:#cbd5f5; }
   :global(body.dark-mode) .shortcut-row .desc { color:#e5e7eb; }
+  :global(body.dark-mode) .shortcut-overlay-menu-btn {
+    background:#172554;
+    border-color:#60a5fa;
+    color:#bfdbfe;
+  }
+  :global(body.dark-mode) .frame-strip { border-bottom-color:rgba(148,163,184,.2); }
+  :global(body.dark-mode) .frame-strip__label { color:#94a3b8; }
+  :global(body.dark-mode) .frame-chip { background:#111827; border-color:#334155; color:#cbd5e1; }
+  :global(body.dark-mode) .frame-chip.is-active { background:#2563eb; border-color:#60a5fa; color:#fff; }
+  :global(body.dark-mode) .frame-strip__edit { border-top-color:rgba(148,163,184,.18); }
+  :global(body.dark-mode) .frame-strip__edit-action { background:#111827; border-color:#475569; color:#cbd5e1; }
+  :global(body.dark-mode) .frame-strip__edit-action--save { background:#2563eb; border-color:#60a5fa; color:#fff; }
+  :global(body.dark-mode) .frame-strip__name-editor { background:#111827; border-color:#475569; }
+  :global(body.dark-mode) .frame-strip__name-text { color:#e5e7eb; }
+  :global(body.dark-mode) .frame-strip__name-pencil { color:#cbd5e1; }
+  :global(body.dark-mode) .comment-box { background:rgba(15,23,42,.96); border-color:#334155; color:#e5e7eb; }
+  :global(body.dark-mode) .comment-box__input { background:#111827; border-color:#60a5fa; color:#e5e7eb; }
+  :global(body.dark-mode) .preset-ui.bottom.toolbar-editing .frame-strip { border-color:rgba(96,165,250,.42); background:rgba(23,37,84,.72); box-shadow:inset 3px 0 0 #60a5fa; }
+  :global(body.dark-mode) .preset-ui.bottom.toolbar-editing .frame-strip__label { color:#93c5fd; }
+  :global(body.dark-mode) .shortcut-overlay-panel {
+    background:transparent;
+    border-color:transparent;
+    color:#e5e7eb;
+    box-shadow:none;
+    opacity:0.72;
+  }
+  :global(body.dark-mode) .shortcut-overlay-head {
+    border-bottom-color:transparent;
+  }
+  :global(body.dark-mode) .shortcut-overlay-row {
+    background:transparent;
+    text-shadow:0 1px 2px rgba(0,0,0,0.72);
+  }
+  :global(body.dark-mode) .shortcut-overlay-row strong {
+    color:#cbd5f5;
+  }
+  :global(body.dark-mode) .shortcut-overlay-row span {
+    color:#e5e7eb;
+  }
+  :global(body.dark-mode) .shortcut-overlay-toggle {
+    background:rgba(15,23,42,0.88);
+    border-color:rgba(71,85,105,0.72);
+    color:#e5e7eb;
+    box-shadow:0 8px 18px rgba(0,0,0,0.35);
+  }
+  :global(body.dark-mode) .shortcut-overlay-toggle:hover,
+  :global(body.dark-mode) .shortcut-overlay-toggle:focus-visible {
+    background:#111827;
+    border-color:#60a5fa;
+  }
   :global(body.dark-mode) .shortcut-toggle {
     background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
     border-color: rgba(255,255,255,0.08);
@@ -13001,6 +13852,13 @@ function clampToDragLengths(person, jointKey, target){
     z-index: 15;
     word-break: break-word;
   }
+  .comment-box__placeholder { color:#64748b; font-style:italic; }
+  .comment-box__edit { display:inline-grid; place-items:center; width:25px; height:25px; margin-left:7px; padding:0; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#64748b; cursor:pointer; vertical-align:middle; }
+  .comment-box__edit:hover { border-color:#60a5fa; color:#2563eb; background:#eff6ff; }
+  .comment-box__edit .icon { width:14px; height:14px; }
+  .comment-box__editor { display:grid; grid-template-columns:minmax(120px, 1fr) 28px 28px; gap:5px; align-items:center; min-width:min(280px, calc(100vw - 48px)); }
+  .comment-box__input { width:100%; min-width:0; height:30px; padding:5px 8px; border:1px solid #93c5fd; border-radius:7px; box-sizing:border-box; font:12px/1.2 system-ui, sans-serif; }
+  .comment-box__editor button { display:grid; place-items:center; width:28px; height:28px; padding:0; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#334155; cursor:pointer; }
   .orientation-lock {
     position: fixed;
     inset: 0;
@@ -13057,6 +13915,25 @@ function clampToDragLengths(person, jointKey, target){
   .input { font-size: 12px; }
 }
   @media (max-width: 720px){
+    .shortcut-overlay-anchor {
+      top:max(8px, env(safe-area-inset-top));
+      left:auto;
+      right:max(8px, env(safe-area-inset-right));
+      max-width:min(260px, calc(100vw - 16px - var(--mobile-toolbar-left-inset, 0px)));
+    }
+    .shortcut-overlay-panel {
+      width:min(260px, calc(100vw - 16px - var(--mobile-toolbar-left-inset, 0px)));
+      max-height:none;
+    }
+    .shortcut-overlay-row {
+      grid-template-columns:1fr;
+      gap:3px;
+      font-size:10px;
+      padding:0;
+    }
+    .shortcut-overlay-head {
+      padding:0 0 4px 0;
+    }
     .preset-ui.bottom { left: 8px; right: 8px; transform: none; width: auto; overflow: visible; }
     .preset-ui.bottom,
     .toolbar-layout,
@@ -13116,30 +13993,6 @@ function clampToDragLengths(person, jointKey, target){
   }
   @media (pointer: coarse), (max-width: 768px){
     .mobile-only-control { display: inline-flex; }
-    .mobile-focus-btn {
-      position:fixed;
-      top:max(12px, env(safe-area-inset-top));
-      right:max(12px, env(safe-area-inset-right));
-      z-index:11;
-      width:36px;
-      height:36px;
-      padding:0;
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      border:1px solid rgba(148,163,184,0.62);
-      border-radius:10px;
-      background:rgba(248,250,252,0.92);
-      color:#0f172a;
-      box-shadow:0 6px 16px rgba(15,23,42,0.14);
-      backdrop-filter:saturate(150%) blur(4px);
-      -webkit-backdrop-filter:saturate(150%) blur(4px);
-      cursor:pointer;
-    }
-    .mobile-focus-btn .icon {
-      width:18px;
-      height:18px;
-    }
     .mobile-floating-tools {
       position:fixed;
       left:max(10px, env(safe-area-inset-left));
@@ -13273,6 +14126,30 @@ function clampToDragLengths(person, jointKey, target){
     .preset-trigger { padding: 5px 38px 5px 8px; font-size: 12px; }
   }
   @media (pointer: coarse) and (orientation: landscape) and (max-width: 960px){
+    .shortcut-overlay-anchor {
+      left:auto;
+      right:max(10px, env(safe-area-inset-right));
+      top:max(8px, env(safe-area-inset-top));
+      max-width:min(280px, calc(100vw - 20px - var(--mobile-toolbar-left-inset, 0px)));
+    }
+    .playback-edit-bar {
+      left:max(154px, calc(env(safe-area-inset-left) + 154px));
+      right:max(6px, env(safe-area-inset-right));
+      bottom:max(var(--mobile-floating-bottom, 54px), env(safe-area-inset-bottom));
+      width:auto;
+      max-width:none;
+      min-height:38px;
+      padding:5px 6px;
+      border-width:2px;
+      flex-wrap:nowrap;
+      overflow-x:auto;
+    }
+    .playback-edit-bar__label { display:none; }
+    .playback-edit-bar__name { flex:1 1 96px; min-width:82px; width:96px; }
+    .playback-edit-bar .btn { min-height:30px; padding:5px 7px; white-space:nowrap; }
+    .shortcut-overlay-panel {
+      width:min(280px, calc(100vw - 20px - var(--mobile-toolbar-left-inset, 0px)));
+    }
     .preset-ui.bottom {
       top: max(46px, calc(env(safe-area-inset-top) + 40px)) !important;
       bottom: auto !important;
@@ -14180,5 +15057,398 @@ function clampToDragLengths(person, jointKey, target){
       align-self:center !important;
       justify-self:center !important;
     }
+  }
+  @media (pointer: coarse) and (orientation: landscape), (max-width: 768px) and (orientation: landscape) {
+    .playback-edit-bar {
+      left:max(6px, env(safe-area-inset-left));
+      right:max(6px, env(safe-area-inset-right));
+      bottom:max(64px, calc(env(safe-area-inset-bottom) + 64px));
+      width:auto;
+      max-width:none;
+    }
+  }
+  @media (max-width: 620px) {
+    .frame-strip { gap:5px; padding:0 28px 5px 0; }
+    .frame-strip__label { width:100%; }
+    .frame-strip__track { flex-basis:100%; padding:1px; }
+    .frame-chip { width:31px; height:25px; border-radius:7px; }
+    .frame-strip__edit { grid-template-columns:minmax(0, 1fr) 28px 28px; gap:5px; padding-top:5px; }
+    .frame-strip__edit-icon { display:none; }
+    .frame-strip__name { grid-column:1; grid-row:1; }
+    .frame-strip__note { grid-column:1; grid-row:2; }
+    .frame-strip__edit-action--save { grid-column:2; grid-row:1; }
+    .frame-strip__edit-action:not(.frame-strip__edit-action--save) { grid-column:3; grid-row:1; }
+    .frame-strip__edit-action { width:28px; height:28px; }
+    .frame-strip__name, .frame-strip__note { height:28px; font-size:11px; }
+  }
+  @media (pointer: coarse) {
+    .technique-shortcut { display:none; }
+    .preset-ui.bottom.toolbar-editing,
+    .preset-ui.bottom.toolbar-compact.toolbar-editing {
+      top:auto !important;
+      bottom:max(6px, env(safe-area-inset-bottom)) !important;
+      left:max(6px, env(safe-area-inset-left)) !important;
+      right:max(6px, env(safe-area-inset-right)) !important;
+      width:auto !important;
+      max-width:none !important;
+      height:auto !important;
+      transform:none !important;
+      overflow:visible !important;
+      box-sizing:border-box !important;
+    }
+    .preset-ui.bottom.toolbar-editing {
+      padding:6px;
+    }
+    .preset-ui.bottom.toolbar-editing .toolbar-collapse-toggle { display:none !important; }
+    .preset-ui.bottom.toolbar-editing .toolbar-layout {
+      display:flex !important;
+      width:100% !important;
+      padding:0 !important;
+      gap:5px !important;
+    }
+    .preset-ui.bottom.toolbar-editing .toolbar-row--compact,
+    .preset-ui.bottom.toolbar-editing .row-right,
+    .preset-ui.bottom.toolbar-editing .row-left .toolbar-actions,
+    .preset-ui.bottom.toolbar-editing .row-center .icon-btn:not(.edit-visible-undo) {
+      display:none !important;
+    }
+    .preset-ui.bottom.toolbar-editing .toolbar-row:not(.toolbar-row--compact) {
+      display:flex !important;
+      width:100% !important;
+      align-items:center !important;
+      gap:6px !important;
+    }
+    .preset-ui.bottom.toolbar-editing .edit-visible-presets,
+    .preset-ui.bottom.toolbar-editing .row-center,
+    .preset-ui.bottom.toolbar-editing .row-center .controls-row {
+      display:flex !important;
+      width:auto !important;
+      min-width:0 !important;
+      padding:0 !important;
+    }
+    .preset-ui.bottom.toolbar-editing .edit-visible-undo { display:grid !important; flex:0 0 34px !important; }
+    .preset-ui.bottom.toolbar-editing .preset-trigger { width:min(180px, 48vw) !important; }
+    .preset-ui.bottom.toolbar-editing .mobile-floating-tools {
+      display:flex !important;
+      bottom:max(var(--mobile-floating-bottom, 112px), calc(env(safe-area-inset-bottom) + 92px)) !important;
+      z-index:20 !important;
+    }
+    .toolbar-editing .frame-strip,
+    .toolbar-editing .frame-strip__edit {
+      width:100%;
+      max-width:100%;
+      min-width:0;
+      box-sizing:border-box;
+    }
+    .toolbar-editing .frame-strip {
+      padding:7px;
+      border-bottom:1px solid rgba(59,130,246,.34);
+    }
+    .toolbar-editing .frame-strip__name-editor,
+    .toolbar-editing .frame-strip__name {
+      width:100%;
+      max-width:100%;
+      min-width:0;
+      box-sizing:border-box;
+    }
+    .toolbar-editing .frame-strip__edit {
+      grid-template-columns:minmax(0, 1fr) minmax(0, 1fr) 28px 28px !important;
+      overflow:visible;
+    }
+    .toolbar-editing .frame-strip__edit-icon { display:none !important; }
+    .toolbar-editing .frame-strip__name-editor { grid-column:1 !important; grid-row:1 !important; }
+    .toolbar-editing .frame-strip__movement { grid-column:2 !important; grid-row:1 !important; }
+    .toolbar-editing .frame-strip__edit-action--save { grid-column:3 !important; grid-row:1 !important; }
+    .toolbar-editing .frame-strip__edit-action:not(.frame-strip__edit-action--save) { grid-column:4 !important; grid-row:1 !important; }
+  }
+  @media (pointer: coarse) and (max-width: 620px) {
+    .toolbar-editing .frame-strip__edit {
+      grid-template-columns:minmax(0, 1fr) 28px 28px !important;
+    }
+    .toolbar-editing .frame-strip__name-editor { grid-column:1 !important; grid-row:1 !important; }
+    .toolbar-editing .frame-strip__movement { grid-column:1 !important; grid-row:2 !important; width:100%; }
+    .toolbar-editing .frame-strip__edit-action--save { grid-column:2 !important; grid-row:1 !important; }
+    .toolbar-editing .frame-strip__edit-action:not(.frame-strip__edit-action--save) { grid-column:3 !important; grid-row:1 !important; }
+  }
+  @media (pointer: coarse) and (orientation: landscape) {
+    .preset-ui.bottom.toolbar-editing {
+      left:max(70px, env(safe-area-inset-left)) !important;
+    }
+    .toolbar-editing .frame-strip__track {
+      position:fixed;
+      top:max(8px, env(safe-area-inset-top));
+      bottom:max(8px, env(safe-area-inset-bottom));
+      left:max(6px, env(safe-area-inset-left));
+      width:48px;
+      max-height:none !important;
+      padding:5px;
+      flex:0 0 auto;
+      flex-direction:column;
+      align-items:center;
+      overflow-x:hidden;
+      overflow-y:auto;
+      border:1px solid rgba(59,130,246,.3);
+      border-radius:10px;
+      background:rgba(248,250,252,.94);
+      box-shadow:0 8px 22px rgba(15,23,42,.14);
+      z-index:21;
+    }
+    .toolbar-editing .frame-strip__track .frame-chip { flex:0 0 30px; width:34px; height:30px; }
+    .toolbar-editing .frame-strip__label { display:none; }
+  }
+  @media (max-height: 620px) and (orientation: landscape) {
+    .preset-ui.bottom.toolbar-compact { padding:6px 36px 6px 8px; gap:3px; }
+    .preset-ui.bottom.toolbar-compact.toolbar-editing { padding:4px; }
+    .frame-strip { gap:4px 8px; padding:0 0 4px; }
+    .frame-strip__label { width:auto; font-size:9px; }
+    .frame-strip__track { flex-basis:160px; max-height:29px; }
+    .frame-chip { width:30px; height:24px; }
+    .frame-strip__edit { grid-template-columns:14px minmax(110px, 1fr) minmax(100px, .9fr) 28px 28px; gap:5px; padding-top:4px; }
+    .frame-strip__edit-icon { display:block; width:14px; height:14px; }
+    .frame-strip__name { grid-column:2; grid-row:1; }
+    .frame-strip__note { grid-column:3; grid-row:1; }
+    .frame-strip__edit-action--save { grid-column:4; grid-row:1; }
+    .frame-strip__edit-action:not(.frame-strip__edit-action--save) { grid-column:5; grid-row:1; }
+    .frame-strip__name, .frame-strip__note { height:27px; padding-top:3px; padding-bottom:3px; font-size:11px; }
+    .frame-strip__edit-action { width:27px; height:27px; }
+    .toolbar-layout.is-compact { padding-top:3px; }
+    .sequence-menu { max-height:calc(100dvh - 76px); }
+  }
+  @media (max-height: 430px) and (orientation: landscape) {
+    .frame-strip__label { display:none; }
+    .frame-strip__track { flex-basis:100%; }
+    .frame-strip__edit { grid-template-columns:minmax(100px, 1fr) minmax(90px, .8fr) 26px 26px; }
+    .frame-strip__edit-icon { display:none; }
+    .frame-strip__name { grid-column:1; }
+    .frame-strip__note { grid-column:2; }
+    .frame-strip__edit-action--save { grid-column:3; }
+    .frame-strip__edit-action:not(.frame-strip__edit-action--save) { grid-column:4; }
+    .frame-strip__edit-action { width:26px; height:26px; }
+    .preset-ui.bottom.toolbar-compact .toolbar-layout.is-compact { padding-top:0; }
+  }
+  @media (pointer: coarse) and (orientation: portrait), (max-width: 768px) and (orientation: portrait) {
+    .preset-ui.bottom.toolbar-has-editor { padding-left:6px; }
+    .playback-edit-bar {
+      left:max(154px, calc(env(safe-area-inset-left) + 154px));
+      right:max(6px, env(safe-area-inset-right));
+      bottom:max(var(--edit-toolbar-offset, 64px), calc(env(safe-area-inset-bottom) + 64px));
+      width:auto;
+      max-width:none;
+      min-height:38px;
+      padding:5px 6px;
+      border-width:2px;
+      flex-wrap:nowrap;
+      overflow-x:auto;
+      padding:5px 6px;
+      border-right:0;
+      background:linear-gradient(150deg, rgba(255,255,255,.94), rgba(234,242,255,.92));
+      border-radius:10px;
+      box-shadow:0 8px 20px rgba(15,23,42,.12);
+    }
+    .playback-edit-bar__label { display:none; }
+    .playback-edit-bar__name { flex:1 1 82px; width:82px; min-width:70px; }
+    .playback-edit-bar .btn { min-height:30px; padding:5px 7px; white-space:nowrap; }
+  }
+  @media (pointer: coarse) and (orientation: landscape), (max-width: 768px) and (orientation: landscape) {
+    .preset-ui.bottom.toolbar-has-editor { padding-left:6px; }
+    .playback-edit-bar {
+      position:static !important;
+      order:20;
+      left:auto;
+      right:auto;
+      bottom:auto;
+      flex:1 0 calc(100% + 12px);
+      align-self:stretch;
+      width:calc(100% + 12px);
+      min-width:calc(100% + 12px);
+      max-width:calc(100% + 12px);
+      margin:2px -6px -6px;
+      padding:6px;
+      border-width:2px;
+      flex-wrap:wrap;
+      box-shadow:none;
+      border-radius:0 0 12px 12px;
+      border-right:0;
+      border-top:1px solid rgba(59,130,246,.18);
+      background:transparent;
+    }
+    .playback-edit-bar__label { display:block; }
+    .playback-edit-bar__name { flex:1 1 100%; width:100%; }
+  }
+  /* Technique editing is a normal row inside the toolbar. Keep these final
+     overrides together so orientation-specific legacy rules cannot detach it. */
+  .preset-ui.bottom.toolbar-has-editor {
+    padding-left:14px;
+    width:min(980px, calc(100vw - 24px));
+  }
+  .toolbar-layout .playback-edit-bar {
+    position:static !important;
+    grid-column:1 / -1;
+    grid-row:auto;
+    display:grid;
+    grid-template-columns:minmax(120px, 1fr) auto auto auto;
+    align-items:center;
+    gap:6px;
+    width:100%;
+    min-width:0;
+    max-width:none;
+    margin:0 0 5px;
+    padding:0 0 7px;
+    box-sizing:border-box;
+    background:transparent;
+    border:0;
+    border-bottom:1px solid rgba(59,130,246,.18);
+    border-radius:0;
+    box-shadow:none;
+    overflow:visible;
+  }
+  .toolbar-layout .playback-edit-bar__label {
+    grid-column:1 / -1;
+    display:block;
+  }
+  .toolbar-layout .playback-edit-bar__name {
+    grid-column:1;
+    width:100%;
+    min-width:0;
+    max-width:100%;
+  }
+  @media (pointer: coarse), (max-width:768px) {
+    .preset-ui.bottom.toolbar-has-editor {
+      padding-left:6px;
+      width:auto;
+    }
+    .toolbar-layout .playback-edit-bar {
+      grid-template-columns:minmax(0, 1fr) repeat(3, auto);
+      overflow:visible;
+    }
+    .toolbar-layout .playback-edit-bar__label { display:none; }
+    .toolbar-layout .playback-edit-bar .btn {
+      min-width:0;
+      min-height:30px;
+      padding:5px 7px;
+      white-space:nowrap;
+    }
+  }
+  @media (pointer: coarse) and (orientation:landscape), (max-width:768px) and (orientation:landscape) {
+    .preset-ui.bottom.toolbar-has-editor {
+      width:min(360px, calc(100vw - 18px)) !important;
+      max-width:min(360px, calc(100vw - 18px)) !important;
+    }
+    .toolbar-layout .playback-edit-bar {
+      grid-template-columns:minmax(120px, 1fr) auto auto auto;
+      gap:7px;
+    }
+  }
+  @media (max-width:520px) {
+    .toolbar-layout .playback-edit-bar {
+      grid-template-columns:repeat(3, minmax(0, 1fr));
+    }
+    .toolbar-layout .playback-edit-bar__name {
+      grid-column:1 / -1;
+      grid-row:1;
+    }
+    .toolbar-layout .playback-edit-bar .btn { width:100%; }
+  }
+
+  :global(body.dark-mode) { color-scheme:dark; }
+  :global(body.dark-mode) .technique-step { background:transparent; }
+  :global(body.dark-mode) .technique-library-link { color:#93c5fd; }
+  :global(body.dark-mode) .sequence-frame-count { background:#1e3a5f; color:#bfdbfe; }
+  :global(body.dark-mode) .memory-review-change,
+  :global(body.dark-mode) .memory-review-inline-meta { color:#94a3b8; }
+  :global(body.dark-mode) .memory-confirmation { background:#12332a; color:#bbf7d0; border-color:#28624b; }
+  :global(body.dark-mode) .training-day-badge { background:#1e40af; border-color:#60a5fa; }
+  :global(body.dark-mode) .sequence-menu .btn:disabled { opacity:.45; }
+  :global(body.dark-mode) .sequence-menu :is(button,input):focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
+
+
+  .memory-panel > * { flex-shrink:0; }
+  @media (pointer:fine) {
+    .menu-popup.sequence-menu--movable:not(.memory-menu) {
+      width:min(290px, calc(100vw - 24px));
+      max-height:min(640px, calc(100dvh - 130px));
+      scrollbar-width:thin;
+      scrollbar-color:#64748b transparent;
+    }
+  }
+
+  .mobile-sheet-close { display:none; }
+  :global(body.dark-mode) .sequence-file-menu .inline-action { color:#cbd5e1; }
+  :global(body.dark-mode) .sequence-file-menu .danger-action { color:#fca5a5; }
+  :global(body.dark-mode) .toolbar-collapse-toggle,
+  :global(body.dark-mode) .toolbar-layout .icon-btn,
+  :global(body.dark-mode) .mobile-mode-control {
+    color:#e2e8f0 !important; background:#1e293b !important; border-color:#475569 !important;
+  }
+  :global(body.dark-mode) .toolbar-layout .icon-btn--primary {
+    color:#bfdbfe !important; background:#1e3a5f !important;
+  }
+  :global(body.dark-mode) .breadcrumb-segment { color:#e2e8f0; }
+  :global(body.dark-mode) .breadcrumb-segment:hover,
+  :global(body.dark-mode) .breadcrumb-segment:focus-visible { background:#334155; color:#fff; }
+  @media (pointer:coarse), (max-width:720px) {
+    .menu-popup.sequence-menu.sequence-menu--movable:not(.memory-menu),
+    :global(body > .menu-popup.sequence-menu.sequence-menu--movable),
+    .menu-popup.sequence-file-menu--standalone,
+    .menu-popup.memory-menu {
+      position:fixed !important;
+      top:calc(var(--sheet-top, 0px) + max(8px, env(safe-area-inset-top))) !important;
+      bottom:auto !important;
+      left:50% !important; right:auto !important;
+      transform:translateX(-50%) !important;
+      width:min(540px, calc(100vw - 16px)) !important;
+      min-width:0 !important; max-width:calc(100vw - 16px) !important;
+      height:auto !important;
+      max-height:calc(var(--sheet-height, 100dvh) - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))) !important;
+      border-radius:14px !important;
+      box-sizing:border-box !important;
+      z-index:10000 !important;
+      overscroll-behavior:contain;
+      -webkit-overflow-scrolling:touch;
+    }
+    .menu-popup.sequence-menu.sequence-menu--movable:not(.memory-menu),
+    :global(body > .menu-popup.sequence-menu.sequence-menu--movable),
+    .menu-popup.sequence-file-menu--standalone {
+      padding:12px !important; overflow-y:auto !important;
+    }
+    .menu-popup.sequence-file-menu--standalone { background:#fff !important; }
+    :global(body.dark-mode) .menu-popup.sequence-file-menu--standalone { background:#0f172a !important; }
+    .menu-popup.memory-menu { padding:0 !important; background:#f8fafc !important; }
+    :global(body.dark-mode) .menu-popup.memory-menu { background:#0f172a !important; }
+    .memory-menu .memory-panel {
+      width:100% !important; height:auto !important;
+      max-height:calc(var(--sheet-height, 100dvh) - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))) !important;
+      padding:12px !important; border-radius:14px !important;
+      overscroll-behavior:contain;
+    }
+    .memory-menu .memory-stats { grid-template-columns:repeat(3,minmax(0,1fr)) !important; }
+    .memory-status-counts { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+    .memory-status-card { min-width:0 !important; }
+    .memory-panel-head { position:sticky; top:-12px; z-index:3; background:#f8fafc; }
+    :global(body.dark-mode) .memory-panel-head { background:#0f172a; }
+    .memory-close-btn { display:inline-flex !important; flex-shrink:0; }
+    .mobile-sheet-close { display:block; margin:0 0 8px auto; background:transparent; color:inherit; border:1px solid #64748b; border-radius:8px; padding:8px 12px; }
+    .sequence-move-handle { display:none; }
+    .back-breadcrumb { flex-wrap:wrap; }
+    .back-breadcrumb__path { flex:1 1 100%; min-width:0; }
+    .breadcrumb-segment { overflow-wrap:anywhere; text-align:left; }
+    .sequence-file-menu .menu-row-btn { min-width:0; }
+    .sequence-file-menu .name { overflow-wrap:anywhere; }
+    .sequence-menu :is(input,select), .sequence-file-menu :is(input,select) { font-size:16px !important; }
+    .sequence-menu :is(.btn,.back-breadcrumb__btn), .sequence-file-menu :is(.btn,.back-breadcrumb__btn,.menu-row-btn),
+    .memory-close-btn, .sequence-close-handle, .mobile-sheet-close { min-height:44px !important; }
+    .sequence-close-handle, .memory-close-btn { min-width:44px !important; }
+    .sequence-file-menu .inline-action { min-width:36px; min-height:40px; }
+    .training-reminder-row { grid-template-columns:minmax(0,1fr) auto !important; }
+    .training-time-input { width:100%; min-height:44px; }
+    .training-day-grid { grid-template-columns:repeat(7,minmax(0,1fr)) !important; }
+    .training-day { height:40px !important; }
+    .preset-ui.bottom .person-pose-tools { flex-wrap:wrap; }
+    .preset-ui.bottom.toolbar-compact .person-pose-tools { display:none; }
+  }
+
+
+  @media (pointer:coarse) and (orientation:portrait), (max-width:720px) and (orientation:portrait) {
+    .mobile-floating-tools { bottom:var(--mobile-floating-bottom, 190px) !important; }
   }
 </style>

@@ -1,0 +1,24 @@
+import{test}from'node:test';import assert from'node:assert/strict';import{readFileSync}from'node:fs';import{parse}from'svelte/compiler';
+const s=readFileSync(new URL('../routes/fightlab3d/figures/+page.svelte',import.meta.url),'utf8');const names=['saveCurrentFrame','applyFrame','prevFrame','nextFrame','stopPlayback','restartPlaybackTimer','getActiveCommentText','saveCurrentPlayback','commitLivePoseToCurrentFrame'];const code=parse(s).instance.content.body.filter(n=>n.type==='FunctionDeclaration'&&names.includes(n.id.name)).map(n=>s.slice(n.start,n.end)).join('\n');
+function setup(){const e={poses:[],currentFrame:0,frameSaveTarget:-1,comment:'',commentText:'',commentVisible:false,editingPlaybackIdx:-1,sequenceDraftActive:false,showSequenceMenu:false,showSavedPlaybacksMenu:false,showFrameComments:false,editingFrameCommentInline:false,playbackApplying:false,activeReviewPlaybackIdx:-1,activeReviewFrameCount:0,buildPoseSnapshot:()=>({value:e.value}),applyLoadedPose:data=>{e.value=data.value;},blurActiveTextField(){},playMemorySaveSound(){},value:1,playing:false,intervalId:null,playbackIntervalMs:500,clearInterval:id=>{e.cleared=id;},setInterval:callback=>{e.tick=callback;return 42;},newPlaybackName:'Test technique',savedPlaybacks:[],playbackFolderView:null,folderKey:()=>'',deepCopyFrames:frames=>structuredClone(frames),createMemoryPlaybackRecord:record=>record,editingPlaybackName:'',persistSavedPlaybacks(){e.persisted=structuredClone(e.savedPlaybacks);},playbackFolders:[],persistPlaybackFolders(){},playbackGroups:[],groupPlaybacks:items=>items,syncOpenPlaybackFolders(){},playbacksMenuVersion:0,showMemoryConfirmation(){}};const api=new Function('env','with(env){'+code+';return {'+names.join(',')+'}}')(e);return {e,api};}
+test('previous/next restore the note; Save updates the selected frame without appending',()=>{const{e,api}=setup();e.comment='First';api.saveCurrentFrame();e.value=2;e.comment='Second';api.saveCurrentFrame();api.prevFrame();assert.equal(e.value,1);assert.equal(e.comment,'First');e.comment='Corrected';e.value=3;api.saveCurrentFrame();assert.equal(e.poses.length,2);assert.deepEqual(e.poses[0],{data:{value:3},comment:'Corrected'});api.nextFrame();assert.equal(e.comment,'Second');api.prevFrame();assert.equal(e.comment,'Corrected');});
+test('Add as new frame preserves the reviewed frame and resumes appending',()=>{const{e,api}=setup();e.comment='Original';api.saveCurrentFrame();api.prevFrame();e.value=2;e.comment='New';api.saveCurrentFrame(true);assert.equal(e.poses.length,2);assert.equal(e.poses[0].comment,'Original');assert.equal(e.poses[1].comment,'New');assert.equal(e.frameSaveTarget,-1);e.value=3;api.saveCurrentFrame();assert.equal(e.poses.length,3);});
+
+test('Save technique preserves saved frames despite unsaved movement and text',()=>{
+ const {e,api}=setup();e.comment='Saved note';api.saveCurrentFrame();api.applyFrame(0);const saved=structuredClone(e.poses);
+ e.value=99;e.comment='Unsaved note';api.saveCurrentPlayback();assert.deepEqual(e.persisted[0].frames,saved);assert.deepEqual(e.poses,saved);
+ api.saveCurrentFrame();api.saveCurrentPlayback();assert.deepEqual(e.persisted[1].frames[0],{data:{value:99},comment:'Unsaved note'});
+});
+for(const direction of ['prevFrame','nextFrame'])test(direction+' pauses playback and a queued timer cannot advance afterward',()=>{
+ const {e,api}=setup();api.saveCurrentFrame();e.value=2;api.saveCurrentFrame();e.playing=true;api.restartPlaybackTimer();const tick=e.tick;
+ api[direction]();const selected=e.currentFrame;assert.equal(e.playing,false);assert.equal(e.cleared,42);assert.equal(e.intervalId,null);tick();assert.equal(e.currentFrame,selected);
+});
+test('automatic playback keeps running and restores each frame note',()=>{
+ const {e,api}=setup();e.comment='First';api.saveCurrentFrame();e.value=2;e.comment='Second';api.saveCurrentFrame();e.playing=true;api.restartPlaybackTimer();e.tick();assert.equal(e.currentFrame,0);assert.equal(e.comment,'First');assert.equal(e.playing,true);e.tick();assert.equal(e.currentFrame,1);assert.equal(e.comment,'Second');
+});
+test('clearing a revisited note immediately clears the overlay without changing the saved note until Save',()=>{
+ const {e,api}=setup();e.comment='Original note';api.saveCurrentFrame();api.applyFrame(0);assert.equal(api.getActiveCommentText(),'Original note');e.comment='';assert.equal(api.getActiveCommentText(),'');assert.equal(e.poses[0].comment,'Original note');api.saveCurrentFrame();assert.equal(e.poses[0].comment,'');assert.equal(api.getActiveCommentText(),'');
+});
+test('a newly saved frame still displays its saved note after the input clears',()=>{
+ const {e,api}=setup();e.showFrameComments=true;e.comment='New frame';api.saveCurrentFrame();assert.equal(e.comment,'');assert.equal(api.getActiveCommentText(),'New frame');
+});
