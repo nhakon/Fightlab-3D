@@ -41,6 +41,7 @@
   let mobileViewportBottomInset = 0;
   let mobileViewportLeftInset = 0;
   let toolbarResizeObserver = null;
+  let toolbarResizeFrame = null;
   // Ortho view state (pan centers and zoom)
   let frontCenter = new THREE.Vector3(0, 0.9, 0);
   let sideCenter = new THREE.Vector3(0, 0.9, 0);
@@ -682,8 +683,8 @@ function isLocked(person, key){
     return window.matchMedia('(pointer: coarse) and (orientation: landscape) and (max-width: 960px)').matches;
   }
   function getRenderViewportSize(){
-    const width = (typeof window !== 'undefined') ? Math.max(1, window.innerWidth) : 1;
-    const height = (typeof window !== 'undefined') ? Math.max(1, window.innerHeight - mobileViewportBottomInset) : 1;
+    const width = (typeof window !== 'undefined') ? Math.max(1, document.documentElement.clientWidth) : 1;
+    const height = (typeof window !== 'undefined') ? Math.max(1, document.documentElement.clientHeight - mobileViewportBottomInset) : 1;
     return { width, height };
   }
   function getSingleViewViewportRect(width, height){
@@ -1461,6 +1462,12 @@ function isLocked(person, key){
   function updateShortcutViewportMode(){
     showMobileShortcutList = isMobileViewport();
   }
+  onMount(()=>{
+    const pointerQuery=window.matchMedia('(pointer: coarse)');
+    updateShortcutViewportMode();
+    pointerQuery.addEventListener('change',updateShortcutViewportMode);
+    return ()=>pointerQuery.removeEventListener('change',updateShortcutViewportMode);
+  });
   const SHORTCUT_OVERLAY_STORAGE_KEY = 'fightlabShortcutOverlayV1';
   function setShortcutOverlay(value){
     showShortcutOverlay = !!value;
@@ -1532,6 +1539,8 @@ function isLocked(person, key){
   }
   function applyDarkMode(){
     if (typeof document === 'undefined') return;
+    document.documentElement.style.backgroundColor = darkMode ? '#05070d' : '#f4f6f9';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', darkMode ? '#05070d' : '#f4f6f9');
     const b = document.body;
     if (!b) return;
     if (darkMode) b.classList.add('dark-mode'); else b.classList.remove('dark-mode');
@@ -6933,7 +6942,10 @@ function clampToDragLengths(person, jointKey, target){
       try{ window.visualViewport?.addEventListener('resize', onResize); }catch(e){}
       try{
         if (typeof ResizeObserver !== 'undefined'){
-          toolbarResizeObserver = new ResizeObserver(() => onResize());
+          toolbarResizeObserver = new ResizeObserver(() => {
+            cancelAnimationFrame(toolbarResizeFrame);
+            toolbarResizeFrame = requestAnimationFrame(onResize);
+          });
           if (toolbarEl) toolbarResizeObserver.observe(toolbarEl);
         }
       }catch(e){}
@@ -7050,6 +7062,7 @@ function clampToDragLengths(person, jointKey, target){
         try{ window.visualViewport?.removeEventListener('resize', onResize); }catch(e){}
         try{ toolbarResizeObserver?.disconnect(); }catch(e){}
         toolbarResizeObserver = null;
+        cancelAnimationFrame(toolbarResizeFrame);
       };
 
       // Build live GUI pose editor
@@ -7091,7 +7104,7 @@ function clampToDragLengths(person, jointKey, target){
   function onResize(){
     if (!renderer) return;
     updateShortcutViewportMode();
-    if (!toolbarCompactTouched && isMobileViewport()) compactToolbar = true;
+    if (!toolbarCompactTouched && isMobileViewport()) compactToolbar = false;
     updateMobileViewportInset();
     const viewportSize = getRenderViewportSize();
     const singleViewRect = getSingleViewViewportRect(viewportSize.width, viewportSize.height);
@@ -7955,6 +7968,7 @@ function clampToDragLengths(person, jointKey, target){
     let parent = null;
     let placeholder = null;
     let moved = false;
+    let disposed = false;
     const fitViewport = () => {
       if (!enabled || typeof window === 'undefined') return;
       const viewport = window.visualViewport;
@@ -7962,7 +7976,7 @@ function clampToDragLengths(person, jointKey, target){
       node.style.setProperty('--sheet-height', (viewport?.height || window.innerHeight) + 'px');
     };
     const move = () => {
-      if (typeof document === 'undefined' || !node) return;
+      if (disposed || typeof document === 'undefined' || !node) return;
       if (enabled && !moved) {
         parent = node.parentNode;
         if (!parent) return;
@@ -7978,7 +7992,7 @@ function clampToDragLengths(person, jointKey, target){
         moved = false;
       }
     };
-    move();
+    void tick().then(move);
     window.visualViewport?.addEventListener('resize', fitViewport);
     window.visualViewport?.addEventListener('scroll', fitViewport);
     window.addEventListener('resize', fitViewport);
@@ -7988,6 +8002,7 @@ function clampToDragLengths(person, jointKey, target){
         move();
       },
       destroy() {
+        disposed = true;
         window.visualViewport?.removeEventListener('resize', fitViewport);
         window.visualViewport?.removeEventListener('scroll', fitViewport);
         window.removeEventListener('resize', fitViewport);
@@ -8449,6 +8464,7 @@ function clampToDragLengths(person, jointKey, target){
   let cleanupEditorListeners = () => {};
   onDestroy(() => {
     cleanupEditorListeners();
+    clearTimeout(mobileModeNoticeTimer);
     clearTrainingReminderTimer();
   });
 
@@ -9902,6 +9918,16 @@ function clampToDragLengths(person, jointKey, target){
     window.addEventListener('contextmenu', handleMeshyRigContextMenuModifier, true);
   }
 
+  let mobileModeNotice = '';
+  let mobileModeNoticeTimer;
+  $: movementModeLetter = pivotJointMode ? 'P' : singleJointMode ? 'S' : 'N';
+  $: movementModeLabel = pivotJointMode ? 'Pivot' : singleJointMode ? 'Single joint' : 'Natural movement';
+  function cycleMobileMode(){
+    toggleSingleJointMode();
+    mobileModeNotice = pivotJointMode ? 'P' : singleJointMode ? 'S' : 'N';
+    clearTimeout(mobileModeNoticeTimer);
+    mobileModeNoticeTimer = setTimeout(()=>mobileModeNotice='',1400);
+  }
   function toggleSingleJointMode(){
     if (!singleJointMode) { singleJointMode = true; pivotJointMode = false; }
     else if (!pivotJointMode) pivotJointMode = true;
@@ -11157,7 +11183,7 @@ function clampToDragLengths(person, jointKey, target){
 <svelte:head>
   <title>Fightlab 3D</title>
   <meta name="description" content="Move the figures and see changes in real time, like a video game. It makes you think through what comes first, a different and easier kind of visualization that still works alongside the rest." />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 </svelte:head>
 
   <div
@@ -11372,7 +11398,8 @@ function clampToDragLengths(person, jointKey, target){
           {/if}
         </svg>
       </button>
-      <div class="person-pose-tools">
+      <div class="person-pose-tools" class:wheel-open={!!poseWheel} use:portalToBody={showMobileShortcutList}>
+        <span class="mobile-mode-notice" role="status" aria-label={mobileModeNotice ? movementModeLabel : undefined}>{mobileModeNotice}</span>
         <button class="btn" style={poseButtonStyle('A',colorblindMode)} on:click={(event)=>openPersonPose('A',event)} disabled={playing}>Pose A</button>
         <button class="btn" style={poseButtonStyle('B',colorblindMode)} on:click={(event)=>openPersonPose('B',event)} disabled={playing}>Pose B</button>
         {#if gripNotice}<span role="status">{gripNotice}</span>{/if}
@@ -11500,7 +11527,7 @@ function clampToDragLengths(person, jointKey, target){
                 </div>
               </div>
             {/if}
-            <div class="toolbar-actions wrap-tight">
+            <div class="toolbar-actions wrap-tight movement-mode-desktop">
               <select class="btn" aria-label="Movement mode" title="Movement mode (E cycles modes)" value={pivotJointMode ? 'pivot' : singleJointMode ? 'single' : 'natural'} on:change={(event) => { singleJointMode = event.currentTarget.value !== 'natural'; pivotJointMode = event.currentTarget.value === 'pivot'; }}>
                 <option value="natural">Natural movement</option>
                 <option value="single">Single joint</option>
@@ -11542,6 +11569,7 @@ function clampToDragLengths(person, jointKey, target){
                 aria-expanded={showSequenceMenu}
                 on:click={toggleSequenceMenu}>
                 Technique
+                {#if poses.length}<span class="technique-count" aria-label={`${poses.length} frames`}>{poses.length}</span>{/if}
                 <svg class="icon" viewBox="0 0 24 24" style={`transform: rotate(${showSequenceMenu ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               {#if showSequenceMenu && !showSavedPlaybacksMenu}
@@ -11976,9 +12004,17 @@ function clampToDragLengths(person, jointKey, target){
     </div>
     <div
       class="mobile-floating-tools"
+      on:contextmenu|preventDefault
+      role="group"
       aria-label="Mobile joint tools"
       use:portalToBody={showMobileShortcutList}
       style={`--mobile-floating-bottom:${mobileFloatingToolsOffset}px;`}>
+      <button class="mobile-mode-cycle" on:click={cycleMobileMode} aria-label={'Movement mode: '+movementModeLabel+'. Tap to change'} title={movementModeLabel}>
+        <span class="mobile-mode-full">{movementModeLabel}</span><span class="mobile-mode-letter">{movementModeLetter}</span>
+      </button>
+      <button class="mobile-floating-undo" on:click={undoLastFigureMove} aria-label="Undo last move" title="Undo last move">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 4 10l5 5M4 10h10a6 6 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Undo</span>
+      </button>
       <button
         type="button"
         class="mobile-mode-control"
@@ -15451,4 +15487,55 @@ function clampToDragLengths(person, jointKey, target){
   @media (pointer:coarse) and (orientation:portrait), (max-width:720px) and (orientation:portrait) {
     .mobile-floating-tools { bottom:var(--mobile-floating-bottom, 190px) !important; }
   }
+
+  .mobile-mode-notice { display:none; }
+  .technique-count { border-radius:10px;padding:1px 5px;background:#dbeafe;color:#1e3a8a;font-weight:700; }
+  :global(body.dark-mode) .technique-count { background:#1e3a5f;color:#dbeafe; }
+  :global(body.dark-mode) .add-preset-action { color:#e2e8f0; }
+  :global(body.dark-mode) .preset-menu-col .name { color:#cbd5e1 !important; }
+  @media (pointer:coarse) {
+    :global(html:has(.figures-wrapper)) { overflow:hidden; }
+    :global(body) { overflow:clip; -webkit-user-select:none;user-select:none;-webkit-touch-callout:none; }
+    :global(input), :global(textarea) { -webkit-user-select:text;user-select:text;-webkit-touch-callout:default; }
+    .preset-ui.preset-ui.bottom { position:fixed !important;left:0 !important;right:0 !important;bottom:0 !important;top:auto !important;width:100vw !important;max-width:100vw !important;height:194px !important;max-height:none !important;transform:none !important;overflow:visible !important;pointer-events:none;padding:0 !important; }
+    .preset-ui.preset-ui.bottom button, .preset-ui.preset-ui.bottom input, .preset-ui.preset-ui.bottom select, .preset-ui.preset-ui.bottom .menu-popup { pointer-events:auto; }
+    .preset-ui.preset-ui.bottom .toolbar-collapse-toggle,.preset-ui.preset-ui.bottom .toolbar-row--compact,.movement-mode-desktop,.edit-visible-undo { display:none !important; }
+    .preset-ui.preset-ui.bottom .toolbar-layout, .preset-ui.preset-ui.bottom .toolbar-row:not(.toolbar-row--compact) { display:contents !important; }
+    .preset-ui.preset-ui.bottom .row-left,.preset-ui.preset-ui.bottom .row-center,.preset-ui.preset-ui.bottom .row-right { display:block !important;position:static !important;width:auto !important; }
+    .preset-ui.preset-ui.bottom .controls-row--expanded:not(.controls-row--compact) { display:flex !important;position:fixed !important;left:max(12px,env(safe-area-inset-left)) !important;bottom:calc(54px + env(safe-area-inset-bottom)) !important;gap:6px !important;width:144px !important;min-width:144px !important;max-width:none !important;justify-content:flex-start !important; }
+    .preset-ui.preset-ui.bottom .controls-row--expanded .icon-btn { width:44px !important;height:44px !important;min-width:44px !important;flex:0 0 44px !important;border-radius:12px !important; }
+    .preset-ui.preset-ui.bottom .controls-row--expanded button[title="Clear sequence queue"] { display:none; }
+    .preset-ui.preset-ui.bottom .preset-select-wrap { display:block !important;position:fixed !important;left:max(12px,env(safe-area-inset-left));bottom:calc(8px + env(safe-area-inset-bottom));width:144px !important;min-width:144px !important;max-width:144px !important; }
+    .preset-ui.preset-ui.bottom .preset-trigger { min-height:40px !important; }
+    .preset-ui.preset-ui.bottom .playback-save-row { display:flex !important;position:fixed !important;right:max(12px,env(safe-area-inset-right)) !important;bottom:calc(8px + env(safe-area-inset-bottom)) !important;left:calc(100vw - 132px - max(12px,env(safe-area-inset-right))) !important;box-sizing:border-box;padding:0 !important;margin:0 !important;flex-direction:column !important;align-items:stretch !important;gap:6px !important;width:132px !important; }
+    .preset-ui.preset-ui.bottom .sequence-trigger { min-height:44px !important;width:132px !important;min-width:132px !important;max-width:132px !important;justify-content:flex-start !important;padding:8px !important; }
+    .preset-ui.preset-ui.bottom .sequence-dropdown { width:100% !important; }
+    .person-pose-tools,.preset-ui.preset-ui.bottom .person-pose-tools { display:flex !important;position:fixed !important;left:max(12px,env(safe-area-inset-left)) !important;bottom:calc(148px + env(safe-area-inset-bottom)) !important;justify-content:flex-start !important;flex-wrap:nowrap !important;padding:0 !important;z-index:170;pointer-events:auto; }
+    .person-pose-tools.wheel-open { z-index:11002 !important; }
+    .person-pose-tools .btn { min-height:40px !important; }
+    .mobile-mode-notice { display:inline-block;width:18px;text-align:center;font:bold 16px system-ui;color:#1749a4; }
+    :global(body.dark-mode) .mobile-mode-notice { color:#bfdbfe; }
+    .mobile-floating-tools { display:flex !important;position:fixed !important;left:max(12px,env(safe-area-inset-left)) !important;bottom:calc(206px + env(safe-area-inset-bottom)) !important;gap:6px !important;z-index:171 !important;touch-action:none;-webkit-touch-callout:none;user-select:none; }
+    .mobile-floating-tools button { touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none; }
+    .mobile-floating-tools .mobile-mode-control { width:44px !important;height:44px !important;border-radius:12px !important; }
+    .mobile-mode-cycle,.mobile-floating-undo { border:1px solid #aab8cf;border-radius:10px;background:#f8fafc;color:#172334;min-height:40px;font:600 12px system-ui; }
+    .mobile-mode-cycle { position:fixed;left:max(12px,env(safe-area-inset-left));bottom:calc(104px + env(safe-area-inset-bottom));width:144px; }
+    .mobile-mode-letter { display:none; }
+    .mobile-floating-undo { position:absolute;left:0;bottom:54px;display:flex;align-items:center;gap:6px;padding:6px 12px; }
+    .mobile-floating-undo svg { width:20px;height:20px; }
+    :global(body.dark-mode) .mobile-mode-cycle,:global(body.dark-mode) .mobile-floating-undo { background:#1e293b;color:#e2e8f0;border-color:#475569; }
+    .play-count-badge { font-size:10px !important; }
+  }
+  @media (pointer:coarse) and (orientation:landscape) {
+    .preset-ui.preset-ui.bottom { height:0 !important;background:transparent !important;border:0 !important;box-shadow:none !important;backdrop-filter:none !important; }
+    .preset-ui.preset-ui.bottom .controls-row--expanded:not(.controls-row--compact) { bottom:calc(8px + env(safe-area-inset-bottom)) !important; }
+    .preset-ui.preset-ui.bottom .preset-select-wrap { bottom:calc(60px + env(safe-area-inset-bottom)); }
+    .person-pose-tools,.preset-ui.preset-ui.bottom .person-pose-tools { bottom:calc(108px + env(safe-area-inset-bottom)) !important; }
+    .mobile-floating-tools { left:calc(50% - 97px) !important;bottom:calc(8px + env(safe-area-inset-bottom)) !important;transform:none; }
+    .mobile-floating-undo { position:fixed;left:max(12px,env(safe-area-inset-left));bottom:calc(162px + env(safe-area-inset-bottom)); }
+    .mobile-mode-cycle { position:static;width:44px;min-width:44px; }
+    .mobile-mode-full { display:none; }.mobile-mode-letter { display:inline;font-size:16px; }
+    .mobile-mode-notice { width:18px; }
+  }
+
 </style>
