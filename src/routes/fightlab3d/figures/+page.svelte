@@ -705,7 +705,7 @@ function isLocked(person, key){
       mobileViewportLeftInset = 0;
       return;
     }
-    if (isLandscapeSideRailViewport()){
+    if (isMobileViewport()){
       mobileViewportLeftInset = 0;
       mobileViewportBottomInset = 0;
       return;
@@ -11400,8 +11400,8 @@ function clampToDragLengths(person, jointKey, target){
       </button>
       <div class="person-pose-tools" class:wheel-open={!!poseWheel} use:portalToBody={showMobileShortcutList}>
         <span class="mobile-mode-notice" role="status" aria-label={mobileModeNotice ? movementModeLabel : undefined}>{mobileModeNotice}</span>
-        <button class="btn" style={poseButtonStyle('A',colorblindMode)} on:click={(event)=>openPersonPose('A',event)} disabled={playing}>Pose A</button>
-        <button class="btn" style={poseButtonStyle('B',colorblindMode)} on:click={(event)=>openPersonPose('B',event)} disabled={playing}>Pose B</button>
+        <button class="btn" style={poseButtonStyle('A',colorblindMode)} on:click={(event)=>openPersonPose('A',event)} disabled={playing} aria-label="Pose for figure A">Pose</button>
+        <button class="btn" style={poseButtonStyle('B',colorblindMode)} on:click={(event)=>openPersonPose('B',event)} disabled={playing} aria-label="Pose for figure B">Pose</button>
         {#if gripNotice}<span role="status">{gripNotice}</span>{/if}
         {#if pinsAtLimit}<span role="status">Pin reach limit</span>{/if}
       </div>
@@ -15536,6 +15536,37 @@ function clampToDragLengths(person, jointKey, target){
     .mobile-mode-cycle { position:static;width:44px;min-width:44px; }
     .mobile-mode-full { display:none; }.mobile-mode-letter { display:inline;font-size:16px; }
     .mobile-mode-notice { width:18px; }
+  }
+
+
+  /* Floating controls share one spacing rhythm; menus own the foreground. */
+  @media (pointer:coarse) {
+    .preset-ui.preset-ui.bottom { height:0 !important;background:transparent !important;border:0 !important;box-shadow:none !important;backdrop-filter:none !important; }
+    .person-pose-tools .btn { min-width:0 !important;font-weight:600; }
+    .preset-ui.preset-ui.bottom .sequence-trigger { font-size:13px !important;font-weight:600;box-shadow:0 3px 12px #0f172a12;background:#f8fafc;color:#26384f;border-color:#b7c4d5; }
+    .preset-ui.preset-ui.bottom .sequence-trigger:not(.memory-trigger) { background:#e8f0ff;border-color:#a8bfea;color:#204a87; }
+    :global(body.dark-mode) .preset-ui.preset-ui.bottom .sequence-trigger { background:#1e293b;color:#e2e8f0;border-color:#475569; }
+    :global(body.dark-mode) .preset-ui.preset-ui.bottom .sequence-trigger:not(.memory-trigger) { background:#243a59;border-color:#496991;color:#dbeafe; }
+    .mobile-floating-tools button,.person-pose-tools .btn,.preset-ui.preset-ui.bottom .icon-btn { box-shadow:0 3px 12px #0f172a12; }
+    .person-pose-tools .btn { border-radius:10px; }
+    :global(body:has(.account-menu)) .preset-ui.bottom,
+    :global(body:has(.account-menu)) .person-pose-tools,
+    :global(body:has(.account-menu)) .mobile-floating-tools,
+    :global(body:has(.account-menu)) .shortcut-overlay-anchor { visibility:hidden !important;pointer-events:none !important; }
+    .account-menu { max-height:calc(100dvh - 72px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow-y:auto;overscroll-behavior:contain;font:13px/1.4 system-ui,sans-serif; }
+    .account-menu .menu-title { font:600 14px/1.4 system-ui,sans-serif;margin-bottom:10px; }
+    .account-menu .shortcut-toggle { min-height:44px;padding:10px; }
+  }
+  @media (pointer:coarse) and (orientation:portrait) {
+    .person-pose-tools,.preset-ui.preset-ui.bottom .person-pose-tools {
+      left:auto !important;right:max(12px,env(safe-area-inset-right)) !important;
+      bottom:calc(110px + env(safe-area-inset-bottom)) !important;
+      width:132px;gap:6px !important;
+    }
+    .person-pose-tools .btn { width:63px;flex:1 1 0;min-height:44px !important; }
+    .mobile-mode-notice { position:absolute;left:0;bottom:calc(100% + 6px);width:18px; }
+    .mobile-floating-tools { bottom:calc(154px + env(safe-area-inset-bottom)) !important; }
+    .mobile-floating-undo { border-radius:10px;min-height:40px; }
   }
 
 </style>
