@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parse } from 'svelte/compiler';
 const source=readFileSync(new URL('../routes/fightlab3d/figures/+page.svelte',import.meta.url),'utf8');
+test('restoring user presets keeps them editable instead of promoting them to fixed presets',()=>{
+  const fn=parse(source).instance.content.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='restoreSavedPresets');
+  const saved=[{name:'My guard',data:{pose:'test'}}];
+  const restore=new Function('localStorage','restoreFixedReplacementPresets','normalizeSavedPreset','promoteCurrentCustomPresetsToFixedReplacements',
+    'let savedPresets=[];'+source.slice(fn.start,fn.end)+';restoreSavedPresets();return savedPresets;');
+  const result=restore({getItem:()=>JSON.stringify(saved)},()=>{},p=>p,()=>assert.fail('Must not promote user presets'));
+  assert.deepEqual(result,saved);
+});
 const fn=parse(source).instance.content.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='portalToBody');
 function setup(){
   const listeners=new Set();

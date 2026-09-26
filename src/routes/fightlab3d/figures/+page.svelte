@@ -673,12 +673,13 @@ function isLocked(person, key){
     { keys: 'Mouse wheel or Space / C while dragging', desc: 'Move the selected joint toward or away from the camera' },
   ];
   const mobileShortcuts = [
-    { keys: 'Right click', desc: 'Toggle right-click dragging' },
-    { keys: 'Toward / Away', desc: 'Move the selected joint or figure in depth' },
-    { keys: 'Double-tap + drag', desc: 'Move the figure and select it for depth arrows' },
-    { keys: 'Triple-tap + drag', desc: 'Rotate the figure. With Right click: spine-axis spin' },
-    { keys: 'Triple-tap spine + drag', desc: 'Spin the figure around its spine axis; either spine control' },
-    { keys: 'Pin / Unpin', desc: 'Select a joint, then pin or unpin. Max two per figure' },
+    { keys: 'Drag a joint', desc: 'Touch a joint and slide your finger to pose it. The depth arrows move your selection closer or farther.' },
+    { keys: 'Right click', desc: 'Tap the mouse icon to turn it on, then drag a joint to twist it. Tap again to return to normal dragging.' },
+    { keys: 'Double-tap + drag', desc: 'Tap the figure twice, hold the second touch and drag to move the whole figure. Depth arrows now move that figure.' },
+    { keys: 'Triple-tap + drag', desc: 'Tap three times, hold the third touch and drag to rotate the whole figure. With Right click on, it spins around its spine.' },
+    { keys: 'Triple-tap a spine control', desc: 'Hold the third touch and drag sideways to spin the whole figure around its spine axis. Either spine control works.' },
+    { keys: 'Pin / Unpin', desc: 'Tap a joint to select it, then tap Pin to hold it in place. Tap Unpin to release it. Maximum two pins per figure.' },
+    { keys: 'Camera', desc: 'Drag empty space to orbit the view. Pinch with two fingers to zoom.' },
   ];
   function isLandscapeSideRailViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -1392,6 +1393,7 @@ function isLocked(person, key){
   let playbacksToggleEl;
   let sequenceMenuEl;
   let sequenceToggleEl;
+  let sequenceExitEl;
   let sequenceWindowOffset = { x: 0, y: 0 };
   let sequenceWindowDrag = null;
   let memoryMenuEl;
@@ -1466,10 +1468,11 @@ function isLocked(person, key){
     showMobileShortcutList = isMobileViewport();
   }
   onMount(()=>{
+    document.body.classList.add('figure-editor-page');
     const pointerQuery=window.matchMedia('(pointer: coarse)');
     updateShortcutViewportMode();
     pointerQuery.addEventListener('change',updateShortcutViewportMode);
-    return ()=>pointerQuery.removeEventListener('change',updateShortcutViewportMode);
+    return ()=>{ pointerQuery.removeEventListener('change',updateShortcutViewportMode); document.body.classList.remove('figure-editor-page'); };
   });
   const SHORTCUT_OVERLAY_STORAGE_KEY = 'fightlabShortcutOverlayV1';
   function setShortcutOverlay(value){
@@ -1543,9 +1546,13 @@ function isLocked(person, key){
   function applyDarkMode(){
     if (typeof document === 'undefined') return;
     document.documentElement.style.backgroundColor = darkMode ? '#05070d' : '#f4f6f9';
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', darkMode ? '#05070d' : '#f4f6f9');
+    document.documentElement.style.colorScheme = darkMode ? 'dark' : 'light';
+    let themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (!themeMeta) { themeMeta=document.createElement('meta');themeMeta.name='theme-color';document.head.appendChild(themeMeta); }
+    themeMeta.setAttribute('content', darkMode ? '#05070d' : '#f4f6f9');
     const b = document.body;
     if (!b) return;
+    b.style.backgroundColor = darkMode ? '#05070d' : '#f4f6f9';
     if (darkMode) b.classList.add('dark-mode'); else b.classList.remove('dark-mode');
   }
   function applySceneTheme(){
@@ -7044,13 +7051,13 @@ function clampToDragLengths(person, jointKey, target){
       window.addEventListener('dragstart', preventInteractionSelection, true);
       const handleGlobalPointer = (e)=>{
         const t = e.target;
-        if (showSequenceMenu && !clickInside(t, sequenceMenuEl, playbacksMenuEl, sequenceToggleEl, playbacksToggleEl)) {
+        if (showSequenceMenu && !clickInside(t, sequenceMenuEl, playbacksMenuEl, sequenceToggleEl, sequenceExitEl, playbacksToggleEl)) {
           const sequenceWindowMoved = Math.abs(sequenceWindowOffset?.x || 0) > 1 || Math.abs(sequenceWindowOffset?.y || 0) > 1;
           if (!sequenceDraftActive && !sequenceWindowMoved) {
             showSequenceMenu = false;
             showSavedPlaybacksMenu = false;
           }
-        } else if (showSavedPlaybacksMenu && !clickInside(t, playbacksMenuEl, playbacksToggleEl, sequenceMenuEl, sequenceToggleEl)) {
+        } else if (showSavedPlaybacksMenu && !clickInside(t, playbacksMenuEl, playbacksToggleEl, sequenceMenuEl, sequenceToggleEl, sequenceExitEl)) {
           showSavedPlaybacksMenu = false;
         }
         if (showMemoryMenu && !clickInside(t, memoryMenuEl, memoryToggleEl)) showMemoryMenu = false;
@@ -8483,7 +8490,6 @@ function clampToDragLengths(person, jointKey, target){
   let cleanupEditorListeners = () => {};
   onDestroy(() => {
     cleanupEditorListeners();
-    clearTimeout(mobileModeNoticeTimer);
     clearTrainingReminderTimer();
   });
 
@@ -9208,7 +9214,7 @@ function clampToDragLengths(person, jointKey, target){
         if (Array.isArray(arr)) savedPresets = arr.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean);
       }
     }catch(e){}
-    if (promoteCurrentCustomPresetsToFixedReplacements()) queuePlaybackSync();
+    // User-created presets remain editable in the Create preset section.
   }
   function persistPresetOverrides(){
     try{ localStorage.setItem(PRESET_OVERRIDES_STORAGE_KEY, JSON.stringify(presetOverrides)); }catch(e){}
@@ -9937,15 +9943,10 @@ function clampToDragLengths(person, jointKey, target){
     window.addEventListener('contextmenu', handleMeshyRigContextMenuModifier, true);
   }
 
-  let mobileModeNotice = '';
-  let mobileModeNoticeTimer;
   $: movementModeLetter = pivotJointMode ? 'P' : singleJointMode ? 'S' : 'N';
   $: movementModeLabel = pivotJointMode ? 'Pivot' : singleJointMode ? 'Single joint' : 'Natural movement';
   function cycleMobileMode(){
     toggleSingleJointMode();
-    mobileModeNotice = pivotJointMode ? 'P' : singleJointMode ? 'S' : 'N';
-    clearTimeout(mobileModeNoticeTimer);
-    mobileModeNoticeTimer = setTimeout(()=>mobileModeNotice='',1400);
   }
   function toggleSingleJointMode(){
     if (!singleJointMode) { singleJointMode = true; pivotJointMode = false; }
@@ -11418,7 +11419,6 @@ function clampToDragLengths(person, jointKey, target){
         </svg>
       </button>
       <div class="person-pose-tools" class:wheel-open={!!poseWheel} use:portalToBody={showMobileShortcutList}>
-        <span class="mobile-mode-notice" role="status" aria-label={mobileModeNotice ? movementModeLabel : undefined}>{mobileModeNotice}</span>
         <button class="btn" style={poseButtonStyle('A',colorblindMode)} on:click={(event)=>openPersonPose('A',event)} disabled={playing} aria-label="Pose for figure A">Pose</button>
         <button class="btn" style={poseButtonStyle('B',colorblindMode)} on:click={(event)=>openPersonPose('B',event)} disabled={playing} aria-label="Pose for figure B">Pose</button>
         {#if gripNotice}<span role="status">{gripNotice}</span>{/if}
@@ -11512,6 +11512,18 @@ function clampToDragLengths(person, jointKey, target){
                             </div>
                           {/each}
                         {/if}
+
+                      </div>
+                      <div class="preset-menu-col">
+                        <div class="menu-section-title preset-menu-title">
+                          <span>Create preset</span>
+                          <button type="button" class="add-preset-action" on:click|stopPropagation={promptSaveCustomPreset} title="Add custom preset">
+                            <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                          </button>
+                        </div>
+                        <div class="menu-item" style="cursor:default; gap:6px; align-items:flex-start;">
+                          <span class="name" style="white-space:normal; color:#555; font-size:12px;">Tap + to save the current figures as a preset. Your presets appear below.</span>
+                        </div>
                         {#if visibleSavedPresets.length}
                           {#each visibleSavedPresets as pr (pr._idx)}
                             <div class="menu-item">
@@ -11529,17 +11541,6 @@ function clampToDragLengths(person, jointKey, target){
                             </div>
                           {/each}
                         {/if}
-                      </div>
-                      <div class="preset-menu-col">
-                        <div class="menu-section-title preset-menu-title">
-                          <span>Create preset</span>
-                          <button type="button" class="add-preset-action" on:click|stopPropagation={promptSaveCustomPreset} title="Add custom preset">
-                            <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                          </button>
-                        </div>
-                        <div class="menu-item" style="cursor:default; gap:6px; align-items:flex-start;">
-                          <span class="name" style="white-space:normal; color:#555; font-size:12px;">Click the + to save the current pose. New presets appear in the main Presets list.</span>
-                        </div>
                       </div>
                     </div>
                   {/if}
@@ -11593,7 +11594,7 @@ function clampToDragLengths(person, jointKey, target){
                 <svg class="icon" viewBox="0 0 24 24" style={`transform: rotate(${showSequenceMenu ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               {#if mobileTechniqueActive}
-                <button type="button" class="mobile-technique-exit" aria-label="Close technique" title="Close technique" on:click={cancelSequenceDraft}>
+                <button type="button" class="mobile-technique-exit" bind:this={sequenceExitEl} aria-label="Close technique" title="Close technique" on:click|stopPropagation={cancelSequenceDraft}>
                   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                 </button>
               {/if}
@@ -15628,9 +15629,33 @@ function clampToDragLengths(person, jointKey, target){
     .mobile-pin-button { left:auto;right:58px;bottom:calc(162px + env(safe-area-inset-bottom)); }
   }
   @media (pointer:coarse) and (orientation:landscape) {
-    .shortcut-overlay-anchor { width:min(360px,calc(100vw - 20px));max-width:min(360px,calc(100vw - 20px)); }
-    .shortcut-overlay-panel { width:min(360px,calc(100vw - 20px));max-height:calc(100dvh - 116px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow-y:auto; }
+    .shortcut-overlay-anchor { width:min(360px,calc(100vw - 20px));max-width:min(360px,calc(100vw - 20px));display:flex;flex-direction:column;align-items:flex-end; }
+    .shortcut-overlay-panel { width:min(360px,calc(100vw - 20px));max-height:calc(100dvh - 166px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow-y:auto; }
     .shortcut-overlay-list { gap:6px; }
     .mobile-pin-button { left:auto;right:calc(156px + env(safe-area-inset-right));bottom:calc(60px + env(safe-area-inset-bottom)); }
+  }
+  /* Disable accidental double-tap zoom while keeping normal page scrolling and pinch zoom. */
+  :global(body.figure-editor-page) { touch-action:manipulation; }
+  :global(body.figure-editor-page button), :global(body.figure-editor-page input), :global(body.figure-editor-page select), :global(body.figure-editor-page a) { touch-action:manipulation; }
+  .technique-library-link { min-height:44px;font-size:16px;line-height:1.4;padding:8px 0; }
+  .technique-library-link .icon { width:20px;height:20px; }
+  .breadcrumb-segment { font:600 16px/1.4 system-ui,sans-serif;min-height:40px; }
+  .back-breadcrumb > .name { font:600 16px/1.4 system-ui,sans-serif; }
+  .training-reminder-row .training-time-input,
+  .training-reminder-row .memory-reminder-btn { appearance:none;-webkit-appearance:none;height:44px !important;min-height:44px !important;max-height:44px !important;box-sizing:border-box !important;margin:0 !important;padding:8px 10px !important;font:500 16px/24px system-ui,sans-serif !important; }
+  .training-time-input::-webkit-date-and-time-value { min-height:24px;text-align:left; }
+  @media (pointer:coarse) and (orientation:portrait) {
+    .shortcut-overlay-panel { max-height:calc(100dvh - 180px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow-y:auto; }
+  }
+  @media (pointer:coarse) and (orientation:landscape) {
+    .person-pose-tools,.preset-ui.preset-ui.bottom .person-pose-tools { left:auto !important;right:max(12px,env(safe-area-inset-right)) !important;bottom:calc(110px + env(safe-area-inset-bottom)) !important;width:132px;gap:6px !important; }
+    .person-pose-tools .btn { width:63px;flex:1 1 0;min-height:44px !important; }
+    .preset-ui.preset-ui.bottom .controls-row--expanded { display:flex !important; }
+    .preset-ui.preset-ui.bottom:not(.mobile-technique-active) .controls-row--expanded { display:flex !important; }
+    .preset-ui.preset-ui.bottom .preset-select-wrap,
+    .preset-ui.preset-ui.bottom:not(.mobile-technique-active) .preset-select-wrap { bottom:calc(60px + env(safe-area-inset-bottom)); }
+    .mobile-floating-tools { left:max(12px,env(safe-area-inset-left)) !important;bottom:calc(108px + env(safe-area-inset-bottom)) !important; }
+    .mobile-mode-cycle { position:fixed;left:calc(max(12px,env(safe-area-inset-left)) + 46px);bottom:calc(162px + env(safe-area-inset-bottom));width:44px;height:40px; }
+    .mobile-pin-button { left:calc(max(12px,env(safe-area-inset-left)) + 96px);right:auto;bottom:calc(162px + env(safe-area-inset-bottom));height:40px; }
   }
 </style>
