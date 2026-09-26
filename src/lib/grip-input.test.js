@@ -113,6 +113,11 @@ test('drag movement cancels the multiple-tap chain',()=>{
   editor('handleMeshyRigPointerMove',e.env)({...event(),pointerType:'touch',clientX:80});
   assert.equal(e.env.lastMobileFigureTap.count,0);
 });
+for(const control of ['lean','bend'])for(const mode of ['normal','rotate'])test(`triple tap on ${control} spine control spins around the spine in ${mode}`,()=>{
+  const e=touchSetup(true,mode);e.handle.userData.torsoControl=control;
+  e.tap();e.tap();e.tap();
+  assert.deepEqual(e.calls.slice(-2),['spine-spin','select-figure']);
+});
 test('whole figure selection clears the highlighted joint and survives touch release',()=>{
   const marker={material:'active'},handle={userData:{marker,markerBaseMaterial:'base'}},rig={person:'B'};
   const env={mobileSelectedRigHandle:handle,mobileSelectedFigureRig:null,meshyRigSelectedJointMaterial:'drag',isMeshyRigActiveJointMaterial:m=>m==='active',

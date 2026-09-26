@@ -673,11 +673,12 @@ function isLocked(person, key){
     { keys: 'Mouse wheel or Space / C while dragging', desc: 'Move the selected joint toward or away from the camera' },
   ];
   const mobileShortcuts = [
-    { keys: 'Right click', desc: 'Toggle right-click behavior for joint drags and triple-tap rotation' },
-    { keys: 'Toward / Away buttons', desc: 'Move the selected joint or whole figure in depth' },
-    { keys: 'Double-tap + drag', desc: 'Move the whole figure; depth arrows now move that figure' },
-    { keys: 'Triple-tap + drag', desc: 'Rotate the whole figure; enable Right click to spin around its spine' },
-    { keys: 'Pin / Unpin', desc: 'Select a joint, then tap Pin or Unpin (maximum two per figure)' },
+    { keys: 'Right click', desc: 'Toggle right-click dragging' },
+    { keys: 'Toward / Away', desc: 'Move the selected joint or figure in depth' },
+    { keys: 'Double-tap + drag', desc: 'Move the figure and select it for depth arrows' },
+    { keys: 'Triple-tap + drag', desc: 'Rotate the figure. With Right click: spine-axis spin' },
+    { keys: 'Triple-tap spine + drag', desc: 'Spin the figure around its spine axis; either spine control' },
+    { keys: 'Pin / Unpin', desc: 'Select a joint, then pin or unpin. Max two per figure' },
   ];
   function isLandscapeSideRailViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -5178,7 +5179,8 @@ function isLocked(person, key){
         event.stopPropagation();
         event.stopImmediatePropagation?.();
         const rotationHandle = jointHandle || tapRig.handles?.find(h => isMeshyRigHipsBone(h.userData.bone)) || tapRig.handles?.[0];
-        startMeshyRigBodyTwistDrag(event, rotationHandle, mobileJointMode === 'rotate' ? 'spine-spin' : 'whole');
+        const spinAroundSpine = !!jointHandle?.userData?.torsoControl || mobileJointMode === 'rotate';
+        startMeshyRigBodyTwistDrag(event, rotationHandle, spinAroundSpine ? 'spine-spin' : 'whole');
         selectMobileWholeFigure(tapRig);
         lastMobileFigureTap = { rig:null, time:0, x:0, y:0, count:0 };
         return;
@@ -13567,12 +13569,14 @@ function clampToDragLengths(person, jointKey, target){
     display:flex;
     flex-direction:column;
     overflow:visible;
-    border:0;
-    border-radius:0;
-    background:transparent;
+    box-sizing:border-box;
+    padding:12px;
+    border:1px solid #cbd5e1;
+    border-radius:12px;
+    background:#f8fafc;
     color:#0f172a;
-    box-shadow:none;
-    opacity:0.68;
+    box-shadow:0 6px 20px rgba(15,23,42,0.16);
+    opacity:1;
   }
   .shortcut-overlay-head {
     display:flex;
@@ -13587,7 +13591,7 @@ function clampToDragLengths(person, jointKey, target){
   }
   .shortcut-overlay-list {
     display:grid;
-    gap:3px;
+    gap:8px;
     padding:0;
     overflow:visible;
   }
@@ -13599,8 +13603,8 @@ function clampToDragLengths(person, jointKey, target){
     padding:0;
     border-radius:0;
     background:transparent;
-    font:11px/1.22 system-ui, sans-serif;
-    text-shadow:0 1px 2px rgba(255,255,255,0.72);
+    font:12px/1.4 system-ui, sans-serif;
+    text-shadow:none;
   }
   .shortcut-overlay-row strong {
     color:#0f172a;
@@ -13849,18 +13853,18 @@ function clampToDragLengths(person, jointKey, target){
   :global(body.dark-mode) .preset-ui.bottom.toolbar-editing .frame-strip { border-color:rgba(96,165,250,.42); background:rgba(23,37,84,.72); box-shadow:inset 3px 0 0 #60a5fa; }
   :global(body.dark-mode) .preset-ui.bottom.toolbar-editing .frame-strip__label { color:#93c5fd; }
   :global(body.dark-mode) .shortcut-overlay-panel {
-    background:transparent;
-    border-color:transparent;
+    background:#0f172a;
+    border-color:#475569;
     color:#e5e7eb;
-    box-shadow:none;
-    opacity:0.72;
+    box-shadow:0 6px 20px rgba(0,0,0,0.3);
+    opacity:1;
   }
   :global(body.dark-mode) .shortcut-overlay-head {
     border-bottom-color:transparent;
   }
   :global(body.dark-mode) .shortcut-overlay-row {
     background:transparent;
-    text-shadow:0 1px 2px rgba(0,0,0,0.72);
+    text-shadow:none;
   }
   :global(body.dark-mode) .shortcut-overlay-row strong {
     color:#cbd5f5;
@@ -13980,7 +13984,7 @@ function clampToDragLengths(person, jointKey, target){
     .shortcut-overlay-row {
       grid-template-columns:1fr;
       gap:3px;
-      font-size:10px;
+      font-size:12px;
       padding:0;
     }
     .shortcut-overlay-head {
@@ -15624,6 +15628,9 @@ function clampToDragLengths(person, jointKey, target){
     .mobile-pin-button { left:auto;right:58px;bottom:calc(162px + env(safe-area-inset-bottom)); }
   }
   @media (pointer:coarse) and (orientation:landscape) {
+    .shortcut-overlay-anchor { width:min(360px,calc(100vw - 20px));max-width:min(360px,calc(100vw - 20px)); }
+    .shortcut-overlay-panel { width:min(360px,calc(100vw - 20px));max-height:calc(100dvh - 116px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow-y:auto; }
+    .shortcut-overlay-list { gap:6px; }
     .mobile-pin-button { left:auto;right:calc(156px + env(safe-area-inset-right));bottom:calc(60px + env(safe-area-inset-bottom)); }
   }
 </style>
