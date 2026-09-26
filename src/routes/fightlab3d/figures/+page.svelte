@@ -410,8 +410,9 @@
   };
   let mobileJointMode = 'normal'; // 'normal' | 'rotate'
   let mobileSelectedRigHandle = null;
+  let mobileSelectedFigureRig = null;
+  $: mobileSelectedJointPinned = (pinCount, !!mobileSelectedRigHandle && isJointPinned(mobileSelectedRigHandle.userData.meshyRig, mobileSelectedRigHandle.userData.bone));
   let mobileDepthHoldTimer = null;
-  let mobileRotateHoldTimer = null;
   let lastMobileFigureTap = { rig: null, time: 0, x: 0, y: 0, count: 0 };
   const meshyRigRaycaster = new THREE.Raycaster();
   const meshyRigPointer = new THREE.Vector2();
@@ -672,10 +673,11 @@ function isLocked(person, key){
     { keys: 'Mouse wheel or Space / C while dragging', desc: 'Move the selected joint toward or away from the camera' },
   ];
   const mobileShortcuts = [
-    { keys: 'Rotate button', desc: 'Make joint drags twist like right-click drag' },
-    { keys: 'Toward / Away buttons', desc: 'Move the selected joint toward or away from the camera' },
-    { keys: 'Double-tap figure', desc: 'Move the figure like Ctrl + drag' },
-    { keys: '2x tap joint', desc: 'Pin or unpin (maximum two per figure)' },
+    { keys: 'Right click', desc: 'Toggle right-click behavior for joint drags and triple-tap rotation' },
+    { keys: 'Toward / Away buttons', desc: 'Move the selected joint or whole figure in depth' },
+    { keys: 'Double-tap + drag', desc: 'Move the whole figure; depth arrows now move that figure' },
+    { keys: 'Triple-tap + drag', desc: 'Rotate the whole figure; enable Right click to spin around its spine' },
+    { keys: 'Pin / Unpin', desc: 'Select a joint, then tap Pin or Unpin (maximum two per figure)' },
   ];
   function isLandscapeSideRailViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -2845,7 +2847,7 @@ function isLocked(person, key){
   function choosePinEndpoint(handle) {
     if (!handle || !torsoHandleSelectable(handle, rigJointMarkerMode)) return;
     const rig=handle.userData.meshyRig, bone=handle.userData.bone;
-    if (!isJointPinned(rig,bone) && (rig.jointPins?.length||0)>=2) { gripNotice='Maximum two pins per figure. Double-click a pinned joint to release it.'; return; }
+    if (!isJointPinned(rig,bone) && (rig.jointPins?.length||0)>=2) { gripNotice=isMobileViewport() ? 'Maximum two pins per figure. Select a pinned joint and tap Unpin.' : 'Maximum two pins per figure. Double-click a pinned joint to release it.'; return; }
     pushUndoSnapshot();
     toggleJointPin(meshyRigFigures,rig,bone); gripNotice='';
     setMobileSelectedRigHandle(handle); updateAllMeshyRigHandles();
@@ -2868,11 +2870,21 @@ function isLocked(person, key){
     return material === meshyRigActiveJointMaterialA || material === meshyRigActiveJointMaterialB;
   }
 
+  function selectMobileWholeFigure(rig) {
+    setMobileSelectedRigHandle(null);
+    hideMobileCrosshair();
+    mobileSelectedFigureRig = rig;
+    selectedMeshyRig = rig;
+    toolPerson = rig.person;
+    updateAllMeshyRigHandles();
+  }
+
   function setMobileSelectedRigHandle(handle) {
+    mobileSelectedFigureRig = null;
     if (mobileSelectedRigHandle && mobileSelectedRigHandle !== handle) {
       const previousMarker = mobileSelectedRigHandle.userData?.marker;
       const previousBase = mobileSelectedRigHandle.userData?.markerBaseMaterial;
-      if (previousMarker && previousBase && isMeshyRigActiveJointMaterial(previousMarker.material)) {
+      if (previousMarker && previousBase && (isMeshyRigActiveJointMaterial(previousMarker.material) || previousMarker.material === meshyRigSelectedJointMaterial)) {
         previousMarker.material = previousBase;
       }
     }
@@ -4612,7 +4624,24 @@ function isLocked(person, key){
     return true;
   }
 
+  function nudgeSelectedMobileFigureDepth(direction) {
+    const rig = mobileSelectedFigureRig;
+    if (!rig || !camera || !direction) return false;
+    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
+    resetMeshySubfloorOutlineState(rig, { hide: !rig.floorOutline?.visible });
+    const before = rig.object.position.clone();
+    const delta = camera.getWorldDirection(new THREE.Vector3()).normalize().multiplyScalar(-direction * Number(scrollSensitivity));
+    rig.object.position.add(delta);
+    rig.object.updateMatrixWorld(true);
+    updateMeshyRigHandles(rig);
+    if (meshyFigureDrag?.rig === rig) {
+      meshyRigDragPlane.constant -= meshyRigDragPlane.normal.dot(rig.object.position.clone().sub(before));
+      reanchorMeshyFigureDrag();
+    }
+    return true;
+  }
   function nudgeSelectedMobileJointDepth(direction) {
+    if (mobileSelectedFigureRig) return nudgeSelectedMobileFigureDepth(direction);
     const handle = mobileSelectedRigHandle || mobileCrosshair.handle;
     const rig = handle?.userData?.meshyRig;
     const bone = handle?.userData?.bone;
@@ -4620,7 +4649,7 @@ function isLocked(person, key){
     if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
     resetMeshySubfloorOutlineState(rig, { hide: !rig.floorOutline?.visible });
     const cameraForward = camera.getWorldDirection(new THREE.Vector3()).normalize();
-    const step = Number(scrollSensitivity) * direction;
+    const step = -Number(scrollSensitivity) * direction;
     const targetWorld = handle.position.clone().addScaledVector(cameraForward, step);
     if (pivotJointMode) applyJointPivotTarget(captureJointPivot(rig, bone, camera), targetWorld);
     else if (singleJointMode) applyJointMove(captureJointMove(rig, bone), targetWorld);
@@ -4640,8 +4669,8 @@ function isLocked(person, key){
   function startMobileDepthButton(direction, event) {
     event?.preventDefault?.();
     event?.stopPropagation?.();
-    nudgeSelectedMobileJointDepth(direction);
     stopMobileDepthButton();
+    nudgeSelectedMobileJointDepth(direction);
     mobileDepthHoldTimer = setInterval(() => nudgeSelectedMobileJointDepth(direction), 55);
   }
 
@@ -4649,31 +4678,6 @@ function isLocked(person, key){
     if (!mobileDepthHoldTimer) return;
     try { clearInterval(mobileDepthHoldTimer); } catch(e) {}
     mobileDepthHoldTimer = null;
-    dragSnapshotTaken = false;
-  }
-
-  function rotateSelectedMobileJoint(direction = 1) {
-    const handle = mobileSelectedRigHandle || mobileCrosshair.handle;
-    if (!handle?.userData?.meshyRig || !handle?.userData?.bone) return false;
-    if (!dragSnapshotTaken) { pushUndoSnapshot(); dragSnapshotTaken = true; }
-    setMobileSelectedRigHandle(handle);
-    applyMeshyRigTwistFromPixels(handle, 7 * direction, 0);
-    updateMeshyRigHandles(handle.userData.meshyRig);
-    return true;
-  }
-
-  function startMobileRotateButton(event) {
-    event?.preventDefault?.();
-    event?.stopPropagation?.();
-    rotateSelectedMobileJoint(1);
-    stopMobileRotateButton();
-    mobileRotateHoldTimer = setInterval(() => rotateSelectedMobileJoint(1), 55);
-  }
-
-  function stopMobileRotateButton() {
-    if (!mobileRotateHoldTimer) return;
-    try { clearInterval(mobileRotateHoldTimer); } catch(e) {}
-    mobileRotateHoldTimer = null;
     dragSnapshotTaken = false;
   }
 
@@ -5144,7 +5148,9 @@ function isLocked(person, key){
     blurActiveTextField();
     if (!renderer || !camera || !meshyRigFigures.length) return;
     if (poseWheel || poseLibraryPerson) return;
-    if (event.button !== 2 && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+    const isMobilePointer = event.pointerType === 'touch';
+    if (isMobilePointer && event.isPrimary === false) return;
+    if (!isMobilePointer && event.button !== 2 && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
       const handle = pickMeshyRigJoint(event);
       const now = Date.now();
       if (handle && lastJointTap?.handle === handle && now-lastJointTap.time < 350 && Math.hypot(event.clientX-lastJointTap.x,event.clientY-lastJointTap.y)<14) {
@@ -5154,7 +5160,6 @@ function isLocked(person, key){
       }
       jointTapStart = handle ? {handle,time:now,x:event.clientX,y:event.clientY} : null;
     } else { lastJointTap=null; jointTapStart=null; }
-    const isMobilePointer = event.pointerType === 'touch' || (isMobileViewport() && event.pointerType !== 'mouse');
     if (isMobilePointer && event.button !== 2 && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
       const jointHandle = pickMeshyRigJoint(event);
       const figureHit = jointHandle ? null : pickMeshyRigFigure(event);
@@ -5166,14 +5171,16 @@ function isLocked(person, key){
         && Math.hypot(event.clientX - lastMobileFigureTap.x, event.clientY - lastMobileFigureTap.y) < 34;
       const tapCount = sameTapTarget ? Math.min(3, (lastMobileFigureTap.count || 1) + 1) : 1;
       lastMobileFigureTap = { rig: tapRig, time: now, x: event.clientX, y: event.clientY, count: tapCount };
-      const isTripleTap = false;
-      const isDoubleTap = !jointHandle && !!tapRig && tapCount === 2;
+      const isTripleTap = !!tapRig && tapCount === 3;
+      const isDoubleTap = !!tapRig && tapCount === 2;
       if (isTripleTap) {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
-        hideMobileCrosshair();
-        startMeshyRigBodyTwistDrag(event, jointHandle, 'whole');
+        const rotationHandle = jointHandle || tapRig.handles?.find(h => isMeshyRigHipsBone(h.userData.bone)) || tapRig.handles?.[0];
+        startMeshyRigBodyTwistDrag(event, rotationHandle, mobileJointMode === 'rotate' ? 'spine-spin' : 'whole');
+        selectMobileWholeFigure(tapRig);
+        lastMobileFigureTap = { rig:null, time:0, x:0, y:0, count:0 };
         return;
       }
       if (isDoubleTap) {
@@ -5183,7 +5190,7 @@ function isLocked(person, key){
         const hit = figureHit?.hit || { point: jointHandle?.position?.clone?.() || tapRig.object.position.clone() };
         hideMobileCrosshair();
         startMeshyFigureDrag(event, tapRig, hit);
-        showMobileCrosshairForRig(tapRig);
+        selectMobileWholeFigure(tapRig);
         return;
       }
     }
@@ -5243,6 +5250,7 @@ function isLocked(person, key){
   }
 
   function handleMeshyRigPointerMove(event) {
+    if (event.pointerType === 'touch' && Math.hypot(event.clientX-lastMobileFigureTap.x,event.clientY-lastMobileFigureTap.y)>14) lastMobileFigureTap = { rig:null, time:0, x:0, y:0, count:0 };
     if (jointTapStart && Math.hypot(event.clientX-jointTapStart.x,event.clientY-jointTapStart.y)>=6) { jointTapStart=null; lastJointTap=null; }
     lastFigurePointer = {clientX:event.clientX,clientY:event.clientY};
     if (poseWheel) return;
@@ -5273,6 +5281,7 @@ function isLocked(person, key){
   }
 
   function handleMeshyRigPointerUp(event) {
+    if (event.pointerType === 'touch' && event.type === 'pointercancel') lastMobileFigureTap = { rig:null, time:0, x:0, y:0, count:0 };
     if (jointTapStart) {
       lastJointTap = event.type !== 'pointercancel' && Date.now()-jointTapStart.time<350 && Math.hypot(event.clientX-jointTapStart.x,event.clientY-jointTapStart.y)<6 ? {...jointTapStart,time:Date.now()} : null;
       jointTapStart=null;
@@ -12030,25 +12039,17 @@ function clampToDragLengths(person, jointKey, target){
       <button class="mobile-floating-undo" on:click={undoLastFigureMove} aria-label="Undo last move" title="Undo last move">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 4 10l5 5M4 10h10a6 6 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <button
-        type="button"
-        class="mobile-mode-control"
-        aria-label="Rotate selected joint"
-        title="Rotate selected joint"
-        on:pointerdown={startMobileRotateButton}
-        on:pointerup={stopMobileRotateButton}
-        on:pointercancel={stopMobileRotateButton}
-        on:pointerleave={stopMobileRotateButton}>
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M21 12a9 9 0 1 1-2.64-6.36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <path d="M21 4v6h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+      {#if mobileSelectedRigHandle}
+        <button type="button" class="mobile-pin-button" class:is-active={mobileSelectedJointPinned} aria-pressed={mobileSelectedJointPinned} on:click={() => choosePinEndpoint(mobileSelectedRigHandle)}>{mobileSelectedJointPinned ? 'Unpin' : 'Pin'}</button>
+      {/if}
+      <button type="button" class="mobile-mode-control mobile-right-click" class:is-active={mobileJointMode === 'rotate'} aria-label="Right click" aria-pressed={mobileJointMode === 'rotate'} title="Right click" on:click={() => mobileJointMode = mobileJointMode === 'rotate' ? 'normal' : 'rotate'}>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v8h6V9a6 6 0 0 0-6-6Z" fill="currentColor"/><path d="M6 11h12M12 3v8" stroke="currentColor" stroke-width="1.5"/></svg>
       </button>
       <button
         type="button"
         class="mobile-mode-control"
-        aria-label="Move selected joint toward camera"
-        title="Move selected joint toward camera"
+        aria-label={mobileSelectedFigureRig ? "Move selected figure toward camera" : "Move selected joint toward camera"}
+        title={mobileSelectedFigureRig ? "Move selected figure toward camera" : "Move selected joint toward camera"}
         on:pointerdown={(e) => startMobileDepthButton(1, e)}
         on:pointerup={stopMobileDepthButton}
         on:pointercancel={stopMobileDepthButton}
@@ -12061,8 +12062,8 @@ function clampToDragLengths(person, jointKey, target){
       <button
         type="button"
         class="mobile-mode-control"
-        aria-label="Move selected joint away from camera"
-        title="Move selected joint away from camera"
+        aria-label={mobileSelectedFigureRig ? "Move selected figure away from camera" : "Move selected joint away from camera"}
+        title={mobileSelectedFigureRig ? "Move selected figure away from camera" : "Move selected joint away from camera"}
         on:pointerdown={(e) => startMobileDepthButton(-1, e)}
         on:pointerup={stopMobileDepthButton}
         on:pointercancel={stopMobileDepthButton}
@@ -15611,4 +15612,18 @@ function clampToDragLengths(person, jointKey, target){
     .preset-ui.preset-ui.bottom:not(.mobile-technique-active) .preset-select-wrap { bottom:calc(8px + env(safe-area-inset-bottom)); }
   }
 
+
+  @media (pointer:coarse) {
+    .mobile-pin-button { position:fixed;left:calc(100vw - 190px - env(safe-area-inset-right));bottom:calc(60px + env(safe-area-inset-bottom));width:40px;height:44px;padding:3px;border:1px solid #aab8cf;border-radius:10px;background:#f8fafc;color:#172334;font:600 11px system-ui; }
+    .mobile-right-click.is-active { background:#dbeafe !important;border-color:#3b82f6 !important;color:#1749a4 !important;box-shadow:0 0 0 2px #3b82f640; }
+    :global(body.dark-mode) .mobile-right-click.is-active { background:#294d78 !important;border-color:#93c5fd !important;color:#eff6ff !important; }
+    :global(body.dark-mode) .mobile-pin-button { background:#1e293b;color:#e2e8f0;border-color:#475569; }
+    .mobile-pin-button.is-active,:global(body.dark-mode) .mobile-pin-button.is-active { background:#fde68a;color:#422006;border-color:#d97706; }
+  }
+  @media (pointer:coarse) and (orientation:portrait) and (max-width:360px) {
+    .mobile-pin-button { left:auto;right:58px;bottom:calc(162px + env(safe-area-inset-bottom)); }
+  }
+  @media (pointer:coarse) and (orientation:landscape) {
+    .mobile-pin-button { left:auto;right:calc(156px + env(safe-area-inset-right));bottom:calc(60px + env(safe-area-inset-bottom)); }
+  }
 </style>

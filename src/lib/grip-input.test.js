@@ -45,7 +45,7 @@ test('wheel and keyboard depth distance scale with the same sensitivity setting'
   }
 });
 
-for(const pointerType of ['mouse','touch'])test('double '+pointerType+' on the same joint toggles the pin',()=>{
+for(const pointerType of ['mouse'])test('double '+pointerType+' on the same joint toggles the pin',()=>{
   const handle={},calls=[];
   const env={blurActiveTextField(){},renderer:{},camera:{},meshyRigFigures:[{}],poseWheel:null,poseLibraryPerson:null,
     lastJointTap:{handle,time:Date.now(),x:10,y:20},jointTapStart:null,pickMeshyRigJoint:()=>handle,
@@ -88,4 +88,45 @@ test('context menu is suppressed for spine spin, including after release with mo
  const canvas={};const env={renderer:{domElement:canvas},meshyRigBodyTwistDrag:{mode:'spine-spin'},meshyRigDrag:null};let prevented=0;const menu=editor('handleMeshyRigContextMenuModifier',env);
  menu({...event(),preventDefault(){prevented++}});env.meshyRigBodyTwistDrag=null;
  menu({...event(),shiftKey:true,target:canvas,preventDefault(){prevented++}});assert.equal(prevented,2);
+});
+
+function touchSetup(onJoint=true,mode='normal'){
+  const rig={object:{position:new Vector3()}},handle={position:new Vector3(),userData:{bone:{name:'Hips'},meshyRig:rig}};rig.handles=[handle];
+  const calls=[];let now=1000;
+  const env={Date:{now:()=>now},blurActiveTextField(){},renderer:{},camera:{},meshyRigFigures:[rig],poseWheel:null,poseLibraryPerson:null,
+    jointTapStart:null,lastJointTap:{handle,time:now,x:10,y:20},lastMobileFigureTap:{rig:null,time:0,x:0,y:0,count:0},meshyRigDrag:null,mobileJointMode:mode,
+    pickMeshyRigJoint:()=>onJoint?handle:null,pickMeshyRigFigure:()=>({rig,hit:{point:new Vector3()}}),
+    startMeshyRigJointDrag:()=>calls.push('joint'),startMeshyRigTwistDrag:()=>calls.push('right'),showMobileCrosshairForHandle(){},hideMobileCrosshair(){},
+    startMeshyFigureDrag:()=>calls.push('figure'),selectMobileWholeFigure:r=>calls.push(r===rig?'select-figure':'wrong-figure'),
+    startMeshyRigBodyTwistDrag:(e,h,m)=>{assert.equal(h,handle);calls.push(m);},isMeshyRigHipsBone:b=>b.name==='Hips',
+    choosePinEndpoint(){assert.fail('Touch tapping must not pin');}};
+  const down=editor('handleMeshyRigPointerDown',env);
+  return {env,rig,handle,calls,tap(){now+=100;down({...event(),ctrlKey:false,pointerType:'touch'});}};
+}
+for(const joint of [true,false])for(const mode of ['normal','rotate'])test(`touch taps on ${joint?'joint':'body'} select movement and triple rotation in ${mode}`,()=>{
+  const e=touchSetup(joint,mode);e.tap();e.tap();e.tap();
+  assert.deepEqual(e.calls,[...(joint?[mode==='rotate'?'right':'joint']:[]),'figure','select-figure',mode==='rotate'?'spine-spin':'whole','select-figure']);
+  assert.equal(e.env.lastMobileFigureTap.count,0);
+});
+test('drag movement cancels the multiple-tap chain',()=>{
+  const e=touchSetup();e.tap();e.env.poseWheel={};
+  editor('handleMeshyRigPointerMove',e.env)({...event(),pointerType:'touch',clientX:80});
+  assert.equal(e.env.lastMobileFigureTap.count,0);
+});
+test('whole figure selection clears the highlighted joint and survives touch release',()=>{
+  const marker={material:'active'},handle={userData:{marker,markerBaseMaterial:'base'}},rig={person:'B'};
+  const env={mobileSelectedRigHandle:handle,mobileSelectedFigureRig:null,meshyRigSelectedJointMaterial:'drag',isMeshyRigActiveJointMaterial:m=>m==='active',
+    mobileCrosshair:{handle},hideMobileCrosshair(){this.mobileCrosshair={handle:null};},selectedMeshyRig:null,toolPerson:'A',updateAllMeshyRigHandles(){}};
+  env.setMobileSelectedRigHandle=editor('setMobileSelectedRigHandle',env);
+  env.hideMobileCrosshair=()=>{env.mobileCrosshair={handle:null};};
+  editor('selectMobileWholeFigure',env)(rig);
+  assert.equal(env.mobileSelectedRigHandle,null);assert.equal(marker.material,'base');assert.equal(env.mobileSelectedFigureRig,rig);assert.equal(env.toolPerson,'B');
+});
+test('whole-figure depth uses the selected figure after release and takes one undo snapshot per hold',()=>{
+  const rig={object:{position:new Vector3(),updateMatrixWorld(){}}};let snapshots=0;
+  const env={THREE:{Vector3},mobileSelectedFigureRig:rig,camera:{getWorldDirection:v=>v.set(0,0,-1)},scrollSensitivity:.02,dragSnapshotTaken:false,
+    pushUndoSnapshot(){snapshots++;},resetMeshySubfloorOutlineState(){},updateMeshyRigHandles(){},meshyFigureDrag:null};
+  env.nudgeSelectedMobileFigureDepth=editor('nudgeSelectedMobileFigureDepth',env);
+  const nudge=editor('nudgeSelectedMobileJointDepth',env);
+  nudge(1);nudge(1);assert.equal(rig.object.position.z,.04);assert.equal(snapshots,1);nudge(-1);assert.equal(rig.object.position.z,.02);
 });
