@@ -3,13 +3,31 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parse } from 'svelte/compiler';
 const source=readFileSync(new URL('../routes/fightlab3d/figures/+page.svelte',import.meta.url),'utf8');
-test('restoring user presets keeps them editable instead of promoting them to fixed presets',()=>{
-  const fn=parse(source).instance.content.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='restoreSavedPresets');
-  const saved=[{name:'My guard',data:{pose:'test'}}];
-  const restore=new Function('localStorage','restoreFixedReplacementPresets','normalizeSavedPreset','promoteCurrentCustomPresetsToFixedReplacements',
-    'let savedPresets=[];'+source.slice(fn.start,fn.end)+';restoreSavedPresets();return savedPresets;');
-  const result=restore({getItem:()=>JSON.stringify(saved)},()=>{},p=>p,()=>assert.fail('Must not promote user presets'));
-  assert.deepEqual(result,saved);
+function presetMigration(initial=[],stored={}){
+  const nodes=parse(source).instance.content.body;
+  const functions=['restoreSavedPresets','promoteCurrentCustomPresetsToFixedReplacements'].map(name=>{const f=nodes.find(n=>n.type==='FunctionDeclaration'&&n.id.name===name);return source.slice(f.start,f.end);}).join('\n');
+  const data=new Map(Object.entries(stored));data.set('savedPresets',JSON.stringify(initial));
+  const storage={getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,v)};
+  const api=new Function('localStorage',
+    "let savedPresets=[],fixedReplacementPresets=[];const CUSTOM_PRESETS_PROMOTED_TO_FIXED_KEY='customPresetsPromotedToFixedV4';const normalizeSavedPreset=p=>p;const canonicalPresetName=n=>n.toLowerCase();function restoreFixedReplacementPresets(){fixedReplacementPresets=JSON.parse(localStorage.getItem('fixedReplacementPresetsV1')||'[]');}"+functions+
+    ';return {restore:restoreSavedPresets,state:()=>({savedPresets,fixedReplacementPresets})};')(storage);
+  return {...api,data};
+}
+test('current presets move once while source records and later creations stay intact',()=>{
+  const old={name:'Existing guard',data:{pose:'original'}},fresh={name:'New guard',data:{pose:'new'}};
+  const e=presetMigration([old],{customPresetsPromotedToFixedV3:'true'});e.restore();
+  assert.deepEqual(e.state(),{savedPresets:[old],fixedReplacementPresets:[old]});
+  e.data.set('savedPresets',JSON.stringify([old,fresh]));e.restore();
+  assert.deepEqual(e.state(),{savedPresets:[old,fresh],fixedReplacementPresets:[old]});
+});
+test('empty library completes the one-time move before its first new preset',()=>{
+  const e=presetMigration();e.restore();e.data.set('savedPresets',JSON.stringify([{name:'First new pose'}]));e.restore();
+  assert.equal(e.state().fixedReplacementPresets.length,0);assert.equal(e.state().savedPresets.length,1);
+});
+test('new presets synced to another device are excluded from its one-time move',()=>{
+  const old={name:'Existing'},fresh={name:'Created afterward',keepInCreatePreset:true};
+  const e=presetMigration([old,fresh]);e.restore();
+  assert.deepEqual(e.state().fixedReplacementPresets,[old]);assert.deepEqual(e.state().savedPresets,[old,fresh]);
 });
 const fn=parse(source).instance.content.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='portalToBody');
 function setup(){

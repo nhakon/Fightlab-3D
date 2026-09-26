@@ -8771,7 +8771,7 @@ function clampToDragLengths(person, jointKey, target){
   function writeFixedReplacementPresetsToLocalStorage(){
     try{ localStorage.setItem('fixedReplacementPresetsV1', JSON.stringify(fixedReplacementPresets)); }catch(e){}
   }
-  const CUSTOM_PRESETS_PROMOTED_TO_FIXED_KEY = 'customPresetsPromotedToFixedV3';
+  const CUSTOM_PRESETS_PROMOTED_TO_FIXED_KEY = 'customPresetsPromotedToFixedV4';
 
   function cleanPresetDisplayName(name, fallback = 'Preset'){
     return String(name || fallback)
@@ -8813,7 +8813,6 @@ function clampToDragLengths(person, jointKey, target){
     try{
       if (localStorage.getItem(CUSTOM_PRESETS_PROMOTED_TO_FIXED_KEY) === 'true') return false;
     }catch(e){}
-    if (!savedPresets.length) return false;
     const merged = new Map();
     fixedReplacementPresets.forEach((preset, i) => {
       const normalized = normalizeSavedPreset(preset, i);
@@ -8821,15 +8820,19 @@ function clampToDragLengths(person, jointKey, target){
       merged.set(canonicalPresetName(normalized.name || `Preset ${i + 1}`), normalized);
     });
     savedPresets.forEach((preset, i) => {
+      if (preset?.keepInCreatePreset) return;
       const normalized = normalizeSavedPreset(preset, i);
       if (!normalized) return;
       merged.set(canonicalPresetName(normalized.name || `Preset ${i + 1}`), normalized);
     });
-    fixedReplacementPresets = Array.from(merged.values());
-    savedPresets = [];
-    writeFixedReplacementPresetsToLocalStorage();
-    writeSavedPresetsToLocalStorage();
-    try{ localStorage.setItem(CUSTOM_PRESETS_PROMOTED_TO_FIXED_KEY, 'true'); }catch(e){}
+    const promoted = Array.from(merged.values());
+    try {
+      localStorage.setItem('fixedReplacementPresetsV1', JSON.stringify(promoted));
+      // Complete even for an empty library, so later creations are never swept up.
+      localStorage.setItem(CUSTOM_PRESETS_PROMOTED_TO_FIXED_KEY, 'true');
+    } catch (_) { return false; }
+    fixedReplacementPresets = promoted;
+    // Keep the synced source records as a backup. visibleSavedPresets hides their fixed copies.
     return true;
   }
 
@@ -9214,7 +9217,7 @@ function clampToDragLengths(person, jointKey, target){
         if (Array.isArray(arr)) savedPresets = arr.map((preset, i) => normalizeSavedPreset(preset, i)).filter(Boolean);
       }
     }catch(e){}
-    // User-created presets remain editable in the Create preset section.
+    promoteCurrentCustomPresetsToFixedReplacements();
   }
   function persistPresetOverrides(){
     try{ localStorage.setItem(PRESET_OVERRIDES_STORAGE_KEY, JSON.stringify(presetOverrides)); }catch(e){}
@@ -9286,9 +9289,9 @@ function clampToDragLengths(person, jointKey, target){
     const data = buildPoseSnapshot();
     const idx = savedPresets.findIndex(p=> String(p?.name||"").toLowerCase() === name.toLowerCase());
     if (idx >= 0) {
-      savedPresets = savedPresets.map((p,i)=> i===idx ? { name, data } : p);
+      savedPresets = savedPresets.map((p,i)=> i===idx ? { ...p, name, data } : p);
     } else {
-      savedPresets = [...savedPresets, { name, data }];
+      savedPresets = [...savedPresets, { name, data, keepInCreatePreset: true }];
     }
     activeCustomPresetName = name;
     newPresetName = "";
@@ -9308,7 +9311,7 @@ function clampToDragLengths(person, jointKey, target){
     if (editingPresetIdx < 0 || editingPresetIdx >= savedPresets.length) return;
     const name = cleanPresetDisplayName((editingPresetName||"").trim() || savedPresets[editingPresetIdx].name || `Preset ${editingPresetIdx+1}`);
     const data = buildPoseSnapshot();
-    savedPresets = savedPresets.map((p,i)=> i===editingPresetIdx ? { name, data } : p);
+    savedPresets = savedPresets.map((p,i)=> i===editingPresetIdx ? { ...p, name, data } : p);
     activeCustomPresetName = name;
     persistSavedPresets();
     editingPresetIdx = -1;
