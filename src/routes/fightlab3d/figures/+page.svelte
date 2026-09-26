@@ -11743,10 +11743,10 @@ function clampToDragLengths(person, jointKey, target){
                       <div class="menu-item"><span class="name" style="opacity:.6;">No playbacks</span></div>
                     {/if}
                   {:else}
-                    <div class="menu-item back-breadcrumb">
+                    <div class="menu-item back-breadcrumb folder-breadcrumb">
                       <button
                         class="back-breadcrumb__btn"
-                        on:click={()=> playbackFolderView = null}
+                        on:click={()=> playbackFolderView = playbackFolderView.split('/').slice(0,-1).join('/') || null}
                         on:dragover|preventDefault={() => {}}
                         on:drop|preventDefault={() => {
                           if (draggingPlaybackIdx != null) {
@@ -11756,25 +11756,15 @@ function clampToDragLengths(person, jointKey, target){
                           }
                         }}>
                         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                        <span>Back to folders</span>
+                        <span>Back</span>
                       </button>
                       {#if playbackFolderView}
-                        <div class="back-breadcrumb__path">
-                          {#each playbackFolderView.split('/').filter(Boolean) as part, i}
-                            {#if i > 0}
-                              <svg class="icon breadcrumb-sep" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                            {/if}
-                            <button
-                              type="button"
-                              class="breadcrumb-segment"
-                              on:click={() => {
-                                const parts = playbackFolderView.split('/').filter(Boolean);
-                                playbackFolderView = parts.slice(0, i + 1).join('/');
-                              }}
-                            >{part}</button>
-                          {/each}
-                        </div>
+                        <span class="current-folder-title" title={playbackFolderView}>
+                          <svg class="icon folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H3z" fill="currentColor"/><path d="M3 6h6l2 2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+                          <span>{playbackFolderView.split('/').filter(Boolean).at(-1)}</span>
+                        </span>
                       {/if}
+
                       <button
                         type="button"
                         class="inline-action small edit-action"
@@ -15661,4 +15651,10 @@ function clampToDragLengths(person, jointKey, target){
     .mobile-mode-cycle { position:fixed;left:calc(max(12px,env(safe-area-inset-left)) + 46px);bottom:calc(162px + env(safe-area-inset-bottom));width:44px;height:40px; }
     .mobile-pin-button { left:calc(max(12px,env(safe-area-inset-left)) + 96px);right:auto;bottom:calc(162px + env(safe-area-inset-bottom));height:40px; }
   }
+  .folder-breadcrumb { flex-wrap:nowrap; }
+  .folder-breadcrumb .back-breadcrumb__btn { flex:none; }
+  .current-folder-title { display:flex;align-items:center;gap:6px;flex:1;min-width:0;font:600 13px/1.4 system-ui,sans-serif;color:#334155; }
+  .current-folder-title span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+  .folder-breadcrumb > .inline-action { flex:none; }
+  :global(body.dark-mode) .current-folder-title { color:#e2e8f0; }
 </style>
