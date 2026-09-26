@@ -676,7 +676,6 @@ function isLocked(person, key){
     { keys: 'Toward / Away buttons', desc: 'Move the selected joint toward or away from the camera' },
     { keys: 'Double-tap figure', desc: 'Move the figure like Ctrl + drag' },
     { keys: '2x tap joint', desc: 'Pin or unpin (maximum two per figure)' },
-    { keys: 'Two-finger gesture', desc: 'Orbit, pan, and zoom the camera view' }
   ];
   function isLandscapeSideRailViewport(){
     if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -1323,6 +1322,7 @@ function isLocked(person, key){
 
   let poses = []; // saved frames
   let sequenceDraftActive = false;
+  $: mobileTechniqueActive = showSequenceMenu || sequenceDraftActive || poses.length > 0 || editingPlaybackIdx >= 0 || activeReviewPlaybackIdx >= 0;
   let comment = "";
   let currentFrame = 0;
   let playing = false;
@@ -7964,6 +7964,14 @@ function clampToDragLengths(person, jointKey, target){
     clearSequenceWindowDrag();
     sequenceWindowOffset = { x: 0, y: 0 };
   }
+  function suppressNativeCanvasGestures(node) {
+    // Figure selection, pinning and camera gestures use Pointer Events.
+    // Cancel only Safari's native zoom/callout defaults on the canvas.
+    const preventNative = event => { if (event.cancelable) event.preventDefault(); };
+    const events = ['touchstart', 'touchend', 'gesturestart'];
+    events.forEach(type => node.addEventListener(type, preventNative, { passive:false }));
+    return { destroy() { events.forEach(type => node.removeEventListener(type, preventNative)); } };
+  }
   function portalToBody(node, enabled = false) {
     let parent = null;
     let placeholder = null;
@@ -11355,7 +11363,7 @@ function clampToDragLengths(person, jointKey, target){
     </div>
     {/if}
   </div>
-  <div class="preset-ui bottom" class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu || showSequenceMenu || showMemoryMenu} class:toolbar-compact={compactToolbar} class:toolbar-has-editor={editingPlaybackIdx >= 0} class:toolbar-crosshair-active={mobileCrosshair.visible} bind:this={toolbarEl}>
+  <div class="preset-ui bottom" class:mobile-technique-active={mobileTechniqueActive} class:toolbar-menu-open={showSavedPresetsMenu || showSavedPlaybacksMenu || showSequenceMenu || showMemoryMenu} class:toolbar-compact={compactToolbar} class:toolbar-has-editor={editingPlaybackIdx >= 0} class:toolbar-crosshair-active={mobileCrosshair.visible} bind:this={toolbarEl}>
       {#if mobileCrosshair.visible}
         <div
           class="mobile-crosshair mobile-crosshair--toolbar"
@@ -11564,6 +11572,7 @@ function clampToDragLengths(person, jointKey, target){
               <button
                 type="button"
                 class="btn btn--primary sequence-trigger"
+                class:technique-has-session={mobileTechniqueActive}
                 bind:this={sequenceToggleEl}
                 aria-haspopup="true"
                 aria-expanded={showSequenceMenu}
@@ -11572,6 +11581,11 @@ function clampToDragLengths(person, jointKey, target){
                 {#if poses.length}<span class="technique-count" aria-label={`${poses.length} frames`}>{poses.length}</span>{/if}
                 <svg class="icon" viewBox="0 0 24 24" style={`transform: rotate(${showSequenceMenu ? 180 : 0}deg);`} aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
+              {#if mobileTechniqueActive}
+                <button type="button" class="mobile-technique-exit" aria-label="Close technique" title="Close technique" on:click={cancelSequenceDraft}>
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                </button>
+              {/if}
               {#if showSequenceMenu && !showSavedPlaybacksMenu}
                 <div
                   class="menu-popup sequence-menu sequence-menu--movable"
@@ -12004,6 +12018,7 @@ function clampToDragLengths(person, jointKey, target){
     </div>
     <div
       class="mobile-floating-tools"
+      class:mobile-technique-active={mobileTechniqueActive}
       on:contextmenu|preventDefault
       role="group"
       aria-label="Mobile joint tools"
@@ -12013,7 +12028,7 @@ function clampToDragLengths(person, jointKey, target){
         <span class="mobile-mode-full">{movementModeLabel}</span><span class="mobile-mode-letter">{movementModeLetter}</span>
       </button>
       <button class="mobile-floating-undo" on:click={undoLastFigureMove} aria-label="Undo last move" title="Undo last move">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 4 10l5 5M4 10h10a6 6 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Undo</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 4 10l5 5M4 10h10a6 6 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <button
         type="button"
@@ -12074,7 +12089,7 @@ function clampToDragLengths(person, jointKey, target){
   style={`display:${showFigures ? 'block' : 'none'}; --mobile-toolbar-inset:${mobileViewportBottomInset}px; --mobile-toolbar-left-inset:${mobileViewportLeftInset}px;`}
 >
   <div id="figures"></div>
-  <canvas bind:this={canvas} class="figures-canvas"></canvas>
+  <canvas bind:this={canvas} class="figures-canvas" use:suppressNativeCanvasGestures></canvas>
 
   <div class="shortcut-overlay-anchor" aria-live="polite">
     {#if showShortcutOverlay}
@@ -15567,6 +15582,33 @@ function clampToDragLengths(person, jointKey, target){
     .mobile-mode-notice { position:absolute;left:0;bottom:calc(100% + 6px);width:18px; }
     .mobile-floating-tools { bottom:calc(154px + env(safe-area-inset-bottom)) !important; }
     .mobile-floating-undo { border-radius:10px;min-height:40px; }
+  }
+
+
+  .mobile-technique-exit { display:none; }
+  .training-reminder-row .memory-reminder-btn { align-self:end;height:44px;min-height:44px;box-sizing:border-box;margin:0; }
+  .training-reminder-row .training-time-input { height:44px;min-height:44px;box-sizing:border-box; }
+  @media (pointer:coarse) {
+    .training-reminder-row { align-items:end !important; }
+    .training-reminder-row .memory-reminder-btn { width:auto !important;min-width:64px; }
+    .preset-ui.preset-ui.bottom:not(.mobile-technique-active) .controls-row--expanded { display:none !important; }
+    .preset-ui.preset-ui.bottom .sequence-dropdown { position:relative;justify-content:flex-start !important; }
+    .preset-ui.preset-ui.bottom .sequence-trigger.technique-has-session { width:96px !important;min-width:96px !important;max-width:96px !important;padding:6px !important;gap:3px; }
+    .sequence-trigger.technique-has-session > svg { display:none; }
+    .mobile-technique-exit { display:flex;align-items:center;justify-content:center;position:absolute;right:0;top:0;width:32px;height:44px;padding:6px;border:1px solid #b7c4d5;border-radius:10px;background:#f8fafc;color:#475569;cursor:pointer; }
+    :global(body.dark-mode) .mobile-technique-exit { background:#1e293b;color:#e2e8f0;border-color:#475569; }
+    .mobile-floating-undo { width:40px;height:40px;min-height:40px;padding:8px;justify-content:center; }
+  }
+  @media (pointer:coarse) and (orientation:portrait) {
+    .mobile-floating-tools:not(.mobile-technique-active) { bottom:calc(104px + env(safe-area-inset-bottom)) !important; }
+    .mobile-floating-tools:not(.mobile-technique-active) .mobile-mode-cycle { bottom:calc(54px + env(safe-area-inset-bottom)); }
+    .mobile-floating-undo { position:fixed;left:calc(100vw - 190px - env(safe-area-inset-right));bottom:calc(112px + env(safe-area-inset-bottom)); }
+  }
+  @media (pointer:coarse) and (orientation:portrait) and (max-width:360px) {
+    .mobile-floating-undo { left:auto;right:max(12px,env(safe-area-inset-right));bottom:calc(162px + env(safe-area-inset-bottom)); }
+  }
+  @media (pointer:coarse) and (orientation:landscape) {
+    .preset-ui.preset-ui.bottom:not(.mobile-technique-active) .preset-select-wrap { bottom:calc(8px + env(safe-area-inset-bottom)); }
   }
 
 </style>

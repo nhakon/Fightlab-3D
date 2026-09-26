@@ -24,3 +24,11 @@ test('mobile portal waits for attachment and fits the visible viewport',async()=
 test('closing a panel before attachment cannot leave an orphan portal',async()=>{
   const e=setup();const action=e.portal(e.node,true);action.destroy();e.flush();await Promise.resolve();assert.equal(e.node.parentNode,null);assert.equal(e.listeners.size,0);
 });
+const gestureFn=parse(source).instance.content.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='suppressNativeCanvasGestures');
+test('canvas blocks native touch zoom without stopping figure pointer events and cleans up',()=>{
+  const handlers=new Map();const node={addEventListener(type,fn,options){assert.equal(options.passive,false);handlers.set(type,fn);},removeEventListener(type,fn){assert.equal(handlers.get(type),fn);handlers.delete(type);}};
+  const action=new Function(source.slice(gestureFn.start,gestureFn.end)+';return suppressNativeCanvasGestures;')()(node);
+  assert.deepEqual([...handlers.keys()],['touchstart','touchend','gesturestart']);
+  for(const fn of handlers.values()){let prevented=false;fn({cancelable:true,preventDefault(){prevented=true;},stopPropagation(){assert.fail('Pointer handling must remain available');}});assert.equal(prevented,true);fn({cancelable:false,preventDefault(){assert.fail('Non-cancelable event');}});}
+  action.destroy();assert.equal(handlers.size,0);
+});
