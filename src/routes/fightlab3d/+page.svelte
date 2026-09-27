@@ -1,386 +1,93 @@
-﻿<script>
-  import { onMount } from 'svelte';
+<script>
   import backControlPicture from './figures/jiu-jitsu-assets/meshy-back-control.png';
-
-  const clamp01 = (v) => Math.max(0, Math.min(1, v));
-  const mapRange = (inMin, inMax, outMin, outMax, v) => {
-    const t = clamp01((v - inMin) / (inMax - inMin || 1));
-    return outMin + (outMax - outMin) * t;
-  };
-
-  let cardRangeEl;
-  let cardHeaderOffset = 40;
-  let cardHeaderOpacity = 0;
-  let cardWidth = 75;
-  let cardGapOpen = false;
-  let cardFlipped = false;
-  let mobilePortraitCards = false;
-  let cardFlipStates = [];
-  let cardEls = [];
-  let ticking = false;
-  let mediaShellEl;
-  const showCarousel = false;
-  const mediaItems = [
-    { id: 'media-0', type: 'image', src: '/animation-0.png', alt: 'Armbar sequence wide view', caption: 'Full sequence overview.' },
-    { id: 'media-1', type: 'image', src: '/animation-1.png', alt: 'Armbar sequence angle one', caption: 'Pick the key frames to keep.' },
-    { id: 'media-2', type: 'image', src: '/animation-2.png', alt: 'Armbar sequence angle two', caption: 'Pose and mark grips in 3D.' },
-    { id: 'media-3', type: 'image', src: '/animation-3.png', alt: 'Armbar sequence angle three', caption: 'Replay before class to refresh.' }
-  ];
-  let mediaIndex = 0;
-  let mediaRefs = [];
-  const cardImage = '/armbar-hero.png';
-  const cardSlices = [
-    { id: 'card-1', label: '( 01 )', title: 'Pick the key frames', position: '50% 40%', image: '/animation-1.png' },
-    { id: 'card-2', label: '( 02 )', title: 'Pose and mark grips', position: '50% 40%', image: '/animation-2.png' },
-    { id: 'card-3', label: '( 03 )', title: 'Replay before class', position: '50% 40%', image: '/animation-3.png' }
-  ];
-  cardFlipStates = cardSlices.map(() => false);
-  const pricingPlans = [
-    {
-      id: 'solo',
-      name: 'Solo',
-      price: '$0',
-      period: '/month',
-      description: 'Stay sharp between classes with saved sequences and notes.',
-      features: ['Unlimited sequences', 'Notes per keyframe', 'Offline replay'],
-      cta: 'Try now'
-    },
-    {
-      id: 'coach',
-      name: 'Coach',
-      price: '$0',
-      period: '/month',
-      description: 'Share drills before class starts so everyone shows up ready.',
-      features: ['Shareable links', 'Folders for lessons', 'Priority support'],
-      cta: 'Try now',
-      highlight: true,
-      tag: 'Popular'
-    },
-    {
-      id: 'team',
-      name: 'Team',
-      price: '$0',
-      period: '/month',
-      description: 'Keep every athlete in sync with comments and review.',
-      features: ['Seats for 6', 'Review comments', 'Role-based access'],
-      cta: 'Try now'
-    }
-  ];
-  const customerStories = [
-    {
-      name: 'North Coast Grappling',
-      stat: '12 drills/week',
-      quote: 'We preload entanglements so classes start drilling in minutes.',
-      logo: cardImage
-    },
-    {
-      name: 'Atlas MMA',
-      stat: '2x retention',
-      quote: 'Students keep details fresh and stop re-watching old clips.',
-      logo: cardImage
-    },
-    {
-      name: 'Flowstate Academy',
-      stat: 'Coach sync',
-      quote: 'Sharing sequences keeps every instructor teaching the same angles.',
-      logo: cardImage
-    }
-  ];
-  const blogFeatured = {
-    title: 'Turn sparring notes into repeatable sequences',
-    tag: 'Training workflow',
-    excerpt: 'Capture the details from last round and replay them as drills before you forget.',
-    author: 'Fightlab Team',
-    readTime: '5 min read',
-    image: cardImage
-  };
-  const blogPosts = [
-    {
-      title: 'Teaching faster with pre-class animations',
-      tag: 'Coaching',
-      excerpt: 'Send the move the night before so students arrive with the map memorized.',
-      readTime: '3 min read',
-      image: cardImage,
-      position: '0% 50%'
-    },
-    {
-      title: 'Retention on days you miss the mat',
-      tag: 'Retention',
-      excerpt: 'Use short reviews to keep timing alive when life gets busy.',
-      readTime: '4 min read',
-      image: cardImage,
-      position: '50% 50%'
-    },
-    {
-      title: 'Building a reusable library for leg entanglements',
-      tag: 'Library',
-      excerpt: 'Organize every ashi entry so you can refresh in seconds.',
-      readTime: '6 min read',
-      image: cardImage,
-      position: '100% 50%'
-    }
-  ];
-
-  function sectionProgress(el) {
-    if (!el) return 0;
-    const rect = el.getBoundingClientRect();
-    const vh = window.innerHeight || 1;
-    const total = rect.height + vh;
-    const seen = vh - rect.top;
-    return clamp01(seen / total);
-  }
-
-  function updateCardViewportMode() {
-    let nextMobilePortraitCards = false;
-    if (typeof window === 'undefined' || !window.matchMedia) {
-      nextMobilePortraitCards = false;
-    } else {
-      nextMobilePortraitCards = window.matchMedia('(pointer: coarse) and (orientation: portrait) and (max-width: 800px)').matches;
-    }
-    if (mobilePortraitCards !== nextMobilePortraitCards) mobilePortraitCards = nextMobilePortraitCards;
-  }
-
-  function setCardFlipStates(nextStates) {
-    if (
-      cardFlipStates.length === nextStates.length &&
-      cardFlipStates.every((state, idx) => state === nextStates[idx])
-    ) {
-      return;
-    }
-    cardFlipStates = nextStates;
-  }
-
-  function updateCardsFromScroll() {
-    updateCardViewportMode();
-    const p = sectionProgress(cardRangeEl);
-    const headerProgress = clamp01((p - 0.1) / 0.15);
-    const nextHeaderOffset = Math.round(mapRange(0, 1, 40, 0, headerProgress) * 2) / 2;
-    const nextHeaderOpacity = Math.round(headerProgress * 100) / 100;
-    if (Math.abs(cardHeaderOffset - nextHeaderOffset) >= 0.5) cardHeaderOffset = nextHeaderOffset;
-    if (Math.abs(cardHeaderOpacity - nextHeaderOpacity) >= 0.01) cardHeaderOpacity = nextHeaderOpacity;
-    if (mobilePortraitCards) {
-      if (cardWidth !== 100) cardWidth = 100;
-      if (!cardGapOpen) cardGapOpen = true;
-      if (cardFlipped) cardFlipped = false;
-      const vh = window.innerHeight || 1;
-      setCardFlipStates(cardSlices.map((_, idx) => {
-        const el = cardEls[idx];
-        if (!el) return false;
-        const rect = el.getBoundingClientRect();
-        return rect.top <= vh * 0.68;
-      }));
-      return;
-    }
-    const widthProgress = clamp01(p / 0.2);
-    const nextCardWidth = Math.round(mapRange(0, 1, 75, 60, widthProgress) * 10) / 10;
-    const nextCardGapOpen = p >= 0.2;
-    const nextCardFlipped = p >= 0.35;
-    if (Math.abs(cardWidth - nextCardWidth) >= 0.1) cardWidth = nextCardWidth;
-    if (cardGapOpen !== nextCardGapOpen) cardGapOpen = nextCardGapOpen;
-    if (cardFlipped !== nextCardFlipped) cardFlipped = nextCardFlipped;
-    setCardFlipStates(cardSlices.map(() => nextCardFlipped));
-  }
-
-  function mediaCapture(node, idx) {
-    mediaRefs[idx] = node;
-    return {
-      destroy() {
-        mediaRefs[idx] = null;
-      }
-    };
-  }
-
-  function pauseVideos() {
-    mediaRefs.forEach((el) => {
-      if (el && el.tagName === 'VIDEO') {
-        el.pause();
-        el.currentTime = 0;
-      }
-    });
-  }
-
-  function goToMedia(idx) {
-    if (!mediaItems.length) return;
-    const nextIndex = (idx + mediaItems.length) % mediaItems.length;
-    pauseVideos();
-    mediaIndex = nextIndex;
-  }
-
-  function stepMedia(delta) {
-    goToMedia(mediaIndex + delta);
-  }
-
-  function handleMediaKeydown(event) {
-    if (mediaShellEl && !mediaShellEl.contains(document.activeElement)) return;
-    if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      stepMedia(-1);
-    } else if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      stepMedia(1);
-    }
-  }
-
-  function preloadCardImages() {
-    if (typeof window === 'undefined') return;
-    cardSlices.forEach((card) => {
-      const img = new Image();
-      img.src = card.image || cardImage;
-      img.decoding = 'async';
-      img.decode?.().catch(() => {});
-    });
-  }
-
-  function handleScroll() {
-    if (ticking) return;
-    ticking = true;
-    requestAnimationFrame(() => {
-      ticking = false;
-      updateCardsFromScroll();
-    });
-  }
-
-  onMount(() => {
-    preloadCardImages();
-    updateCardsFromScroll();
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', handleScroll, { passive: true });
-
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('resize', handleScroll);
-    };
-  });
 </script>
 
 <svelte:head>
-  <title>Fightlab 3D</title>
-  <meta name="description" content="Build, adjust, and replay grappling sequences in 3D." />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  {#each cardSlices as card}
-    <link rel="preload" as="image" href={card.image || cardImage} />
-  {/each}
+  <title>Fightlab 3D — Build and remember grappling techniques</title>
+  <meta name="description" content="Build grappling techniques frame by frame in 3D, save them to your memory library, and review them before training." />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 </svelte:head>
 
-<svelte:window on:keydown={handleMediaKeydown} />
 
+
+<a class="skip-link" href="#main-content">Skip to content</a>
 <header class="site-nav">
   <div class="nav-shell container">
-    <div class="brand">
+    <a class="brand" href="#hero" aria-label="Fightlab 3D home">
       <span class="brand-mark" aria-hidden="true">FL</span>
       <span class="brand-text">Fightlab 3D</span>
-    </div>
-    <div class="nav-actions">
+    </a>
+    <nav class="nav-actions" aria-label="Main navigation">
+      <a class="nav-section-link" href="#how-it-works">How it works</a>
+      <a class="nav-section-link nav-features-link" href="#features">Features</a>
       <a class="nav-link-btn primary" href="/fightlab3d/login">Try now</a>
-    </div>
+    </nav>
   </div>
 </header>
 
-<main class="page">
+<main class="page" id="main-content">
   <section class="band band--dark hero-band" id="hero">
     <div class="container hero-grid">
       <div class="hero-copy">
-        <h1 class="display">Memorize techniques faster</h1>
-        <p class="lead">Fightlab 3D is a martial arts pose-to-animation creator.</p>
+        <span class="hero-kicker">Interactive technique study</span>
+        <h1 class="display">Build the move.<br />Remember the details.</h1>
+        <p class="lead">Move 3D figures, create each key frame, and save the complete grappling sequence. Review it before training so you know what to do when it is time to drill.</p>
         <div class="hero-actions">
-          <a class="nav-link-btn ghost" href="/fightlab3d/login">Try now</a>
+          <a class="nav-link-btn primary hero-cta" href="/fightlab3d/login">Build a technique</a>
+          <a class="text-link" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a>
         </div>
+        <ul class="hero-signals" aria-label="Fightlab 3D highlights">
+          <li>Pose in 3D</li>
+          <li>Build frame by frame</li>
+          <li>Review from Your memory</li>
+        </ul>
       </div>
-      <div class="hero-visual">
-        <img src={backControlPicture} alt="Meshy figures in back control" class="hero-img" loading="lazy" />
-      </div>
+      <figure class="hero-visual">
+        <img src={backControlPicture} alt="Two 3D figures demonstrating back control" class="hero-img" loading="eager" fetchpriority="high" width="682" height="418" />
+        <figcaption><span>Back control</span><span>Explore in 3D</span></figcaption>
+      </figure>
     </div>
   </section>
 
-  <section class="band card-test-band fracture-band" id="challenge">
-    <div class="card-range" bind:this={cardRangeEl}>
-      <div class="card-sticky container">
-        <div class="card-sticky-header" style={`transform: translateY(${cardHeaderOffset}px); opacity:${cardHeaderOpacity};`}>
-          <h3>Struggling to remember techniques?</h3>
-          <p class="muted">Split long videos into quick animated sequences you can replay before class.</p>
-        </div>
-        <div class={`card-container ${cardGapOpen ? 'is-open' : ''}`} style={`--card-width:${cardWidth}%;`}>
-          {#each cardSlices as card, idx}
-            <article
-              class={`card ${idx === 0 ? 'card-left' : idx === 2 ? 'card-right' : 'card-center'} ${cardFlipStates[idx] ? 'is-flipped' : ''} ${!mobilePortraitCards && cardGapOpen && (idx === 0 || idx === 2) ? 'is-offset' : ''}`}
-              id={card.id}
-              bind:this={cardEls[idx]}
-            >
-              <div class="card-inner">
-                <div class="card-face card-front">
-                  <img
-                    src={card.image || cardImage}
-                    alt={card.title}
-                    style={`object-position:${card.position};`}
-                    loading="eager"
-                    decoding="async"
-                    fetchpriority="high"
-                  />
-                </div>
-                <div class="card-face card-back">
-                  <span>{card.label}</span>
-                  <p>{card.title}</p>
-                </div>
-              </div>
-            </article>
-          {/each}
-        </div>
+  <section class="band sequence-band" id="challenge">
+    <div class="container sequence-shell">
+      <div class="sequence-header">
+        <span class="section-kicker">Product walkthrough</span>
+        <h2>See how Fightlab 3D works</h2>
+        <p class="muted">A short walkthrough will show you how to build, save, and review a technique from start to finish.</p>
       </div>
-    </div>
-  </section>
-
-  {#if showCarousel}
-    <section class="band band--light media-band" id="media-carousel">
-      <div class="container media-shell" bind:this={mediaShellEl} role="region" aria-roledescription="carousel" aria-label="Technique media carousel">
-        <div class="media-head" aria-hidden="true"></div>
-        <div class="media-frame">
-          <div
-            class="media-track"
-            style={`transform: translateX(calc((var(--slide-width) + var(--slide-gap)) * -${mediaIndex} + (50% - (var(--slide-width) / 2))));`}
-          >
-            {#each mediaItems as media, idx}
-              <figure class={`media-slide ${idx === mediaIndex ? 'is-active' : ''}`} id={media.id} aria-hidden={idx !== mediaIndex}>
-                {#if media.type === 'video'}
-                  <video use:mediaCapture={idx} src={media.src} poster={media.poster} controls playsinline preload="metadata">
-                    <track kind="captions" srclang="en" label="English captions" src={media.track || '/captions-placeholder.vtt'} />
-                  </video>
-                {:else}
-                  <img use:mediaCapture={idx} src={media.src} alt={media.alt} loading="lazy" />
-                {/if}
-                <figcaption aria-live={idx === mediaIndex ? 'polite' : 'off'}>{media.caption || media.alt}</figcaption>
-              </figure>
-            {/each}
+      <div class="video-placeholder" role="img" aria-label="Placeholder for an upcoming Fightlab 3D walkthrough video">
+        <div class="video-placeholder-content">
+          <span class="video-play" aria-hidden="true">
+            <span></span>
+          </span>
+          <div>
+            <strong>Walkthrough video coming soon</strong>
+            <p>The complete Fightlab 3D guide will appear here.</p>
           </div>
-          <button type="button" class="media-arrow media-arrow--left" aria-label="Previous media" on:click={() => stepMedia(-1)}>
-            <span aria-hidden="true">&#8592;</span>
-          </button>
-          <button type="button" class="media-arrow media-arrow--right" aria-label="Next media" on:click={() => stepMedia(1)}>
-            <span aria-hidden="true">&#8594;</span>
-          </button>
-        </div>
-        <div class="media-dots" role="tablist" aria-label="Choose media">
-          {#each mediaItems as media, idx}
-            <button
-              class={`media-dot ${idx === mediaIndex ? 'is-active' : ''}`}
-              role="tab"
-              aria-selected={idx === mediaIndex}
-              aria-controls={media.id}
-              aria-label={`Go to media ${idx + 1}`}
-              on:click={() => goToMedia(idx)}
-            ></button>
-          {/each}
         </div>
       </div>
-    </section>
-  {/if}
+    </div>
+  </section>
 
-  <section class="band band--light statements" id="statements">
-    <div class="container statements-grid">
-      <div class="statement statement--hero">
-        <h2 class="serif">Tired of teammates pulling ahead?</h2>
-        <p>Lock the sequence and actually do the moves to remember them easier.</p>
-        <p>Refresh in seconds, keep timing sharp, and stop scrubbing through long videos on the mat.</p>
-        <p>Move the figures and see changes in real time, like a video game. It makes you think through what comes firstâ€”a different, easier kind of visualization that still works alongside the rest.</p>
+  <section class="band band--light workflow-band" id="how-it-works">
+    <div class="container workflow-grid">
+      <div class="workflow-copy">
+        <span class="section-kicker dark">A simple study loop</span>
+        <h2>Turn a technique into something you can use</h2>
+        <p>Fightlab 3D turns remembering into an active process: reconstruct the movement, save it, then bring it back before you step on the mat.</p>
+        <ol class="workflow-steps">
+          <li><span>01</span><div><strong>Position the figures</strong><p>Start with a pose, move the joints, and inspect the position from every angle.</p></div></li>
+          <li><span>02</span><div><strong>Build the sequence</strong><p>Add key frames in order so every transition is clear.</p></div></li>
+          <li><span>03</span><div><strong>Save and review</strong><p>Open the technique from Your memory before training and replay it in seconds.</p></div></li>
+        </ol>
+      </div>
+      <div class="memory-panel" aria-label="Example of the Your memory technique library">
+        <div class="memory-top"><span>Your memory</span><span class="memory-count">12 techniques</span></div>
+        <div class="memory-preview"><img src={backControlPicture} alt="Back-control position using the Fightlab 3D figures" loading="lazy" /></div>
+        <div class="memory-meta"><div><span class="memory-label">Example saved technique</span><strong>Back control</strong></div><span class="memory-frames">6 frames</span></div>
+        <div class="memory-progress"><span></span></div>
+        <div class="memory-footer"><span>Review before next session</span><span>Replay →</span></div>
       </div>
     </div>
   </section>
@@ -388,35 +95,36 @@
   <section class="band band--dark features-band" id="features">
     <div class="container features-head">
       <div>
-        <h2 class="section-title">Reasons to train with Fightlab 3D</h2>
-        <p class="muted">Prep, retain, and learn faster with precise 3D control.</p>
+        <span class="section-kicker">Why it works</span>
+        <h2 class="section-title">Study techniques actively</h2>
+        <p class="muted">A practical tool for the time between learning a move and using it in training.</p>
       </div>
     </div>
     <div class="container">
       <div class="feature-row">
         <article class="feature-card">
-          <h3><span class="eyebrow">01</span> Apply it right away</h3>
-          <p>Pose and replay until muscle memory kicks in so you don't forget mid-round.</p>
+          <h3><span class="eyebrow">01</span> See every angle</h3>
+          <p>Move around the position and inspect details a fixed camera can hide.</p>
         </article>
         <article class="feature-card">
-          <h3><span class="eyebrow">02</span> New leg entanglements</h3>
-          <p>Map an overwhelming set of entries in one place.</p>
+          <h3><span class="eyebrow">02</span> Think in sequences</h3>
+          <p>Choose each key frame yourself instead of passively replaying a clip.</p>
         </article>
         <article class="feature-card">
-          <h3><span class="eyebrow">03</span> Skip endless footage</h3>
-          <p>Build, structure and organize your own animation with notes so you can refresh a technique fast before practice.</p>
+          <h3><span class="eyebrow">03</span> Keep techniques organized</h3>
+          <p>Save your work in Your memory so the move is easy to find again.</p>
         </article>
         <article class="feature-card">
-          <h3><span class="eyebrow">04</span> Save mat time</h3>
-          <p>Walk in already primedâ€”no rewatching long clips while partners wait.</p>
+          <h3><span class="eyebrow">04</span> Arrive ready to drill</h3>
+          <p>Refresh the sequence before class without searching through long videos.</p>
         </article>
         <article class="feature-card">
-          <h3><span class="eyebrow">05</span> Keep progress on off-days</h3>
-          <p>While watching technique actually animate the figures to do the movements to memorize better.</p>
+          <h3><span class="eyebrow">05</span> Make review active</h3>
+          <p>Reconstructing the move asks you to notice order, timing, and position.</p>
         </article>
         <article class="feature-card">
-          <h3><span class="eyebrow">06</span> Stay engaged when injured</h3>
-          <p>Rehearse positions safely in 3D so details stick until youâ€™re cleared.</p>
+          <h3><span class="eyebrow">06</span> Build your own reference</h3>
+          <p>Keep a personal library shaped by the techniques you actually train.</p>
         </article>
       </div>
     </div>
@@ -425,10 +133,10 @@
   <section class="band band--dark cta-band">
     <div class="container cta-wrap">
       <div>
-        <h2 class="section-title">Ready to start?</h2>
-        <p class="muted">Get Fightlab 3D and keep every technique at your fingertips.</p>
+        <h2 class="section-title">Make the next technique stick.</h2>
+        <p class="muted">Build it in 3D today. Review it before your next session.</p>
       </div>
-      <a class="nav-link-btn primary" href="/fightlab3d/login">Try now</a>
+      <a class="nav-link-btn primary" href="/fightlab3d/login">Build your first technique</a>
     </div>
   </section>
 
@@ -439,7 +147,7 @@
           <span class="brand-mark" aria-hidden="true">FL</span>
           <span class="brand-text">Fightlab 3D</span>
         </div>
-        <p class="muted">Memorize techniques faster with pose-to-animation.</p>
+        <p class="muted">Build your techniques. Keep the details. Return to the mat prepared.</p>
       </div>
       <div class="footer-col">
         <h4>Product</h4>
@@ -449,11 +157,11 @@
       <div class="footer-col">
         <h4>Company</h4>
         <a href="mailto:team@fightlab3d.com">Contact</a>
-        <a href="#hero">Buy access</a>
+        <a href="/fightlab3d/login">Open Fightlab 3D</a>
       </div>
       <div class="footer-col">
         <h4>Resources</h4>
-        <a href="#statements">Reasons</a>
+        <a href="#how-it-works">How it works</a>
         <a href="#features">Benefits</a>
       </div>
       <div class="footer-col">
@@ -480,9 +188,6 @@
   .nav-shell { display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .brand { display:flex; align-items:center; gap:8px; font: 16px/1.2 'Inter', system-ui, sans-serif; color:#e5e7eb; font-weight:700; }
   .brand-mark { width:28px; height:28px; border-radius:8px; background:#2563eb; color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:12px; letter-spacing:0.06em; }
-  .nav-links { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-  .nav-links a { text-decoration:none; color:#cbd5f5; font: 13px/1.2 system-ui, sans-serif; padding:8px 10px; border-radius:10px; transition: background .15s ease, color .15s ease; }
-  .nav-links a:hover { background: rgba(255,255,255,0.08); color:#fff; }
   .nav-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .nav-link-btn { padding:9px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.25); background: transparent; color:#e5e7eb; font: 13px/1.2 system-ui, sans-serif; cursor:pointer; transition: background .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease; text-decoration:none; }
   .nav-link-btn:hover { background: rgba(255,255,255,0.08); border-color:rgba(255,255,255,0.35); box-shadow:0 6px 16px rgba(0,0,0,0.18); color:#fff; }
@@ -497,39 +202,40 @@
   .hero-band { padding-top: clamp(96px, 14vw, 140px); padding-bottom: clamp(64px, 10vw, 96px); }
   .hero-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:22px; align-items:center; }
   .hero-copy { display:flex; flex-direction:column; gap:14px; }
+  .hero-kicker, .section-kicker { color:#7dd3fc; font: 700 12px/1.2 'Sora', 'Inter', system-ui, sans-serif; letter-spacing:.14em; text-transform:uppercase; }
+  .section-kicker.dark { color:#2563eb; }
   .display { margin:0; font: clamp(36px, 6vw, 52px)/1.1 'Sora', 'Inter', system-ui, sans-serif; color:#e5e7eb; }
   .lead { margin:0; font: 17px/1.5 'Sora', 'Inter', system-ui, sans-serif; color:#cbd5f5; max-width:720px; }
   .hero-actions { display:flex; gap:12px; flex-wrap:wrap; justify-content:flex-start; }
+  .hero-cta { padding:12px 16px; }
+  .text-link { display:inline-flex; align-items:center; gap:7px; padding:10px 4px; color:#cbd5e1; font:600 13px/1.2 'Sora', 'Inter', system-ui, sans-serif; text-decoration:none; }
+  .text-link:hover { color:#fff; }
+  .hero-signals { display:flex; flex-wrap:wrap; gap:8px 18px; margin:8px 0 0; padding:16px 0 0; border-top:1px solid rgba(255,255,255,.1); list-style:none; color:#94a3b8; font:12px/1.4 'Sora', 'Inter', system-ui, sans-serif; }
+  .hero-signals li::before { content:'✓'; margin-right:6px; color:#38bdf8; }
   .hero-visual { display:flex; justify-content:center; align-items:center; }
   .hero-img { width:100%; max-width:520px; aspect-ratio: 682 / 418; object-fit: cover; border-radius:16px; border:1px solid #1d2c44; box-shadow: 0 14px 36px rgba(15,23,42,0.22); background: radial-gradient(circle at 50% 40%, rgba(37,99,235,0.12), rgba(11,19,37,0.9)); }
-  .media-band { padding-top: clamp(48px, 8vw, 64px); padding-bottom: clamp(48px, 8vw, 64px); }
-  .media-shell { display:flex; flex-direction:column; gap:14px; }
-  .media-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; min-height: 8px; }
-  .media-frame { position:relative; width:100%; border-radius:14px; background:#0d1426; padding:8px; box-shadow: 0 12px 32px rgba(15,23,42,0.12); overflow:hidden; }
-  .media-frame:focus { outline:2px solid #2563eb; outline-offset:4px; }
-  .media-track { --slide-width: clamp(300px, 68vw, 820px); --slide-gap: 16px; display:flex; align-items:stretch; gap: var(--slide-gap); transition: transform .55s ease; will-change: transform; padding: 10px 0; }
-  .media-slide { margin:0; flex:0 0 var(--slide-width); opacity:0.68; transform: scale(0.94); filter: saturate(0.96); transition: transform .45s ease, opacity .45s ease, filter .45s ease; }
-  .media-slide.is-active { opacity:1; transform: scale(1); filter: saturate(1.05); }
-  .media-slide img, .media-slide video { width:100%; max-height: clamp(320px, 55vh, 520px); object-fit: cover; border-radius:12px; display:block; box-shadow: 0 10px 28px rgba(15,23,42,0.16); }
-  .media-slide figcaption { margin-top:8px; font: 14px/1.4 'Sora', 'Inter', system-ui, sans-serif; color:#475569; text-align:center; }
-  .media-arrow { position:absolute; top:50%; transform: translateY(-50%); width:42px; height:42px; border-radius:50%; border:1px solid rgba(15,23,42,0.15); background: rgba(255,255,255,0.86); color:#0f172a; font-size:18px; box-shadow: 0 12px 30px rgba(15,23,42,0.16); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; transition: transform .15s ease, box-shadow .15s ease, background .15s ease; backdrop-filter: blur(6px); }
-  .media-arrow:hover { transform: translateY(-50%) translateY(-1px); background:#fff; box-shadow: 0 14px 34px rgba(15,23,42,0.2); }
-  .media-arrow:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
-  .media-arrow--left { left:12px; }
-  .media-arrow--right { right:12px; }
-  .media-dots { display:flex; gap:8px; justify-content:center; align-items:center; margin-top:10px; }
-  .media-dot { width:10px; height:10px; border-radius:50%; border:1px solid #cbd5f5; background: transparent; cursor:pointer; transition: background .15s ease, border-color .15s ease, transform .15s ease; }
-  .media-dot.is-active { background:#2563eb; border-color:#2563eb; transform: scale(1.05); }
-  .media-dot:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
-  .statements { background:#f8fafc; }
-  .statements-grid { display:flex; justify-content:center; transition: min-height .25s ease, padding .25s ease; padding: 4px 0; }
-  .statements-grid:hover { padding: 16px 0; }
-  .statement { background:#fff; border:1px solid #e2e8f0; border-radius:16px; padding:22px; box-shadow: 0 16px 36px rgba(15,23,42,0.1); max-width:900px; width:100%; transition: box-shadow .25s ease, transform .25s ease; }
-  .statement--hero { text-align:center; }
-  .statement .serif { margin:0 0 12px 0; font: clamp(26px, 5vw, 34px)/1.2 'Georgia', 'Times New Roman', serif; color:#0f172a; }
-  .statement p { margin:4px 0; font: 16px/1.6 'Sora', 'Inter', system-ui, sans-serif; color:#1f2937; opacity:1; max-height:none; overflow:visible; transform:none; }
-  .statement:hover, .statement:focus-within { box-shadow: 0 18px 40px rgba(15,23,42,0.16); transform: translateY(-2px); }
-  .statement:hover p, .statement:focus-within p { opacity:1; max-height:none; transform:none; }
+  .workflow-band { background:#f8fafc; }
+  .workflow-grid { display:grid; grid-template-columns:minmax(0, .9fr) minmax(360px, 1.1fr); gap:clamp(36px, 7vw, 88px); align-items:center; }
+  .workflow-copy h2 { max-width:620px; margin:8px 0 14px; color:#0f172a; font:clamp(30px, 4vw, 44px)/1.12 'Sora', 'Inter', system-ui, sans-serif; letter-spacing:-.025em; }
+  .workflow-copy > p { max-width:600px; margin:0; color:#475569; font:16px/1.65 'Sora', 'Inter', system-ui, sans-serif; }
+  .workflow-steps { display:grid; gap:0; margin:26px 0 0; padding:0; list-style:none; }
+  .workflow-steps li { display:grid; grid-template-columns:42px 1fr; gap:14px; padding:16px 0; border-top:1px solid #e2e8f0; }
+  .workflow-steps li > span { color:#2563eb; font:700 12px/1.3 'Sora', 'Inter', system-ui, sans-serif; letter-spacing:.08em; }
+  .workflow-steps strong { display:block; color:#0f172a; font:700 16px/1.3 'Sora', 'Inter', system-ui, sans-serif; }
+  .workflow-steps p { margin:4px 0 0; color:#64748b; font:14px/1.55 'Sora', 'Inter', system-ui, sans-serif; }
+  .memory-panel { padding:14px; border:1px solid #dbe4f0; border-radius:22px; background:#fff; box-shadow:0 28px 70px rgba(15,23,42,.15); }
+  .memory-top, .memory-meta, .memory-footer { display:flex; align-items:center; justify-content:space-between; gap:14px; }
+  .memory-top { padding:5px 4px 14px; color:#0f172a; font:700 15px/1.3 'Sora', 'Inter', system-ui, sans-serif; }
+  .memory-count, .memory-frames { padding:5px 8px; border-radius:999px; background:#eff6ff; color:#2563eb; font:700 10px/1.2 'Sora', 'Inter', system-ui, sans-serif; text-transform:uppercase; letter-spacing:.06em; }
+  .memory-preview { overflow:hidden; aspect-ratio:16/10; border-radius:14px; background:#0b1325; }
+  .memory-preview img { width:100%; height:100%; display:block; object-fit:cover; }
+  .memory-meta { padding:15px 4px 12px; }
+  .memory-meta strong { display:block; margin-top:3px; color:#0f172a; font:700 15px/1.35 'Sora', 'Inter', system-ui, sans-serif; }
+  .memory-label { color:#64748b; font:10px/1.2 'Sora', 'Inter', system-ui, sans-serif; text-transform:uppercase; letter-spacing:.08em; }
+  .memory-progress { height:4px; overflow:hidden; border-radius:99px; background:#e2e8f0; }
+  .memory-progress span { display:block; width:68%; height:100%; border-radius:inherit; background:linear-gradient(90deg,#2563eb,#38bdf8); }
+  .memory-footer { padding:12px 4px 3px; color:#64748b; font:600 11px/1.4 'Sora', 'Inter', system-ui, sans-serif; }
+  .memory-footer span:last-child { color:#2563eb; }
   .features-band { background:#0c1328; }
   .features-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
   .section-title { margin:0 0 6px 0; font: 22px/1.3 'Sora', 'Inter', system-ui, sans-serif; color:#e5e7eb; }
@@ -551,109 +257,26 @@
   .footer-col a:hover { text-decoration:underline; }
   .footer-quote { grid-column: span 2; font: 14px/1.6 'Sora', 'Inter', system-ui, sans-serif; color:#cbd5f5; background: rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:12px; }
 
-  /* Card split test */
-  .card-test-band { background: #000; color:#e5e7eb; }
-  .card-range { position:relative; min-height: 160vh; }
-  .card-sticky { position: sticky; top: 52vh; transform: translateY(-50%); display:flex; flex-direction:column; align-items:center; gap:18px; }
-  .card-sticky-header { text-align:center; max-width:720px; margin:0 auto; will-change: transform, opacity; transition: transform .35s ease, opacity .35s ease; }
-  .card-sticky-header h3 { margin:0 0 6px 0; font: clamp(24px, 5vw, 32px)/1.1 'Sora', 'Inter', system-ui, sans-serif; color:#f8fafc; }
-  .card-sticky-header .muted { color:#cbd5f5; }
-  .card-container { position:relative; display:flex; width: var(--card-width, 75%); gap:var(--card-gap, 0px); perspective: 1200px; transform: translate3d(0,0,0); will-change: width; overflow: visible; }
-  .card-container.is-open { --card-gap:20px; }
-  .card { position:relative; flex:1; aspect-ratio: 5 / 7; transform-style: preserve-3d; transition: transform .52s cubic-bezier(.22,.72,.2,1), border-radius .25s ease; border-radius:18px; box-shadow: 0 10px 24px rgba(0,0,0,0.24); background: linear-gradient(140deg, #111827, #0b1220); will-change: transform; }
-  .card-left { border-radius:18px 0 0 18px; }
-  .card-center { border-radius:0; }
-  .card-right { border-radius:0 18px 18px 0; }
-  .card-container.is-open .card { border-radius:18px; }
-  .card-inner {
-    position:absolute;
-    inset:0;
-    z-index:1;
-    border-radius:inherit;
-    transform-style: preserve-3d;
-    transform: translate3d(0,0,0);
-  }
-  .card.is-offset.card-left { transform: translate3d(0,26px,0) rotateZ(-12deg); }
-  .card.is-offset.card-right { transform: translate3d(0,26px,0) rotateZ(12deg); }
-  .card.is-flipped { transform: rotateY(180deg); }
-  .card.is-offset.card-left.is-flipped { transform: translate3d(0,26px,0) rotateZ(-12deg) rotateY(180deg); }
-  .card.is-offset.card-right.is-flipped { transform: translate3d(0,26px,0) rotateZ(12deg) rotateY(180deg); }
-  .card-face { position:absolute; inset:0; border-radius:inherit; overflow:hidden; backface-visibility: hidden; -webkit-backface-visibility: hidden; transform: translate3d(0,0,0); }
-  .card-back { transform: rotateY(180deg); }
-  .card-front img { width:100%; height:100%; object-fit:cover; border-radius:inherit; display:block; }
-  .card-back { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:10px; padding:24px; background: linear-gradient(150deg, #111827, #0f172a); color:#f8fafc; text-align:center; }
-  .card-back span { font: 12px/1.2 'Sora', 'Inter', system-ui, sans-serif; letter-spacing:0.14em; text-transform:uppercase; color:#94a3b8; }
-  .card-back p { margin:0; font: 18px/1.3 'Sora', 'Inter', system-ui, sans-serif; }
-  @media (max-width: 1000px){
-    .card-test-head { flex-direction:column; align-items:flex-start; }
-    .card-range { min-height: 120vh; }
-    .card-sticky { position: relative; top: auto; transform: none; }
-    .card-container {
-      width:100% !important;
-      max-width: calc(100% - 16px);
-      gap: 12px;
-      transform: none !important;
-      overflow-x: auto;
-      overflow-y: visible;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-    }
-    .card-container::-webkit-scrollbar { display: none; }
-    .card {
-      flex: 0 0 clamp(260px, 32vw, 340px);
-      width: clamp(260px, 32vw, 340px);
-      max-width: none;
-      margin: 0;
-      border-radius: 18px !important;
-      transform: none !important;
-      aspect-ratio: 4 / 5;
-      max-height: clamp(280px, 70vw, 420px);
-    }
-    .card-back { padding:18px; }
-    .card-sticky-header { opacity:1 !important; transform:none !important; }
-  }
-  @media (pointer: coarse) and (orientation: portrait) and (max-width: 800px){
-    .card-range { min-height: auto; }
-    .card-sticky {
-      position: relative;
-      top: auto;
-      transform: none;
-      align-items: stretch;
-      gap: 20px;
-    }
-    .card-sticky-header {
-      max-width: 100%;
-      text-align: left;
-      opacity: 1 !important;
-      transform: none !important;
-    }
-    .card-container {
-      width: min(100%, 420px) !important;
-      max-width: 100%;
-      margin: 0 auto;
-      flex-direction: column;
-      gap: 16px;
-      transform: none !important;
-      overflow: visible;
-    }
-    .card {
-      flex: none;
-      width: 100%;
-      max-width: none;
-      max-height: none;
-      border-radius: 18px !important;
-      aspect-ratio: 4 / 5;
-    }
-  }
+  .sequence-band { background:#05080f; color:#e5e7eb; }
+  .sequence-shell { display:flex; flex-direction:column; gap:32px; }
+  .sequence-header { max-width:720px; margin:0 auto; text-align:center; }
+  .sequence-header h2 { margin:8px 0 10px; color:#f8fafc; font:clamp(28px, 4vw, 40px)/1.12 'Sora', 'Inter', system-ui, sans-serif; letter-spacing:-.02em; }
+  .video-placeholder { position:relative; display:grid; place-items:center; width:min(960px, 100%); aspect-ratio:16/9; margin:0 auto; overflow:hidden; border:1px solid rgba(125,211,252,.2); border-radius:22px; background:radial-gradient(circle at 50% 42%, rgba(37,99,235,.2), transparent 45%), linear-gradient(145deg, #111b31, #080d18); box-shadow:0 28px 70px rgba(0,0,0,.38); }
+  .video-placeholder::before { content:''; position:absolute; inset:0; opacity:.28; background-image:linear-gradient(rgba(125,211,252,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(125,211,252,.08) 1px, transparent 1px); background-size:36px 36px; mask-image:linear-gradient(to bottom, #000, transparent 90%); }
+  .video-placeholder-content { position:relative; z-index:1; display:flex; flex-direction:column; align-items:center; gap:18px; padding:28px; text-align:center; }
+  .video-play { display:grid; place-items:center; width:72px; height:72px; border:1px solid rgba(255,255,255,.2); border-radius:50%; background:#2563eb; box-shadow:0 14px 34px rgba(37,99,235,.38); }
+  .video-play span { width:0; height:0; margin-left:5px; border-top:10px solid transparent; border-bottom:10px solid transparent; border-left:16px solid #fff; }
+  .video-placeholder strong { display:block; color:#f8fafc; font:700 clamp(17px, 2vw, 21px)/1.3 'Sora', 'Inter', system-ui, sans-serif; }
+  .video-placeholder p { margin:7px 0 0; color:#94a3b8; font:14px/1.5 'Sora', 'Inter', system-ui, sans-serif; }
 
   @media (max-width: 800px){
-    .nav-links { display:none; }
     .nav-actions { width:auto; }
     .hero-grid { grid-template-columns: 1fr; }
-    .media-head { flex-direction:column; align-items:flex-start; }
-    .media-track { --slide-width: 88vw; }
-    .media-arrow--left { left:6px; }
-    .media-arrow--right { right:6px; }
+    .hero-band { padding-top:72px; }
+    .workflow-grid { grid-template-columns:1fr; gap:34px; }
+    .memory-panel { padding:10px; border-radius:18px; }
+    .sequence-header { text-align:center; }
+    .video-play { width:60px; height:60px; }
     .feature-row { grid-template-columns: 1fr; }
     .cta-wrap { flex-direction:column; align-items:flex-start; }
   }
@@ -663,4 +286,103 @@
   :global(body.dark-mode) .nav-link-btn { background:#0f172a; border-color:#334155; color:#e5e7eb; }
   :global(body.dark-mode) .nav-link-btn:hover { background:#111827; border-color:#475569; }
   :global(body.dark-mode) .nav-link-btn.primary { background:#1d4ed8; border-color:#2563eb; }
+  :global(html) { scroll-padding-top:88px; }
+  .page, .site-nav { -webkit-text-size-adjust:100%; }
+  .page *, .site-nav * { box-sizing:border-box; }
+  .brand { text-decoration:none;flex-shrink:0; }
+  .nav-section-link { color:#cbd5e1;text-decoration:none;font:600 13px/1.4 system-ui,sans-serif;padding:12px; }
+  .nav-section-link:hover { color:#fff; }
+  .nav-link-btn { display:inline-flex;align-items:center;justify-content:center;min-height:44px;font-weight:600; }
+  .nav-actions { flex-wrap:nowrap; }
+  .site-nav { padding-top:max(10px,env(safe-area-inset-top));background:#0b1325ed;border-bottom-color:#ffffff14;box-shadow:none; }
+  .container { padding-left:max(24px,env(safe-area-inset-left));padding-right:max(24px,env(safe-area-inset-right)); }
+  .hero-grid { grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:48px; }
+  .hero-band { background:radial-gradient(ellipse at 90% 20%,#142749 0%,transparent 55%),#0b1325; }
+  .display { font-weight:650;letter-spacing:-.035em;text-wrap:balance; }
+  .lead { color:#bac7da;line-height:1.65;max-width:58ch; }
+  .hero-visual { margin:0;display:flex;flex-direction:column;overflow:hidden;border:1px solid #33445e;border-radius:18px;background:#111e33;box-shadow:0 24px 60px #0003; }
+  .hero-img { max-width:none;width:100%;height:auto;aspect-ratio:auto;display:block;border:0;border-radius:0;box-shadow:none;object-fit:contain; }
+  .hero-visual figcaption { display:flex;justify-content:space-between;gap:16px;width:100%;padding:13px 16px;color:#d6e1ef;font:600 12px/1.4 system-ui,sans-serif; }
+  .hero-visual figcaption span:last-child { color:#94a3b8; }
+  .section-title { font-size:clamp(26px,3vw,36px);letter-spacing:-.025em;text-wrap:balance; }
+  .features-head { margin-bottom:28px; }
+  .feature-row { grid-template-columns:repeat(3,minmax(0,1fr));gap:16px; }
+  .feature-card { padding:22px;min-height:160px;box-shadow:none; }
+  .feature-card h3 { align-items:flex-start;font-size:17px; }
+  .feature-card .eyebrow { flex-shrink:0; }
+  .memory-count,.memory-frames { flex-shrink:0; }
+  .footer-grid { grid-template-columns:1.5fr repeat(4,1fr);gap:24px; }
+  .footer-brand .muted { margin-top:16px;max-width:27ch; }
+  .footer-quote { grid-column:1/-1;background:none;border:0;border-top:1px solid #ffffff14;border-radius:0;padding:20px 0 0;margin-top:12px; }
+  .footer-quote p { margin:0;max-width:76ch; }
+  .footer-col a { min-height:36px;padding:7px 0; }
+  .footer { padding-bottom:max(36px,env(safe-area-inset-bottom)); }
+  a:focus-visible,button:focus-visible { outline:3px solid #38bdf8;outline-offset:4px; }
+  .skip-link { position:fixed;top:8px;left:16px;z-index:3000;padding:12px;background:#fff;color:#0f172a;transform:translateY(-160%); }
+  .skip-link:focus { transform:translateY(0); }
+  @media (max-width:1000px) {
+    .hero-grid { gap:28px; }
+    .feature-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .footer-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+    .footer-brand { grid-column:1/-1; }
+  }
+  @media (max-width:700px) {
+    .container { padding-left:max(20px,env(safe-area-inset-left));padding-right:max(20px,env(safe-area-inset-right)); }
+    .band { padding-top:56px;padding-bottom:56px; }
+    .hero-band { padding-top:38px;padding-bottom:44px; }
+    .hero-grid { grid-template-columns:minmax(0,1fr);gap:20px; }
+    .hero-copy { display:contents; }
+    .hero-kicker { order:0;font-size:10px;letter-spacing:.12em; }
+    .display { order:1;font-size:clamp(32px,8.4vw,46px);line-height:1.12; }
+    .hero-visual { order:2;margin:4px 0; }
+    .lead { order:3;font-size:15px;line-height:1.65; }
+    .hero-actions { order:4;align-items:center;gap:8px; }
+    .hero-actions .hero-cta { flex:1;min-height:48px; }
+    .hero-actions .text-link { min-height:48px;padding:12px 8px; }
+    .hero-signals { order:5;margin:0;gap:8px 16px;font-size:11px; }
+    .nav-section-link { font-size:12px;padding:10px 4px; }
+    .nav-features-link { display:none; }
+    .nav-shell { gap:8px; }
+    .brand { font-size:14px;gap:6px; }
+    .brand-mark { width:26px;height:26px;font-size:11px; }
+    .nav-link-btn { font-size:12px;padding:10px 12px; }
+    .workflow-grid { gap:28px; }
+    .workflow-copy h2 { font-size:30px;line-height:1.15; }
+    .workflow-copy > p { font-size:15px; }
+    .workflow-steps li { grid-template-columns:28px minmax(0,1fr);gap:12px; }
+    .sequence-shell { gap:24px; }
+    .sequence-header h2 { font-size:30px; }
+    .video-placeholder { aspect-ratio:16/10;border-radius:16px;box-shadow:none; }
+    .video-placeholder-content { padding:20px;gap:12px; }
+    .video-play { width:44px;height:44px; }
+    .video-play span { border-top-width:7px;border-bottom-width:7px;border-left-width:11px; }
+    .video-placeholder p { font-size:12px; }
+    .feature-card { min-height:0;padding:20px; }
+    .cta-wrap { align-items:stretch;gap:24px; }
+    .cta-wrap > a { min-height:48px; }
+    .footer-grid { grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 16px; }
+    .footer-quote { grid-column:1/-1; }
+    .footer-col a { min-height:44px; }
+  }
+  @media (max-width:440px) {
+    .nav-section-link { display:none; }
+    .feature-row { grid-template-columns:minmax(0,1fr); }
+    .feature-card { padding:18px; }
+    .memory-meta strong { font-size:13px; }
+    .memory-footer { font-size:10px;gap:8px; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .nav-link-btn,.feature-card { transition:none; }
+    .feature-card:hover { transform:none; }
+  }
+  @media (min-width:701px) and (max-width:1000px) {
+    .hero-band { padding-top:44px;padding-bottom:48px; }
+    .display { font-size:36px; }
+    .lead { font-size:15px;line-height:1.55; }
+    .hero-copy { gap:12px; }
+  }
+  @media (orientation:landscape) and (max-height:500px) {
+    .hero-band { padding-top:28px;padding-bottom:36px; }
+    .display { font-size:32px; }
+  }
 </style>
