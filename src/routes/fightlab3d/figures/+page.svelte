@@ -1347,13 +1347,13 @@ function isLocked(person, key){
   let activeReviewFrameCount = 0;
   let trainingReminderTime = "";
   let trainingReminderEmail = "";
-  let trainingReminderLeadMins = 30;
+  let trainingReminderLeadMins = 60;
   let trainingReminderDays = [];
   let trainingReminderConfigs = {};
   let trainingReminderEnabled = false;
   let trainingReminderNotice = "";
   let trainingReminderTimer = null;
-  const TRAINING_REMINDER_LEAD_MINS = 30;
+  const TRAINING_REMINDER_LEAD_MINS = 60;
   const TRAINING_REMINDER_DAYS = [
     { value: 1, label: "M", name: "Monday" },
     { value: 2, label: "T", name: "Tuesday" },
@@ -8627,7 +8627,7 @@ function clampToDragLengths(person, jointKey, target){
     if (!time) return "";
     const [hours, minutes] = time.split(":").map((v)=> Number.parseInt(v, 10));
     if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return "";
-    const lead = Math.max(1, Math.min(240, Number.parseInt(leadMins, 10) || 30));
+    const lead = Math.max(1, Math.min(240, Number.parseInt(leadMins, 10) || TRAINING_REMINDER_LEAD_MINS));
     const d = new Date();
     d.setHours(hours, minutes, 0, 0);
     d.setMinutes(d.getMinutes() - lead);
@@ -11959,7 +11959,7 @@ function clampToDragLengths(person, jointKey, target){
                       </div>
                       <div class="memory-subsection training-reminder">
                         <div class="memory-subtitle"><span>Training reminder</span></div>
-                        <span class="training-reminder-copy">Get a browser notification 30 minutes before training. Keep this page open; reminders are saved on this device. Email reminders are not available yet.</span>
+                        <span class="training-reminder-copy">Get a browser notification 1 hour before training. Keep this page open; reminders are saved on this device. Email reminders are not available yet.</span>
                         <div class="training-practice-prompt">
                           10 min x 6 days = 1 hour of focused review each week before training.
                         </div>

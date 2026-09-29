@@ -5,6 +5,8 @@ import {parse} from 'svelte/compiler';
 process.env.TZ='Europe/Oslo';
 const source=readFileSync(new URL('../routes/fightlab3d/figures/+page.svelte',import.meta.url),'utf8');
 const body=parse(source).instance.content.body;
+const leadMinutes=body.flatMap(n=>n.declarations||[]).find(n=>n.id.name==='TRAINING_REMINDER_LEAD_MINS').init.value;
+assert.equal(leadMinutes,60);
 const fn=name=>{const n=body.find(n=>n.type==='FunctionDeclaration'&&n.id.name===name);return source.slice(n.start,n.end);};
 
 test('memory dates follow the local day including midnight and DST',()=>{
@@ -15,23 +17,29 @@ test('memory dates follow the local day including midnight and DST',()=>{
 });
 
 test('reminder migration rejects impossible clock values and preserves per-day times',()=>{
-  const normalize=new Function('loginEmail','TRAINING_REMINDER_LEAD_MINS',fn('normalizeTrainingReminderSettings')+';return normalizeTrainingReminderSettings;')('',30);
-  const result=normalize({version:4,enabled:true,days:[1,1,8],time:'25:00',day_configs:{1:{time:'18:00'},2:{time:'24:30'},3:{time:'18:99'},4:{time:'00:15'}}});
+  const normalize=new Function('loginEmail','TRAINING_REMINDER_LEAD_MINS',fn('normalizeTrainingReminderSettings')+';return normalizeTrainingReminderSettings;')('',leadMinutes);
+  const result=normalize({version:4,enabled:true,days:[1,1,8],time:'25:00',lead_mins:30,day_configs:{1:{lead_mins:30,time:'18:00'},2:{time:'24:30'},3:{time:'18:99'},4:{time:'00:15'}}});
   assert.deepEqual(Object.keys(result.day_configs),['1','4']);assert.equal(result.time,'');
-  assert.equal(result.day_configs[4].lead_mins,30);
+  assert.equal(result.day_configs[4].lead_mins,60);
+  assert.equal(result.day_configs[1].lead_mins,60);
+});
+
+test('reminder labels show one hour earlier including the previous day',()=>{
+  const label=new Function('TRAINING_REMINDER_LEAD_MINS','trainingReminderLeadMins',fn('trainingReminderTimeLabel')+';return trainingReminderTimeLabel;')(leadMinutes,leadMinutes);
+  assert.equal(label('18:00'),'17:00');assert.equal(label('00:15'),'23:15');assert.equal(label('18:00',null),'17:00');
 });
 
 function reminder(permission='granted',now='2026-09-20T23:00:00+02:00'){
   class Clock extends Date {constructor(...args){super(...(args.length?args:[now]));}static now(){return new Date(now).getTime();}}
   let requests=0,notifications=0,timer=null;
   class Notification {static permission=permission;static async requestPermission(){requests++;this.permission='granted';return 'granted';}constructor(){notifications++;}}
-  const setup=`let trainingReminderTimer=null,trainingReminderLeadMins=30,trainingReminderEnabled=true,trainingReminderNotice='',trainingReminderDays=[],trainingReminderTime='00:15',trainingReminderConfigs={1:{time:'00:15'}},playbacksMenuVersion=0;const TRAINING_REMINDER_LEAD_MINS=30,reviewTodayPlaybacks=[],savedPlaybacks=[];const writeTrainingReminderSettings=()=>{},trainingReminderRecipientEmail=()=>'';`;
+  const setup=`let trainingReminderTimer=null,trainingReminderLeadMins=${leadMinutes},trainingReminderEnabled=true,trainingReminderNotice='',trainingReminderDays=[],trainingReminderTime='00:15',trainingReminderConfigs={1:{time:'00:15'}},playbacksMenuVersion=0;const TRAINING_REMINDER_LEAD_MINS=${leadMinutes},reviewTodayPlaybacks=[],savedPlaybacks=[];const writeTrainingReminderSettings=()=>{},trainingReminderRecipientEmail=()=>'';`;
   const api=new Function('Date','Notification','window','setTimeout','clearTimeout',setup+['clearTrainingReminderTimer','scheduleTrainingReminder','enableTrainingReminder'].map(fn).join('\n')+';return {schedule:scheduleTrainingReminder,save:enableTrainingReminder,notice:()=>trainingReminderNotice};')(Clock,Notification,{Notification},(cb,delay)=>{timer={cb,delay};return 1;},()=>{timer=null;});
   return {api,requests:()=>requests,notifications:()=>notifications,timer:()=>timer,setNow:v=>now=v};
 }
 
 test('saving an existing reminder retries permission and schedules before midnight',async()=>{
-  const r=reminder('default');await r.api.save();assert.equal(r.requests(),1);assert.equal(r.timer().delay,45*60000);assert.match(r.api.notice(),/Next browser reminder/);
+  const r=reminder('default');await r.api.save();assert.equal(r.requests(),1);assert.equal(r.timer().delay,15*60000);assert.match(r.api.notice(),/Next browser reminder/);
 });
 
 test('blocked permission gives actionable feedback without repeated prompts',async()=>{
