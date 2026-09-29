@@ -1,4 +1,5 @@
 <script>
+  import { buildTrainingCalendar, trainingScheduleSignature } from "$lib/training-calendar.js";
   import { onMount, tick, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import * as THREE from "three";
@@ -1352,7 +1353,8 @@ function isLocked(person, key){
   let trainingReminderConfigs = {};
   let trainingReminderEnabled = false;
   let trainingReminderNotice = "";
-  let trainingReminderTimer = null;
+  let trainingCalendarExport = null;
+  $: trainingCalendarRenewalDue = !!trainingCalendarExport && new Date(trainingCalendarExport.lastReviewAt).getTime() - Date.now() <= 7 * 86400000;
   const TRAINING_REMINDER_LEAD_MINS = 60;
   const TRAINING_REMINDER_DAYS = [
     { value: 1, label: "M", name: "Monday" },
@@ -8469,7 +8471,8 @@ function clampToDragLengths(person, jointKey, target){
         lead_mins: trainingReminderLeadMins,
         days: trainingReminderDays,
         day_configs: trainingReminderConfigs,
-        enabled: trainingReminderEnabled
+        enabled: trainingReminderEnabled,
+        calendar_export: trainingCalendarExport
       }));
     }catch(e){}
   }
@@ -8477,7 +8480,9 @@ function clampToDragLengths(person, jointKey, target){
     try{
       const raw = localStorage.getItem('fightlabTrainingReminderV1');
       if (!raw) return;
-      const settings = normalizeTrainingReminderSettings(JSON.parse(raw));
+      const parsed = JSON.parse(raw);
+      const settings = normalizeTrainingReminderSettings(parsed);
+      trainingCalendarExport = parsed.calendar_export?.ics && parsed.calendar_export?.lastReviewAt ? parsed.calendar_export : null;
       trainingReminderTime = settings.time;
       trainingReminderEmail = settings.email;
       trainingReminderLeadMins = TRAINING_REMINDER_LEAD_MINS;
@@ -8490,138 +8495,47 @@ function clampToDragLengths(person, jointKey, target){
   let cleanupEditorListeners = () => {};
   onDestroy(() => {
     cleanupEditorListeners();
-    clearTrainingReminderTimer();
   });
 
-  function clearTrainingReminderTimer(){
-    if (trainingReminderTimer) clearTimeout(trainingReminderTimer);
-    trainingReminderTimer = null;
-  }
-  function trainingReminderRecipientEmail(){
-    return String(trainingReminderEmail || "").trim() || String(loginEmail || "").trim();
-  }
-  function scheduleTrainingReminder(){
-    clearTrainingReminderTimer();
-    const normalizedLead = TRAINING_REMINDER_LEAD_MINS;
-    if (trainingReminderLeadMins !== normalizedLead) trainingReminderLeadMins = normalizedLead;
+  function saveTrainingSchedule(){
+    if (!trainingReminderDays.length) { trainingReminderNotice='Choose at least one training day first.';return false; }
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(trainingReminderTime)) { trainingReminderNotice='Choose when training starts first.';return false; }
+    const next={...trainingReminderConfigs};
+    trainingReminderDays.forEach(day=>next[day]={time:trainingReminderTime,lead_mins:60});
+    trainingReminderConfigs=next;
+    trainingReminderDays=[];
+    trainingReminderEnabled=true;
+    playbacksMenuVersion+=1;
+    trainingReminderNotice='Training time saved. Add your schedule to your calendar below.';
     writeTrainingReminderSettings();
-    const configEntries = Object.entries(trainingReminderConfigs || {})
-      .map(([day, config])=> ({
-        day: Number.parseInt(day, 10),
-        time: config?.time,
-        lead_mins: TRAINING_REMINDER_LEAD_MINS,
-        email: config?.email || trainingReminderRecipientEmail()
-      }))
-      .filter((config)=> config.day >= 0 && config.day <= 6 && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(config.time || ""));
-    if (!trainingReminderEnabled || !configEntries.length) {
-      if (trainingReminderEnabled && !configEntries.length) trainingReminderNotice = "Choose at least one training day.";
-      return;
-    }
-    if (typeof window === "undefined" || !("Notification" in window)) {
-      trainingReminderNotice = "Browser notifications are not supported here.";
-      return;
-    }
-    if (Notification.permission !== "granted") {
-      trainingReminderNotice = Notification.permission === "denied"
-        ? "Notifications are blocked. Allow them in your browser site settings, then save again."
-        : "Reminder saved. Save again to allow browser notifications.";
-      return;
-    }
-    const now = new Date();
-    let target = null;
-    for (const config of configEntries){
-      const [hours, minutes] = config.time.split(":").map((v)=> Number.parseInt(v, 10));
-      if (!Number.isFinite(hours) || !Number.isFinite(minutes)) continue;
-      for (let offset = 0; offset < 14; offset += 1){
-        const candidate = new Date(now);
-        candidate.setDate(now.getDate() + offset);
-        candidate.setHours(hours, minutes, 0, 0);
-        if (candidate.getDay() !== config.day) continue;
-        candidate.setMinutes(candidate.getMinutes() - config.lead_mins);
-        if (candidate.getTime() <= now.getTime()) continue;
-        if (!target || candidate.getTime() < target.getTime()) {
-          target = candidate;
-        }
-        break;
-      }
-    }
-    if (!target) {
-      trainingReminderNotice = "No upcoming reminder time found.";
-      return;
-    }
-    const delay = Math.min(Math.max(target.getTime() - Date.now(), 1000), 2147483647);
-    trainingReminderTimer = setTimeout(() => {
-      try{
-        // A sleeping tab must not deliver a reminder after training has started.
-        if (Date.now() - target.getTime() >= TRAINING_REMINDER_LEAD_MINS * 60000) { scheduleTrainingReminder(); return; }
-        const recommendedCount = reviewTodayPlaybacks.length || savedPlaybacks.length;
-        if (recommendedCount > 0) {
-          new Notification("Fightlab 3D review", {
-            body: `${recommendedCount} technique${recommendedCount === 1 ? "" : "s"} ready for a quick memory review before training.`
-          });
-        } else {
-          new Notification("Fightlab 3D review", {
-            body: "Training is coming up. Open Fightlab for a quick memory review."
-          });
-        }
-      }catch(_){}
-      scheduleTrainingReminder();
-    }, delay);
-    trainingReminderNotice = `Next browser reminder: ${target.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}.`;
+    return true;
   }
-  async function enableTrainingReminder(){
-    const requestReminderPermission = async () => {
-      if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
-      if (Notification.permission === 'default') return Notification.requestPermission();
-      return Notification.permission;
-    };
-    const hasExistingReminders = Object.keys(trainingReminderConfigs || {}).length > 0;
-    if (!trainingReminderDays.length && trainingReminderEnabled && hasExistingReminders) {
-      await requestReminderPermission();
-      scheduleTrainingReminder();
-      return;
-    }
-    if (!trainingReminderDays.length) {
-      trainingReminderNotice = "Choose at least one training day first.";
-      return;
-    }
-    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(trainingReminderTime)) {
-      trainingReminderNotice = "Choose when training starts first.";
-      return;
-    }
-    try{
-      const lead = TRAINING_REMINDER_LEAD_MINS;
-      const recipientEmail = trainingReminderRecipientEmail();
-      const nextConfigs = { ...(trainingReminderConfigs || {}) };
-      trainingReminderDays.forEach((day)=>{
-        nextConfigs[day] = { time: trainingReminderTime, lead_mins: lead, email: recipientEmail };
-      });
-      trainingReminderConfigs = nextConfigs;
-      trainingReminderDays = [];
-      trainingReminderEnabled = true;
-      playbacksMenuVersion += 1;
-      writeTrainingReminderSettings();
-      const permission = await requestReminderPermission();
-      trainingReminderNotice = permission === "granted"
-        ? "Browser reminder enabled."
-        : "Reminder saved. Browser notifications were not allowed.";
-      scheduleTrainingReminder();
-    }catch(_){
-      trainingReminderNotice = "Could not save reminder.";
-    }
+  function addTrainingToCalendar(renew=false){
+    if (trainingReminderDays.length && !saveTrainingSchedule()) return;
+    try {
+      const signature=trainingScheduleSignature(trainingReminderConfigs);
+      const previous=trainingCalendarExport;
+      const sameSchedule=previous?.signature===signature;
+      if (!sameSchedule || renew || !previous) {
+        const result=buildTrainingCalendar(trainingReminderConfigs,{
+          url:new URL('/fightlab3d/figures',window.location.origin).href,
+          id:crypto.randomUUID(),
+          startAfter:renew && sameSchedule ? previous.lastReviewAt : undefined
+        });
+        trainingCalendarExport={...result,signature};
+        writeTrainingReminderSettings();
+      }
+      const blob=new Blob([trainingCalendarExport.ics],{type:'text/calendar;charset=utf-8'});
+      const href=URL.createObjectURL(blob);
+      const link=document.createElement('a');
+      link.href=href;link.download='fightlab-training-review.ics';document.body.appendChild(link);link.click();link.remove();
+      setTimeout(()=>URL.revokeObjectURL(href),60000);
+      trainingReminderNotice='Calendar file ready. Open it in your calendar and confirm the events and alerts. Downloading does not add them automatically.';
+    } catch(error) { trainingReminderNotice=error?.message || 'Could not create the calendar file.'; }
   }
   function updateTrainingReminder(){
-    trainingReminderNotice = "";
-    if (Object.keys(trainingReminderConfigs || {}).length) {
-      trainingReminderConfigs = Object.fromEntries(
-        Object.entries(trainingReminderConfigs).map(([day, config])=> [
-          day,
-          { ...config, email: trainingReminderRecipientEmail() }
-        ])
-      );
-    }
+    trainingReminderNotice='';
     writeTrainingReminderSettings();
-    if (trainingReminderEnabled) scheduleTrainingReminder();
   }
   function trainingReminderTimeLabel(time = trainingReminderTime, leadMins = trainingReminderLeadMins){
     if (!time) return "";
@@ -8646,8 +8560,8 @@ function clampToDragLengths(person, jointKey, target){
     trainingReminderDays = trainingReminderDays.filter((item)=> item !== value);
     if (!Object.keys(nextConfigs).length) trainingReminderEnabled = false;
     playbacksMenuVersion += 1;
-    trainingReminderNotice = "Reminder removed.";
-    scheduleTrainingReminder();
+    trainingReminderNotice = "Training day removed here. Remove any previously added events in your calendar too.";
+    writeTrainingReminderSettings();
   }
   function openTimeInputPicker(event){
     const input = event?.currentTarget;
@@ -8741,7 +8655,6 @@ function clampToDragLengths(person, jointKey, target){
     persistSavedPlaybacks();
     playbacksMenuVersion += 1;
     showMemoryConfirmation("review");
-    scheduleTrainingReminder();
   }
   function beginSavedPlaybackReview(idx){
     const i = idx|0; if (i<0 || i>=savedPlaybacks.length) return;
@@ -9070,7 +8983,6 @@ function clampToDragLengths(person, jointKey, target){
     restorePlaybackFolders();
     restoreMemoryReviewStats();
     restoreTrainingReminderSettings();
-    scheduleTrainingReminder();
     await hydratePlaybackLibrary(session);
     ensurePlaybackFoldersFromSaved();
     playbackFolderView = null;
@@ -11958,10 +11870,10 @@ function clampToDragLengths(person, jointKey, target){
                         {/if}
                       </div>
                       <div class="memory-subsection training-reminder">
-                        <div class="memory-subtitle"><span>Training reminder</span></div>
-                        <span class="training-reminder-copy">Get a browser notification 1 hour before training. Keep this page open; reminders are saved on this device. Email reminders are not available yet.</span>
+                        <div class="memory-subtitle"><span>Review before training</span></div>
+                        <span class="training-reminder-copy">Add a 10-minute technique review to your calendar, 1 hour before training.</span>
                         <div class="training-practice-prompt">
-                          10 min x 6 days = 1 hour of focused review each week before training.
+                          Weekly for 12 weeks. Choose your training days and start times.
                         </div>
                         {#key playbacksMenuVersion}
                           <div class="training-day-grid" aria-label="Training days">
@@ -11984,8 +11896,8 @@ function clampToDragLengths(person, jointKey, target){
                                     <button
                                       type="button"
                                       class="training-day-delete"
-                                      aria-label={`Delete ${day.name} reminder`}
-                                      title="Delete reminder"
+                                      aria-label={`Remove ${day.name} from this schedule`}
+                                      title="Remove training day"
                                       on:pointerdown|stopPropagation|preventDefault
                                       on:click|stopPropagation={() => deleteTrainingReminderDay(day.value)}
                                     >×</button>
@@ -12008,10 +11920,22 @@ function clampToDragLengths(person, jointKey, target){
                               aria-label="Training time"
                             />
                           </label>
-                          <button type="button" class="btn btn--primary memory-reminder-btn" on:click={enableTrainingReminder}>
+                          <button type="button" class="btn btn--primary memory-reminder-btn" on:click={saveTrainingSchedule}>
                             Save
                           </button>
                         </div>
+                        <button type="button" class="btn btn--primary calendar-export-btn" on:click={()=>addTrainingToCalendar(false)}>Add to calendar</button>
+                        <span class="training-reminder-copy">Confirm the alert when adding the events. Times use your device's timezone. Changes here do not update your calendar; remove old events before importing a changed schedule.</span>
+                        {#if trainingCalendarExport}
+                          <span class="training-reminder-copy">Prepared through {new Date(trainingCalendarExport.lastReviewAt).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}. Re-importing may create duplicates.</span>
+                        {/if}
+                        {#if trainingCalendarRenewalDue}
+                          <div class="calendar-renewal" role="status">
+                            <span>Your review period is ending or has ended. Check your training days before renewing.</span>
+                            <button class="btn" on:click={()=>addTrainingToCalendar(true)}>Add the next 12 weeks</button>
+                          </div>
+                        {/if}
+                        <details class="calendar-help"><summary>How to add it to your calendar</summary><p>Open the downloaded .ics file with Apple Calendar, Outlook, or another calendar app, then confirm the import and alert. For Google Calendar, import the file on a computer in Settings &rarr; Import &amp; export.</p></details>
                         {#if trainingReminderNotice}
                           <span class="memory-empty">{trainingReminderNotice}</span>
                         {/if}
@@ -15657,4 +15581,11 @@ function clampToDragLengths(person, jointKey, target){
   .current-folder-title span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
   .folder-breadcrumb > .inline-action { flex:none; }
   :global(body.dark-mode) .current-folder-title { color:#e2e8f0; }
+  .calendar-export-btn { width:100%;min-height:44px;justify-content:center;margin-top:6px; }
+  .calendar-help { font:12px/1.5 system-ui,sans-serif;color:#475569; }
+  .calendar-help summary { cursor:pointer;padding:10px 0; }
+  .calendar-help p { margin:0 0 8px; }
+  .calendar-renewal { display:grid;gap:8px;font:12px/1.5 system-ui,sans-serif;padding:10px;border-radius:8px;background:#eff6ff;color:#1e40af; }
+  :global(body.dark-mode) .calendar-help { color:#cbd5e1; }
+  :global(body.dark-mode) .calendar-renewal { background:#172554;color:#dbeafe; }
 </style>
