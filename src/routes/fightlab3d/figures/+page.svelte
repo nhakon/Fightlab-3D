@@ -1,5 +1,6 @@
 <script>
   import { buildTrainingCalendar, trainingScheduleSignature } from "$lib/training-calendar.js";
+  import { calendarOptions } from "$lib/calendar-options.js";
   import { onMount, tick, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import * as THREE from "three";
@@ -1354,6 +1355,7 @@ function isLocked(person, key){
   let trainingReminderEnabled = false;
   let trainingReminderNotice = "";
   let trainingCalendarExport = null;
+  let calendarChooser = null;
   $: trainingCalendarRenewalDue = !!trainingCalendarExport && new Date(trainingCalendarExport.lastReviewAt).getTime() - Date.now() <= 7 * 86400000;
   const TRAINING_REMINDER_LEAD_MINS = 60;
   const TRAINING_REMINDER_DAYS = [
@@ -8503,6 +8505,7 @@ function clampToDragLengths(person, jointKey, target){
     const next={...trainingReminderConfigs};
     trainingReminderDays.forEach(day=>next[day]={time:trainingReminderTime,lead_mins:60});
     trainingReminderConfigs=next;
+    calendarChooser=null;
     trainingReminderDays=[];
     trainingReminderEnabled=true;
     playbacksMenuVersion+=1;
@@ -8525,6 +8528,12 @@ function clampToDragLengths(person, jointKey, target){
         trainingCalendarExport={...result,signature};
         writeTrainingReminderSettings();
       }
+      calendarChooser=calendarOptions(trainingCalendarExport.ics,window.location.origin);
+      trainingReminderNotice='';
+    } catch(error) { trainingReminderNotice=error?.message || 'Could not prepare the calendar options.'; }
+  }
+  function downloadTrainingCalendar(){
+    try {
       const blob=new Blob([trainingCalendarExport.ics],{type:'text/calendar;charset=utf-8'});
       const href=URL.createObjectURL(blob);
       const link=document.createElement('a');
@@ -8534,6 +8543,7 @@ function clampToDragLengths(person, jointKey, target){
     } catch(error) { trainingReminderNotice=error?.message || 'Could not create the calendar file.'; }
   }
   function updateTrainingReminder(){
+    calendarChooser=null;
     trainingReminderNotice='';
     writeTrainingReminderSettings();
   }
@@ -8552,6 +8562,7 @@ function clampToDragLengths(person, jointKey, target){
     return config?.time || "";
   }
   function deleteTrainingReminderDay(day){
+    calendarChooser=null;
     const value = Number.parseInt(day, 10);
     if (!Number.isFinite(value)) return;
     const nextConfigs = { ...(trainingReminderConfigs || {}) };
@@ -8570,6 +8581,7 @@ function clampToDragLengths(person, jointKey, target){
     }catch(_){}
   }
   function toggleTrainingReminderDay(day){
+    calendarChooser=null;
     const value = Number.parseInt(day, 10);
     if (!Number.isFinite(value)) return;
     const existingConfig = trainingReminderConfigs?.[value];
@@ -11924,7 +11936,22 @@ function clampToDragLengths(person, jointKey, target){
                             Save
                           </button>
                         </div>
-                        <button type="button" class="btn btn--primary calendar-export-btn" on:click={()=>addTrainingToCalendar(false)}>Add to calendar</button>
+                        <button type="button" class="btn btn--primary calendar-export-btn" aria-expanded={!!calendarChooser} aria-controls="training-calendar-chooser" on:click={()=>calendarChooser ? calendarChooser=null : addTrainingToCalendar(false)}>Add to calendar</button>
+                        {#if calendarChooser}
+                          <div id="training-calendar-chooser" class="calendar-chooser">
+                            <strong>Choose your calendar</strong>
+                            <details class="calendar-google">
+                              <summary>Google Calendar</summary>
+                              <p>Open and save each review day. Check that it repeats weekly for 12 occurrences, with an alert at the event start.</p>
+                              {#each calendarChooser.google as event}
+                                <a class="btn calendar-choice" href={event.href} target="_blank" rel="noopener noreferrer">{event.label}<span>Open Google Calendar ↗</span></a>
+                              {/each}
+                            </details>
+                            <a class="btn calendar-choice" href={calendarChooser.apple}>Apple Calendar<span>Subscribe to all review days</span></a>
+                            <button type="button" class="btn calendar-choice" on:click={downloadTrainingCalendar}>Outlook / other calendars<span>Download calendar file (.ics)</span></button>
+                            <p>Apple opens a separate calendar subscription; allow alerts when confirming. If it does not open, use the calendar file. Remove the old subscription when replacing or renewing it.</p>
+                          </div>
+                        {/if}
                         <span class="training-reminder-copy">Confirm the alert when adding the events. Times use your device's timezone. Changes here do not update your calendar; remove old events before importing a changed schedule.</span>
                         {#if trainingCalendarExport}
                           <span class="training-reminder-copy">Prepared through {new Date(trainingCalendarExport.lastReviewAt).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}. Re-importing may create duplicates.</span>
@@ -11935,7 +11962,7 @@ function clampToDragLengths(person, jointKey, target){
                             <button class="btn" on:click={()=>addTrainingToCalendar(true)}>Add the next 12 weeks</button>
                           </div>
                         {/if}
-                        <details class="calendar-help"><summary>How to add it to your calendar</summary><p>Open the downloaded .ics file with Apple Calendar, Outlook, or another calendar app, then confirm the import and alert. For Google Calendar, import the file on a computer in Settings &rarr; Import &amp; export.</p></details>
+                        <details class="calendar-help"><summary>How to add it to your calendar</summary><p>Choose Google Calendar to open the reviews directly, or Apple Calendar to subscribe to the full schedule. Other calendars can import the .ics file. Always confirm the weekly repetition and alerts in your calendar. Changes in Fightlab do not update previously added events.</p></details>
                         {#if trainingReminderNotice}
                           <span class="memory-empty">{trainingReminderNotice}</span>
                         {/if}
@@ -15582,6 +15609,15 @@ function clampToDragLengths(person, jointKey, target){
   .folder-breadcrumb > .inline-action { flex:none; }
   :global(body.dark-mode) .current-folder-title { color:#e2e8f0; }
   .calendar-export-btn { width:100%;min-height:44px;justify-content:center;margin-top:6px; }
+  .calendar-chooser { display:grid;gap:10px;padding:12px;border:1px solid #cbd5e1;border-radius:12px;background:#f8fafc;color:#0f172a;font-family:system-ui,sans-serif; }
+  .calendar-chooser p { margin:4px 0;font:12px/1.5 system-ui,sans-serif; }
+  .calendar-chooser strong { font-size:13px; }
+  .calendar-chooser .calendar-choice { display:flex;flex-direction:column;align-items:flex-start;justify-content:center;width:100%;min-height:48px;box-sizing:border-box;text-decoration:none;white-space:normal;text-align:left;gap:3px;background:#fff;color:#0f172a;border:1px solid #cbd5e1; }
+  .calendar-choice span { font-size:11px;font-weight:400; }
+  .calendar-google summary { cursor:pointer;min-height:44px;align-content:center;font-weight:600;font-size:13px; }
+  .calendar-google .calendar-choice { margin-top:8px; }
+  :global(body.dark-mode) .calendar-chooser { background:#111827;color:#e2e8f0;border-color:#475569; }
+  :global(body.dark-mode) .calendar-chooser .calendar-choice { background:#1e293b;color:#f1f5f9;border-color:#475569; }
   .calendar-help { font:12px/1.5 system-ui,sans-serif;color:#475569; }
   .calendar-help summary { cursor:pointer;padding:10px 0; }
   .calendar-help p { margin:0 0 8px; }
