@@ -6,7 +6,7 @@ const dev = process.env.NODE_ENV === 'development';
 const config = {
 	kit: {
 		adapter: adapter({
-			runtime: 'nodejs20.x'
+			runtime: 'nodejs22.x'
 		}),
 		// Relax CSP to allow Vite HMR and environments that block eval by default
 		csp: {
